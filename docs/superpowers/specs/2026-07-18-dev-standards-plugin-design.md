@@ -38,11 +38,9 @@ dafna-dev-standards/
       skills/
         lessons-log/
         spec-review/          # references ../../shared/review-fundamentals.md by
-        plan-review/          #   relative path from SKILL.md — verify empirically at
-                              #   build time (${CLAUDE_PLUGIN_ROOT} does NOT expand in
-                              #   skill markdown). Fallback if relative escape from
-                              #   skills/ fails: host the doc inside spec-review/ and
-                              #   have plan-review reference ../spec-review/REFERENCE.md
+        plan-review/          #   relative path from SKILL.md (validated in the
+                              #   2026-07-18 fresh-session checkpoint; note
+                              #   ${CLAUDE_PLUGIN_ROOT} does NOT expand in skill markdown)
         dev-env-setup/
         checklists/           # plan / review / test / security / handoff
       commands/bootstrap-repo.md
@@ -125,7 +123,7 @@ Semver in each `plugin.json`; every change lands via PR (Nir PRs, Asaf merges pe
 
 ## Verification
 
-- **Spec smoke test:** done 2026-07-18 — `/spec-review` ran on this document via the personal skill copies (also validated the skill-description edits). After packaging, re-run once from a fresh session with only the plugin installed, to validate the packaged copies and the relative reference path.
+- **Spec smoke test:** done 2026-07-18 — `/spec-review` ran on this document via the personal skill copies (also validated the skill-description edits). Fresh-session checkpoint (2026-07-18) validated the packaged copies: marker injection, `/bootstrap-repo` report-only collision check, the shared-reference relative path, and `/coo` all confirmed working.
 - **Install test:** fresh session in a scratch repo on each platform — confirm SessionStart injection appears, skills trigger by description, `/bootstrap-repo` scaffolds and detects a planted skill collision.
 - **Dedup safety:** before removing rules from any CLAUDE.md, a verification agent diffs "rules removed" vs "rules injected" to prove nothing is lost (per the verify-before-trim working rule).
 - **Windows path:** Nir reruns dev-env-setup on his machine from the skill alone (not the source doc); gaps become PRs.
