@@ -1,0 +1,14 @@
+name: validate
+# Deliberately NO paths-ignore: 'validate' is a required status check on main
+# (Task 10), and a required check that never reports leaves docs-only PRs
+# unmergeable. The RULES.md paths-ignore advice targets consumer repos' own CI.
+on:
+  pull_request:
+  push: { branches: [main] }
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+      - run: ./scripts/validate.sh
