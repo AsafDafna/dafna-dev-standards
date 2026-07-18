@@ -1,6 +1,6 @@
 # dafna-dev-standards — shared Claude Code plugin marketplace
 
-**Date:** 2026-07-18 · **Status:** reviewed — spec-review findings applied (21 findings, 2026-07-18)
+**Date:** 2026-07-18 · **Status:** v1 shipped (2026-07-18) — core + coo published; spec-review findings applied
 **Users:** Asaf and Nir Dafna, collaborating across independent repos (edut-app onboarding now; other shared and solo projects later).
 
 ## Goal
