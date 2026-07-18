@@ -13,7 +13,11 @@ for s in plugins/*/skills/*/SKILL.md; do
   dlen=$(grep '^description:' "$s" | head -1 | wc -c)
   [ "$dlen" -le 1024 ] || { echo "description over 1024 chars: $s"; exit 1; }
 done
-if grep -rniE 'asaf|nir|edut|testimony|monday|/Users/|~/dev-projects|~/Downloads' plugins/; then
+rc=0
+grep -rniE 'asaf|nir|edut|testimony|monday|/Users/|~/dev-projects|~/Downloads' plugins/ || rc=$?
+if [ "$rc" -eq 0 ]; then
   echo "LEAK in plugins/"; exit 1
+elif [ "$rc" -ne 1 ]; then
+  echo "leak-gate grep error"; exit 1
 fi
 echo OK

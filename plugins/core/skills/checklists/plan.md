@@ -22,7 +22,7 @@ Technical decisions (tools, libraries, patterns) can be made independently.
 - Note testing requirements
 
 ## Step 4: Feature Spec
-Create specification at `docs/superpowers/specs/[feature-name].md` with:
+Create specification at `docs/superpowers/specs/[feature-name]-design.md` with:
 - Overview
 - Requirements (functional & non-functional)
 - Data model

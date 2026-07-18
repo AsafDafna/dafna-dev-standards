@@ -8,13 +8,10 @@ between repos.
 ## Install
 
 ```
-/plugin marketplace add <github-user>/dafna-dev-standards
+/plugin marketplace add AsafDafna/dafna-dev-standards
 /plugin install core@dafna-dev-standards
 /plugin install coo@dafna-dev-standards   # optional, personal orchestration mode
 ```
-
-(`<github-user>` is a placeholder — publishing this repo finalizes the
-real slug; see Task 10.)
 
 Both `core` and `coo` install at **user scope** — once per machine/account,
 not per repo. Multi-account users (e.g. a separate org `CLAUDE_CONFIG_DIR`)
