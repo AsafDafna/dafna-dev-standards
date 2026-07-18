@@ -41,6 +41,30 @@ skeleton, `docs/DECISIONS.md`, and an empty `.claude/lessons.md`, and
 flags any locally-installed skills that collide by name with plugin
 skills.
 
+## For Claude sessions: bootstrap checklist
+
+If a user asks you to "set up the dafna standards" (or similar) in their
+environment, this is the sequence. Steps marked **[user]** are interactive
+slash commands only the user can run — print them and ask the user to run
+them; do not attempt them via shell.
+
+1. **[user]** `/plugin marketplace add AsafDafna/dafna-dev-standards`
+2. **[user]** `/plugin install core@dafna-dev-standards` — choose
+   **user scope** when prompted. Then optionally
+   `/plugin install coo@dafna-dev-standards` (same scope).
+3. Verify: open a fresh session (or ask the user to) and confirm the line
+   `[dafna-core rules v1.0.0]` appears in context. If missing, debug with
+   `claude --debug` (hook registration vs script error) before continuing.
+4. Per adopted repo: **[user]** `/bootstrap-repo` from the repo root. It is
+   idempotent (never overwrites existing files) and its skill-collision
+   check is report-only.
+5. If the collision report lists local `~/.claude/skills/` duplicates:
+   **[user]** `/core:dedup-local-skills` — it diffs before offering
+   deletion and only deletes on explicit per-skill yes.
+6. New machine? The `dev-env-setup` skill in `core` covers the recommended
+   terminal stack (Ghostty + herdr) for macOS and Windows/WSL.
+7. Personal layer (not shared via plugins): see `docs/personal-setup.md`.
+
 ## Not a supported product
 
 This repo is public because that's the practical way to share a plugin
