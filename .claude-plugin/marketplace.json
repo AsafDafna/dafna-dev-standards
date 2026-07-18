@@ -10,6 +10,11 @@
       "name": "core",
       "source": "./plugins/core",
       "description": "Always-on workflow rules (SessionStart-injected) + lessons-log, spec-review, plan-review, checklists, dev-env-setup skills + bootstrap-repo/dedup-local-skills commands"
+    },
+    {
+      "name": "coo",
+      "source": "./plugins/coo",
+      "description": "Chief-of-Staff orchestrator mode (user-level opt-in)"
     }
   ]
 }
