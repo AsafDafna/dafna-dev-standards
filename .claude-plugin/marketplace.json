@@ -1,0 +1,15 @@
+{
+  "name": "dafna-dev-standards",
+  "owner": { "name": "Asaf Dafna" },
+  "metadata": {
+    "description": "Shared dev-workflow standards: process rules, review skills, environment setup",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "core",
+      "source": "./plugins/core",
+      "description": "Always-on workflow rules (SessionStart-injected) + lessons-log, spec-review, plan-review, checklists, dev-env-setup skills + bootstrap-repo/dedup-local-skills commands"
+    }
+  ]
+}
