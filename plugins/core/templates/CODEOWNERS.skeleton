@@ -1,0 +1,4 @@
+# Protect load-bearing paths — require owner review. Replace <owner>.
+/.github/          @<owner>
+/supabase/migrations/  @<owner>
+# Add auth/payment/RLS paths for this repo below.
