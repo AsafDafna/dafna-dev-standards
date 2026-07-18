@@ -1,10 +1,9 @@
 # Windows Dev Environment Setup — Ubuntu WSL + herdr + Ghostty
 
-This describes a complete,
-reproducible terminal dev environment on **Windows 11** using **WSL2 (WSLg)**,
-the **Ghostty** terminal emulator, and the **herdr** workspace manager for AI
-coding agents. It launches from a single Windows shortcut (or the `devenv`
-command).
+This describes a complete, reproducible terminal dev environment on
+**Windows 11** using **WSL2 (WSLg)**, the **Ghostty** terminal emulator, and
+the **herdr** workspace manager for AI coding agents. It launches from a
+single Windows shortcut (or the `devenv` command).
 
 Everything below was built and verified on:
 - **Windows 11** with WSL2 + WSLg (GUI app support)
@@ -170,9 +169,14 @@ chmod +x ~/.local/bin/devenv
 ```
 
 The launcher (Appendix B) already uses `$HOME/.local/bin/herdr` rather than a
-hardcoded user path, so it works for any account; `/usr/bin/ghostty` is left
-as a literal path since it's the fixed install location from the apt/Snap
-package, not user-specific.
+hardcoded user path, so it works for any account. `/usr/bin/ghostty` is left
+as a literal path because that's where the apt package puts the binary
+(**this guide's install method**, step 3); it is not user-specific, so no
+substitution is needed there either. If you instead installed via
+`snap install ghostty --classic`, the binary lands at `/snap/bin/ghostty` —
+update the launcher's `exec` line accordingly, or replace the literal path
+with `command -v ghostty` so it resolves correctly regardless of install
+method.
 
 ---
 
