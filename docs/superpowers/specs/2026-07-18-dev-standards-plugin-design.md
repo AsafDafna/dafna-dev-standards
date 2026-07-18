@@ -75,11 +75,11 @@ Guides a new machine to the recommended terminal stack: **Ghostty + herdr**.
 
 - **macOS path:** Homebrew-based install (ghostty cask, herdr per its docs), shell setup.
 - **Windows path:** WSL2/WSLg on Ubuntu 26.04+, sourced from Nir's verified handoff
-  doc (`docs/sources/windows-dev-environment-setup.md`): PATH setup, herdr + Ghostty
-  config, Nerd Fonts, the `devenv` launcher (software-rendering + login-shell
-  requirements), `wslg.exe` shortcut creation, icon build, and the full
-  gotchas/troubleshooting table. All `⚠️`-flagged hardcoded paths (`/home/nird`,
-  `C:\Users\nirda`) generalized to `$HOME` / runtime resolution per the doc's
+  doc, shipped as `plugins/core/skills/dev-env-setup/windows-wsl.md`: PATH setup,
+  herdr + Ghostty config, Nerd Fonts, the `devenv` launcher (software-rendering +
+  login-shell requirements), `wslg.exe` shortcut creation, icon build, and the full
+  gotchas/troubleshooting table. All `⚠️`-flagged hardcoded paths from Nir's
+  personal machine were generalized to `$HOME` / runtime resolution per the doc's
   portability notes.
 
 ### /bootstrap-repo command (core)
@@ -115,7 +115,7 @@ One-time scaffolding for a repo adopting the standards:
 1. **Dedup CLAUDE.md files:** remove plugin-covered rules from edut-app CLAUDE.md and `~/dev-projects/CLAUDE.md` (which rhizon and all sibling repos inherit); scan rhizon's local CLAUDE.md for re-duplication. Each deduped file keeps a 3-line pointer block: rules come from the marketplace's `core` plugin, the `/plugin marketplace add` install command, and the marker to expect. RULES.md's first injected line is a version marker (`[dafna-core rules vX.Y]`) so a missing/failed injection is diagnosable mid-session by either developer or by Claude.
 2. **Personal skills sweep:** classify all ~23 skills in Asaf's `~/.claude/skills` — generalize-into-plugin / stays personal / obsolete. Known: donna-* stay personal; make-*/monday-backfill → later `make-com` plugin.
 3. **Nir onboarding:** install marketplace + core (+ coo if wanted), run dev-env-setup Windows path, set up the personal `~/.claude` layer per `docs/personal-setup.md`.
-4. **Asaf's second account:** the Edut710 org `CLAUDE_CONFIG_DIR` needs its own one-time install.
+4. **Asaf's second account:** its separate `CLAUDE_CONFIG_DIR` needs its own one-time install.
 
 ## Versioning & update flow
 
