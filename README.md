@@ -34,7 +34,7 @@ into every session's context — no copying rules into per-repo CLAUDE.md
 files, so a plugin update changes behavior everywhere at once.
 
 The first line of RULES.md is a version marker, e.g. `[dafna-core rules
-v1.0]`. If a session shows no such marker anywhere in context, the plugin
+v1.0.0]`. If a session shows no such marker anywhere in context, the plugin
 isn't active — check the install and `/plugin update`.
 
 ## Adopting these standards in a repo

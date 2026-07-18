@@ -19,7 +19,8 @@ than that to state, it belongs in a skill instead of RULES.md.
 Any change to a rule (in RULES.md or a skill) requires, before merge:
 1. A one-line entry in `CHANGELOG.md`.
 2. A fresh-session smoke test — start a new session and confirm the
-   `[dafna-core rules vX.Y]` marker described in README.md still appears.
+   `[dafna-core rules vX.Y.Z]` marker described in README.md still appears
+   (currently v1.0.0 — must match the first line of plugins/core/rules/RULES.md).
 
 ## Versioning
 
