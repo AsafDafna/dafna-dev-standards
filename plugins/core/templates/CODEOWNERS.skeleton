@@ -1,4 +1,5 @@
-# Protect load-bearing paths — require owner review. Replace <owner>.
+# Protect load-bearing paths — require owner review.
+# (<owner> placeholders are filled in by /bootstrap-repo.)
 /.github/          @<owner>
-/supabase/migrations/  @<owner>
-# Add auth/payment/RLS paths for this repo below.
+# Uncomment per stack, and add auth/payment/RLS paths for this repo below:
+# /supabase/migrations/  @<owner>
