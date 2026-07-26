@@ -10,7 +10,12 @@ Detect the platform, then follow ONE guide in this skill's directory:
 
 - macOS → macos.md
 - Windows → windows-wsl.md (WSL2/WSLg + Ubuntu; includes launcher, fonts,
-  shortcuts, and a troubleshooting table of hard-won gotchas)
+  shortcuts, VM sizing, freeze forensics, and a troubleshooting table of
+  hard-won gotchas)
+
+On Windows, size the VM (windows-wsl.md §9) before trusting the environment: an
+undersized `.wslconfig` produces hard freezes and blank GUI windows that look
+like GPU or terminal faults but are memory exhaustion.
 
 Verify at the end of either guide: launching the environment opens Ghostty
 running herdr. On Windows this must work from the desktop shortcut, not only

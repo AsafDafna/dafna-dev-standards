@@ -5,11 +5,18 @@ This describes a complete, reproducible terminal dev environment on
 the **herdr** workspace manager for AI coding agents. It launches from a
 single Windows shortcut (or the `devenv` command).
 
-Everything below was built and verified on:
-- **Windows 11** with WSL2 + WSLg (GUI app support)
-- **Ubuntu 26.04 LTS** (`resolute`)
-- **Ghostty 1.3.0** (from the Ubuntu `universe` repo)
-- **herdr 0.7.4** (`~/.local/bin/herdr`)
+Everything below was built and verified on a single reference machine. Where
+this guide gives a value rather than a formula, it is the value running there:
+
+| | |
+|---|---|
+| Host | Windows 11, 64 GB RAM, 20 logical CPUs, NVIDIA RTX 4070 Laptop (Optimus) |
+| WSL | 2.7.11.0 · kernel 6.18.33.2-2 · WSLg 1.0.73.2 · MSRDC 1.2.7214 |
+| Distro | Ubuntu 26.04 LTS (`resolute`), systemd enabled |
+| VM | `memory=24GB`, `processors=12`, `swap=4GB` (see §9) |
+| Terminal | Ghostty 1.3.0 (Ubuntu `universe`) + herdr 0.7.4 (`~/.local/bin/herdr`) |
+
+Scale the VM numbers to your host; keep the *shape* the §9 rationale describes.
 
 ---
 
@@ -157,16 +164,49 @@ install *only* the Symbols-Only Nerd Font (~2.8MB) and list it as a secondary
 ## 5. The `devenv` launcher
 
 `~/.local/bin/devenv` opens Ghostty running herdr as one environment. Full file
-in **Appendix B**. Two non-obvious things it does — **both required** (see
-Gotchas):
-1. Forces Mesa **software rendering** (`LIBGL_ALWAYS_SOFTWARE=1`,
-   `GALLIUM_DRIVER=llvmpipe`) — WSLg's GPU path can't create Ghostty's GL surface.
+in **Appendix B**. Two non-obvious things it does:
+
+1. **Picks a renderer at launch, then falls back.** It probes whether a d3d12
+   GPU device is usable and exports the GPU path if so, dropping to Mesa
+   software rendering (`LIBGL_ALWAYS_SOFTWARE=1`, `GALLIUM_DRIVER=llvmpipe`) only
+   when no GPU answers. Both halves matter — see below.
 2. Runs herdr through a **login shell** (`bash -lc`) so it inherits `$TERM`,
    `$SHELL`, PATH.
 
 ```bash
+sudo apt-get install -y mesa-utils-extra   # provides eglinfo, used by the probe
 chmod +x ~/.local/bin/devenv
 ```
+
+**`eglinfo` is a real dependency, not a nicety.** Without it the probe cannot
+verify a GPU and deliberately falls back to software rendering — so a missing
+`mesa-utils-extra` silently costs you the 4.5× the next section describes. The
+chosen path is recorded on the `renderer:` line of `launch.log` at every launch;
+check there if Ghostty feels slow.
+
+### Why probe instead of pinning either one
+
+Software rendering is not free: measured on the reference machine over identical
+output (~3,200 lines in 15 s), `llvmpipe` burned **156% of a CPU core** against
+d3d12's **32%** — about 4.5× the cost, continuously, just to draw a terminal.
+
+But pinning d3d12 unconditionally is not safe either. Windows powers the discrete
+GPU down when nothing appears to need it (Optimus, §8), and starting Ghostty on
+d3d12 while no adapter answers reproduces the blank-unfocusable-window failure,
+which costs a `wsl --shutdown` to clear. So the launcher checks, and software
+rendering remains the guaranteed fallback rather than the default.
+
+The probe deliberately asks *"is any d3d12 device usable"*, not *"is the NVIDIA
+one awake"*. If the discrete GPU is asleep, Mesa answers with the Intel iGPU over
+d3d12 — still hardware rendering, still far cheaper than `llvmpipe`. It uses
+`eglinfo -p wayland` (~0.7 s): EGL is the path Ghostty actually uses, and it is
+3× faster than probing every platform.
+
+> **The launcher's exports apply to Ghostty itself, and nothing in `~/.bashrc`
+> does.** `devenv` is started by `wslg.exe` (its parent is `/init`), which is not
+> a login shell — so `~/.bashrc` is never sourced for the Ghostty process. Only
+> the shells *inside* the terminal read `.bashrc`. This is why the GPU exports in
+> §8 do not, on their own, move Ghostty onto the GPU: the launcher has to do it.
 
 The launcher (Appendix B) already uses `$HOME/.local/bin/herdr` rather than a
 hardcoded user path, so it works for any account. `/usr/bin/ghostty` is left
@@ -226,17 +266,181 @@ console window.
 
 ---
 
+## 8. Optional: force the NVIDIA GPU on an Optimus laptop
+
+On dual-GPU (Intel + NVIDIA Optimus) laptops, WSLg defaults to the integrated
+GPU to save power, so `glxinfo -B` reports an Intel device or `llvmpipe`
+(software) instead of the discrete GPU.
+
+**What this section does and does not reach.** These are `.bashrc` exports, so
+they apply to GUI apps you start *from inside* the terminal. They do **not**
+reach Ghostty itself — `devenv` is not a login shell (§5). Ghostty gets onto the
+GPU through the launcher's own probe, not through anything here.
+
+Where this section *does* matter for Ghostty is the Windows-side step at the end:
+keeping the discrete GPU from powering down is what makes the launcher's probe
+succeed rather than fall back to software rendering.
+
+### WSL-side environment variables
+
+```bash
+echo 'export MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA' >> ~/.bashrc
+echo 'export GALLIUM_DRIVER=d3d12' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Both are required. `MESA_D3D12_DEFAULT_ADAPTER_NAME` alone is not always
+enough; without `GALLIUM_DRIVER=d3d12`, Mesa can silently fall back to
+`llvmpipe` rather than erroring.
+
+### Verify
+
+```bash
+sudo apt install -y mesa-utils   # if glxinfo isn't installed
+glxinfo -B | grep Device
+```
+
+Expect `Device: D3D12 (NVIDIA GeForce RTX ... Laptop GPU)`.
+
+**`glxinfo` run inside the terminal does not tell you what Ghostty is doing.**
+For Ghostty, read the `renderer:` line `devenv` writes to `launch.log`, or check
+the process environment directly.
+Under `devenv` the honest check is Ghostty's own process environment:
+
+```bash
+tr '\0' '\n' < /proc/$(pgrep -x ghostty | head -1)/environ | grep -E 'GALLIUM|LIBGL|MESA'
+```
+
+If that shows `llvmpipe`, Ghostty is on software rendering no matter what
+`glxinfo` says. (Observed 2026-07-26: `glxinfo` reported the RTX 4070 while
+Ghostty burned ~1 full core on llvmpipe.)
+
+If `glxinfo` still shows `llvmpipe`, confirm the GPU is reachable at all with
+`GALLIUM_DRIVER=d3d12 glxinfo -B | grep Device`. If that works but the
+`.bashrc` export doesn't, the WSLg session started before the variable was set:
+`wsl --shutdown` from PowerShell, then reopen.
+
+### Diagnostics when it won't take
+
+- `ls -la /dev/dxg` — the GPU passthrough device must exist.
+- `echo $DISPLAY` — `:0` under WSLg.
+- `env | grep -iE 'mesa|libgl'` — check for conflicting overrides, especially
+  `LIBGL_ALWAYS_SOFTWARE=1` inherited from `devenv`.
+- `ls /usr/lib/x86_64-linux-gnu/dri/ | grep d3d12` — the `d3d12_dri.so` driver
+  must be installed.
+- `wsl --version` (PowerShell) — WSL/WSLg/DXCore reasonably current.
+
+CUDA/compute (PyTorch, `nvidia-smi`) is unaffected by all of this — it uses the
+NVIDIA driver on the Windows host directly. This section is only about the Mesa
+OpenGL path used by WSLg GUI apps.
+
+### Why it reverts every so often
+
+Windows powers down the discrete GPU when nothing appears to need it (Optimus
+power management). While it's down, WSL's passthrough may not see the NVIDIA
+adapter, so the env vars bind to nothing and rendering silently falls back to
+software.
+
+Recent Windows/NVIDIA drivers moved GPU preference out of the NVIDIA Control
+Panel into Windows Settings:
+
+1. **Settings → System → Display → Graphics**
+2. **Browse**, add `C:\Windows\System32\wsl.exe`
+3. Set it to **High performance**
+4. `wsl --shutdown`, then reopen
+
+**Do NOT disable the Intel GPU in Device Manager.** On most Optimus laptops the
+built-in panel is physically wired through the iGPU — disabling it can black out
+the laptop screen. Only safe with an external monitor wired to the dGPU.
+
+---
+
+## 9. Size the VM before you trust it
+
+**WSL2's default is 50% of host RAM. If a `.wslconfig` exists, whatever it says
+wins — including a value someone pasted from a blog years ago.** Check yours
+before debugging any freeze:
+
+```bash
+cat /mnt/c/Users/<you>/.wslconfig     # may not exist; that's fine
+nproc && free -h                      # what the VM actually got
+```
+
+### The freeze class this prevents
+
+Symptom: Ghostty and everything else lock up hard, Windows Task Manager shows
+the disk pinned at 85–95%, and only killing WSL recovers it.
+
+Root cause (diagnosed 2026-07-26): **memory exhaustion with no OOM kill.** A
+single `node` process reached 2.87 GB inside a 6 GB VM that was already running
+Docker, a Postgres stack, three dev servers and two agent sessions.
+MemAvailable fell to 84 MB, swap filled completely, load hit 35 on 4 vCPUs.
+
+The pathology is the part worth internalising: **nothing was ever killed.**
+Because swap was available, the kernel preferred endless reclaim to invoking the
+OOM killer, so there was no exit path and no `dmesg` OOM line. The 85–95% disk
+was swap thrash — a *symptom* of the reclaim loop, not its cause.
+
+The same exhaustion also produces the blank-window failure in the gotchas table:
+a VM this deep in reclaim cannot complete a GTK surface allocation.
+
+### Sizing
+
+This is the reference machine's `.wslconfig` verbatim (`C:\Users\<you>\.wslconfig`):
+
+```ini
+[wsl2]
+memory=24GB          # ~38% of a 64GB host; WSL's own default is 50%
+processors=12        # of 20 logical; leaves 8 for Windows
+swap=4GB             # deliberately SMALL — see below
+
+[experimental]
+autoMemoryReclaim=gradual
+```
+
+Scale to your host, but keep the *shape*:
+
+- **Swap small, not large.** Swap is the thrash runway. Having 2 GB to grind
+  through is exactly why the kernel never OOM-killed anything. A fast kill of one
+  process beats a frozen VM — a failed build is recoverable, a dead VM is not.
+- **Bound the runaway too.** Raising the cap removes today's constraint but adds
+  no guardrail; a real leak will fill 24 GB just as happily. Add to `~/.bashrc`:
+  ```bash
+  export NODE_OPTIONS="--max-old-space-size=4096"
+  ```
+  Note Ubuntu's `.bashrc` returns early for non-interactive shells, so this
+  covers terminal-launched builds (and their children) but not systemd units;
+  use `~/.config/environment.d/` if you need those too.
+- **Know what `autoMemoryReclaim` costs.** It returns idle pages to Windows so
+  `memory=` stays a ceiling rather than a standing reservation — but it does that
+  by swapping them out. On the reference machine, swap climbed steadily from 0 to
+  ~1.3 GB over an hour while 22 GB stayed free and memory pressure sat at 0.00.
+  That is expected behaviour, not a fault: if you see swap in use with plenty of
+  RAM free, this is why, and it is not the freeze above (check `mem_full`, which
+  stays at 0.00). It is enabled here and stable; drop the `[experimental]` block
+  if you would rather trade host RAM for zero swap churn.
+
+Changes need `wsl --shutdown` to take effect, which kills every session in the
+distro. Verify after with `free -h` and `nproc`.
+
+---
+
 ## Gotchas / hard-won lessons (put these in the plugin's troubleshooting section)
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Ghostty window never opens; log shows `MESA: error: ZINK: failed to choose pdev` / `egl: failed to create dri2 screen` | WSLg's d3d12/zink GPU path can't create Ghostty's GL surface | `export LIBGL_ALWAYS_SOFTWARE=1` (+ `GALLIUM_DRIVER=llvmpipe`) — baked into `devenv` |
+| Ghostty window never opens; log shows `MESA: error: ZINK: failed to choose pdev` / `egl: failed to create dri2 screen` | No GPU adapter answered, so zink had no physical device to choose. On an Optimus laptop this is usually the discrete GPU being powered down (§8), not a broken driver | `devenv`'s probe handles it: it falls back to `LIBGL_ALWAYS_SOFTWARE=1` + `GALLIUM_DRIVER=llvmpipe` automatically (§5). Fix the *cause* via the Windows High-performance setting in §8 so the probe succeeds and you keep the GPU path |
 | Window is see-through / text behind it shows | `background-opacity < 1.0` composites as fully transparent under WSLg | Set `background-opacity = 1.0` |
 | `error: nested herdr is disabled by default` | herdr launched from **inside** an existing herdr pane (env has `HERDR_ENV=1`) | Launch from a clean shell / the Windows shortcut, not from within herdr |
 | Shortcut shows "Windows Script Host failed (not enough memory)" or "Windows cannot find `\\`" | VBS/`wscript` launcher is unreliable on the host | Ditch VBS — point `.lnk` directly at `wslg.exe` |
 | `wslg.exe` pops a usage dialog | Passed `-e` (a `wsl.exe` flag); `wslg.exe` has none | Use `--` to pass the command: `wslg.exe -d Ubuntu -- <cmd>` |
 | No split dividers visible in herdr | `pane_borders` only draws between **split** panes; a single pane has none | Split a pane (`Ctrl+B` `split_vertical`) |
 | Testing Windows launchers *from inside WSL* fails with `\\wsl.localhost\...` UNC errors | Windows processes spawned from a WSL cwd inherit an unsupported UNC working dir | Not a real-world issue — Explorer clicks provide a valid cwd. Only bites when testing via `cmd.exe` from WSL |
+| Everything freezes hard; Windows Task Manager shows disk at 85–95%; only killing WSL recovers | VM memory exhausted, and with swap available the kernel reclaims forever instead of OOM-killing — no exit path, no `dmesg` OOM line. Disk load is swap thrash, a symptom | Size the VM (§9): raise `memory=`, keep `swap=` **small**, bound Node with `--max-old-space-size` |
+| Ghostty window appears in the taskbar but is blank and cannot take focus | Same exhaustion as above — a VM deep in reclaim never completes the GTK surface allocation, so the Wayland surface never commits a buffer | `wsl --shutdown` recovers it; §9 prevents it. **Not** a GPU fault — see the next two rows |
+| `launch.log` shows `Gtk: Trying to snapshot GtkRevealer … without a current allocation` | Nothing. This warning appears in perfectly healthy launches too | Ignore it. The real signal is whether repeated `gtk-xft-dpi` lines follow (frames rendering) or the log stops dead there |
+| `glxinfo` reports the NVIDIA GPU, but Ghostty is visibly slow / burns a full CPU core | `glxinfo` inherits your shell's env and probes GLX; Ghostty inherits `devenv`'s and renders through EGL. The two can disagree — they are different processes on different paths | Check `/proc/$(pgrep -x ghostty)/environ` for the truth, and grep `launch.log` for the `renderer:` line `devenv` records. Probe with `eglinfo -p wayland`, not `glxinfo` (§5) |
+| `/proc/pressure/io` shows 50–95% sustained stall on an idle VM | **PSI I/O accounting is unreliable on WSL2.** Measured 2026-07-26: 15.7% claimed vs 64ms of real disk busy time in a 10s window (~25× over), pinned at 95% for an hour at load 0.06 | Ignore `io_*`. Use `/proc/diskstats` io_ticks for real disk load, and `mem_full` + swap + MemAvailable to diagnose freezes |
 
 ---
 
@@ -296,21 +500,121 @@ keybind = ctrl+zero=reset_font_size
 ```bash
 #!/usr/bin/env bash
 # Launch the Ghostty + herdr dev environment together.
-
-# WSLg's GPU driver (d3d12/zink) fails to create an OpenGL surface for Ghostty,
-# which kills the window on launch. Force Mesa software rendering (llvmpipe).
-export LIBGL_ALWAYS_SOFTWARE=1
-export GALLIUM_DRIVER=llvmpipe
+# Opens a Ghostty window that runs herdr as its startup program.
 
 # Capture Ghostty's own launch output for diagnosis of failed clicks.
 LOG="$HOME/.local/share/devenv/launch.log"
 mkdir -p "$(dirname "$LOG")"
 printf '\n===== launch %s =====\n' "$(date '+%Y-%m-%d %H:%M:%S')" >>"$LOG"
 
+# --- renderer selection -------------------------------------------------------
+# Ghostty on Wayland renders through EGL. The GPU path (d3d12 → NVIDIA) costs
+# roughly a quarter of the CPU that software rasterisation does: measured
+# 2026-07-26 over identical output (~3,200 lines in 15s), llvmpipe burned 156% of
+# a core against d3d12's 32%. So prefer the GPU.
+#
+# But do NOT pin d3d12 blindly. Windows powers the discrete GPU down when nothing
+# appears to need it (Optimus), and starting Ghostty on d3d12 while the adapter is
+# asleep reproduces the blank-unfocusable-window failure — which costs a
+# `wsl --shutdown` to clear. So probe first and fall back to software rendering,
+# which always works. Keeping the adapter awake is a Windows-side setting:
+# Settings → System → Display → Graphics → add C:\Windows\System32\wsl.exe →
+# High performance. With that set, the fallback should be a rare safety net.
+#
+# eglinfo (not glxinfo) is the right probe: Ghostty uses EGL, and the two paths
+# can disagree — a GLX probe reported the NVIDIA GPU while Ghostty itself was on
+# llvmpipe.
+select_renderer() {
+  [ -e /dev/dxg ] || { printf 'llvmpipe (no /dev/dxg — no GPU passthrough)'; return; }
+  command -v eglinfo >/dev/null 2>&1 || {
+    printf 'llvmpipe (eglinfo absent, cannot verify — install mesa-utils-extra)'; return; }
+  # `-p wayland` restricts the probe to the platform Ghostty actually uses and is
+  # ~3x faster than probing every platform (0.8s vs 2.5s of launch latency).
+  #
+  # This asks "is ANY d3d12 device usable", not "is the NVIDIA one awake" — by
+  # design. If the discrete GPU is asleep, Mesa answers with the Intel iGPU over
+  # d3d12, which is still hardware rendering and still far cheaper than llvmpipe.
+  # Software rendering is reserved for the case where no GPU answers at all.
+  if timeout 10 env GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA \
+       eglinfo -p wayland -B 2>/dev/null | grep -qi 'd3d12'; then
+    printf 'd3d12 (GPU adapter reachable)'
+  else
+    printf 'llvmpipe (no d3d12 device answered — GPU unavailable)'
+  fi
+}
+
+RENDERER="$(select_renderer)"
+case "$RENDERER" in
+  d3d12*)
+    unset LIBGL_ALWAYS_SOFTWARE MESA_LOADER_DRIVER_OVERRIDE __GLX_VENDOR_LIBRARY_NAME
+    export GALLIUM_DRIVER=d3d12
+    export MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA
+    ;;
+  *)
+    # MESA_LOADER_DRIVER_OVERRIDE is the key one: it forces the *EGL* path to
+    # llvmpipe, not just GLX.
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export GALLIUM_DRIVER=llvmpipe
+    export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+    export __GLX_VENDOR_LIBRARY_NAME=mesa
+    ;;
+esac
+printf 'renderer: %s\n' "$RENDERER" >>"$LOG"
+
+# --- pre-launch state snapshot (diagnostic only) ------------------------------
+# The blank-unfocusable-window failure mode leaves no error in Ghostty's own
+# output: the log is byte-identical to a good launch up to the GtkRevealer
+# warning, then simply stops. So the discriminating evidence is the state of the
+# VM *around* the launch, not Ghostty's stderr. Captured here because
+# /mnt/wslg/stderr.log is per-VM and dies with a `wsl --shutdown`.
+snapshot() {
+  local when="$1"
+  {
+    printf -- '--- state @%s (%s) ---\n' "$when" "$(date '+%H:%M:%S')"
+    printf 'vm_uptime_s: %s\n' "$(awk '{print int($1)}' /proc/uptime)"
+    printf 'pressure_io: %s\n' "$(tr '\n' ' ' < /proc/pressure/io)"
+    printf 'pressure_cpu: %s\n' "$(tr '\n' ' ' < /proc/pressure/cpu)"
+    printf 'pressure_mem: %s\n' "$(tr '\n' ' ' < /proc/pressure/memory)"
+    printf 'mem: %s\n' "$(free -m | awk '/^Mem:/{printf "total=%s used=%s avail=%s", $2, $3, $7}')"
+    printf 'swap: %s\n' "$(free -m | awk '/^Swap:/{printf "total=%s used=%s", $2, $3}')"
+    printf 'loadavg: %s\n' "$(cat /proc/loadavg)"
+    printf 'gpu_env: GALLIUM_DRIVER=%s LIBGL_ALWAYS_SOFTWARE=%s MESA_LOADER_DRIVER_OVERRIDE=%s MESA_D3D12_DEFAULT_ADAPTER_NAME=%s\n' \
+      "${GALLIUM_DRIVER:-unset}" "${LIBGL_ALWAYS_SOFTWARE:-unset}" \
+      "${MESA_LOADER_DRIVER_OVERRIDE:-unset}" "${MESA_D3D12_DEFAULT_ADAPTER_NAME:-unset}"
+    printf 'wayland: DISPLAY=%s WAYLAND_DISPLAY=%s dxg=%s\n' \
+      "${DISPLAY:-unset}" "${WAYLAND_DISPLAY:-unset}" \
+      "$([ -e /dev/dxg ] && echo present || echo MISSING)"
+    # `pgrep -c` prints 0 AND exits non-zero on no-match, so a `|| echo 0`
+    # fallback would double-print. Take the first line instead.
+    printf 'already_running: ghostty=%s herdr=%s\n' \
+      "$(pgrep -c -x ghostty 2>/dev/null | head -1)" \
+      "$(pgrep -c -x herdr 2>/dev/null | head -1)"
+    printf 'wslg_stderr (mtime %s):\n' \
+      "$(stat -c %y /mnt/wslg/stderr.log 2>/dev/null || echo unreadable)"
+    tail -5 /mnt/wslg/stderr.log 2>/dev/null | sed 's/^/  /' || printf '  (unreadable)\n'
+    printf -- '--- end state @%s ---\n' "$when"
+  } >>"$LOG" 2>&1
+}
+
+snapshot pre-launch
+
+# A window that paints has emitted its first frames by now; one that came up
+# blank has not. Sampling again at +20s separates "never started" from
+# "started, then wedged" without any interaction.
+( sleep 20; snapshot post-launch+20s ) &
+
 # Run herdr through a login shell so it inherits a proper environment
-# ($TERM, $SHELL, PATH). Launching it bare via `-e` starves it of that env.
+# ($TERM, $SHELL, PATH from profile). Launching it bare via `-e` starves it of
+# that env and herdr exits immediately when started cold (e.g. from a shortcut).
 exec /usr/bin/ghostty -e bash -lc 'exec "$HOME/.local/bin/herdr"' "$@" >>"$LOG" 2>&1
 ```
+
+**Reading the snapshots.** A healthy launch shows the `pre-launch` block, then
+Ghostty's warnings, then a `post-launch+20s` block — and `launch.log` keeps
+accumulating `gtk-xft-dpi` lines afterwards (one per render). A blank window
+shows the same two blocks with *no* renders between them. Compare `pressure_mem`
+and `swap` across the pair: if memory was already exhausted at `pre-launch`, the
+window was never going to paint (§9).
 
 ## Appendix C — Create Windows shortcuts (PowerShell, run from WSL)
 
@@ -369,6 +673,71 @@ print("wrote", out)
 PY
 ```
 
+## Appendix E — `~/.local/bin/wsl-health-sampler` (freeze forensics)
+
+A hard freeze cannot be diagnosed interactively — by the time you notice, you
+can't type, and `/mnt/wslg/stderr.log` dies with the VM on `wsl --shutdown`.
+Sample the state continuously so the readings from just before the wall survive.
+This is what identified the runaway process by name in the incident above.
+
+```bash
+#!/usr/bin/env bash
+# Diagnostic only. Reads /proc (RAM, no disk I/O) and appends one line per tick.
+set -uo pipefail
+INTERVAL=5
+LOG="$HOME/.local/share/wsl-health/health.log"
+mkdir -p "$(dirname "$LOG")"
+
+psi() { # psi <file> <some|full> <avg10>
+  awk -v k="$2" -v f="$3" '$1==k{for(i=2;i<=NF;i++){split($i,a,"=");if(a[1]==f){print a[2];exit}}}' "$1"
+}
+disk() { awk '$3 ~ /^sd[a-z]$/ {t+=$13} END{print t+0}' /proc/diskstats; }
+mb()   { awk -v k="$1:" '$1==k{printf "%d", $2/1024}' /proc/meminfo; }
+
+prev=$(disk)
+printf '\n== start %s (uptime %ss) ==\n' "$(date '+%F %T')" "$(awk '{print int($1)}' /proc/uptime)" >>"$LOG"
+while :; do
+  now=$(disk); d=$(( now - prev )); (( d < 0 )) && d=0; prev=$now
+  read -r load1 _ < /proc/loadavg
+  printf 'S %s mem_full=%s avail=%sMB swap=%s/%sMB load=%s disk_ms=%s io_full=%s\n' \
+    "$(date '+%T')" "$(psi /proc/pressure/memory full avg10)" "$(mb MemAvailable)" \
+    "$(( $(mb SwapTotal) - $(mb SwapFree) ))" "$(mb SwapTotal)" "$load1" "$d" \
+    "$(psi /proc/pressure/io full avg10)" >>"$LOG"
+  # every minute, record who is holding memory — this is what names the culprit
+  (( $(date +%s) % 60 < INTERVAL )) && \
+    { printf 'TOP %s\n' "$(date '+%T')"
+      timeout 5 ps -eo rss,pcpu,etime,comm --sort=-rss --no-headers | head -6 | sed 's/^/  /'; } >>"$LOG"
+  sleep "$INTERVAL"
+done
+```
+
+Run it as a user unit so it starts at boot (no `enable-linger` needed — the user
+manager starts early enough) in `~/.config/systemd/user/wsl-health-sampler.service`:
+
+```ini
+[Unit]
+Description=WSL2 health sampler (diagnostic only)
+[Service]
+ExecStart=%h/.local/bin/wsl-health-sampler
+Restart=always
+RestartSec=5
+Nice=10
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now wsl-health-sampler
+```
+
+**Reading it.** `mem_full` climbing past ~50 with `avail` collapsing and swap
+filling is the freeze; the `TOP` block immediately before the log stops names
+the process responsible. Ignore `io_full` — it is kept in the output only so you
+recognise the artifact when you see it (see the gotchas table). `disk_ms` is the
+real disk-busy figure, out of `INTERVAL × 1000`.
+
+`devenv` carries the same idea for launch-time state — see Appendix B.
+
 ---
 
 ## Summary of artifacts created
@@ -384,3 +753,7 @@ PY
 | `~/.local/share/devenv/launch.log` | per-launch diagnostic log |
 | `C:\Apps\ghostty.ico` | Windows icon for shortcuts |
 | `Dev Environment.lnk` ×3 | Desktop / Start Menu / `C:\Apps` shortcuts → `wslg.exe` |
+| `C:\Users\<you>\.wslconfig` | VM sizing — memory / processors / swap (§9) |
+| `~/.local/bin/wsl-health-sampler` | freeze forensics sampler (Appendix E) |
+| `~/.config/systemd/user/wsl-health-sampler.service` | runs the sampler from boot |
+| `~/.local/share/wsl-health/health.log` | sampled VM state; survives `wsl --shutdown` |
