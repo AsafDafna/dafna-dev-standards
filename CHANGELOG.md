@@ -1,5 +1,26 @@
 # Changelog
 
+## core 1.0.1 — WSL VM sizing, freeze forensics, Optimus GPU section
+
+- `dev-env-setup`: new `windows-wsl.md` §9 on sizing the WSL2 VM, from a
+  2026-07-26 incident where a 6GB cap let one 2.87GB `node` process exhaust the
+  VM; with swap available the kernel reclaimed forever instead of OOM-killing,
+  freezing everything with no `dmesg` line. Covers the small-swap rationale and
+  bounding Node.
+- `dev-env-setup`: `devenv` no longer pins software rendering. It probes for a
+  usable d3d12 device at launch and falls back to llvmpipe only when no GPU
+  answers, recording the choice in `launch.log`. Measured over identical output,
+  llvmpipe cost 156% of a core against d3d12's 32% — ~4.5x — but pinning the GPU
+  unconditionally reproduces the blank-window failure whenever Optimus has
+  powered the adapter down, hence the probe. Adds a `mesa-utils-extra` dependency.
+- `dev-env-setup`: new §8 on forcing the NVIDIA GPU on Optimus laptops, including
+  the Windows High-performance setting that keeps the adapter awake so the
+  launcher's probe succeeds.
+- `dev-env-setup`: new Appendix E — a boot-started health sampler for
+  diagnosing freezes after the fact, plus five gotcha rows including the
+  blank-window failure, the benign `GtkRevealer` warning, and the finding that
+  `/proc/pressure/io` is unreliable on WSL2 (~25× overstated, measured).
+
 ## coo 1.0.2 — never-name dispatch rule made explicit
 
 - `coo`: SKILL.md + orchestration.md now state the dispatch rule as a hard negative:
