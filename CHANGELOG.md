@@ -1,5 +1,21 @@
 # Changelog
 
+## core 1.1.0 — new `migrate` skill (Supabase migration workflow)
+
+- `migrate`: new skill orchestrating the full Supabase migration lifecycle —
+  detect local-first vs remote-only project mode, create the migration file
+  (real timestamp, header comment, `WITH CHECK` reminder), validate SQL before
+  push (RLS completeness, idempotency guards, `auth.users` trigger warnings),
+  push with confirmation, and post-push steps (type generation, drift/repair
+  handling). Includes the migration-timestamp-ordering guidance (a stamp is
+  not a reservation — the base branch's head at merge time decides acceptance,
+  not the authoring clock) and a known-gotchas table. Ported from a personal
+  skill at Nir's request (Slack, 2026-08-08); genericized to any Supabase repo
+  — no hardcoded project paths or lint-script names, phrased as "if the repo
+  has a migration-order lint" instead.
+- Skill added to the bootstrap-repo/dedup-local-skills FIXED skill lists and
+  the plugin/marketplace descriptions.
+
 ## core 1.0.1 — WSL VM sizing, freeze forensics, Optimus GPU section
 
 - `dev-env-setup`: new `windows-wsl.md` §9 on sizing the WSL2 VM, from a
