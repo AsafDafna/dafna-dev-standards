@@ -11,6 +11,10 @@
   — including a read-only digest, a simplify pass, and a comment-only
   fix-up batch — on an org seat with a hard-stop quota. Folds the reviewer's
   prior "Model-match" sentence into a single cross-referenced rule.
+- `coo`: (2026-09-20) split the former single frontier tier into `opus`
+  (liberal default for real work) and `fable` (Mythos-class reserve for
+  migration/RPC/sync-engine/live-path work and irreversible data ops); they
+  are not interchangeable, and opus can be used far more freely than fable.
 
 ## core 1.0.1 — WSL VM sizing, freeze forensics, Optimus GPU section
 
