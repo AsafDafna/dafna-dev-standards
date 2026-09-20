@@ -1,5 +1,17 @@
 # Changelog
 
+## coo 1.0.3 — model tier per dispatch rule
+
+- `coo`: SKILL.md + orchestration.md now require an explicit `model:` on every
+  subagent dispatch, stated in the dispatch line, with a default tier map
+  (haiku for read-only lookups/fix-ups/polls, sonnet for digests/dry-runs/
+  simplify/docs/small diffs, frontier only for migration/RPC/engine/live-path
+  work and its reviewer). Motivated by a 2026-09-19 recurrence where every
+  subagent in a root /coo session inherited the orchestrator's frontier tier
+  — including a read-only digest, a simplify pass, and a comment-only
+  fix-up batch — on an org seat with a hard-stop quota. Folds the reviewer's
+  prior "Model-match" sentence into a single cross-referenced rule.
+
 ## core 1.0.1 — WSL VM sizing, freeze forensics, Optimus GPU section
 
 - `dev-env-setup`: new `windows-wsl.md` §9 on sizing the WSL2 VM, from a
