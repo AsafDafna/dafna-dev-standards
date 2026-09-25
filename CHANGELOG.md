@@ -1,5 +1,15 @@
 # Changelog
 
+## core 1.2.0 — spec + plan PR and an explicit go-ahead before the build
+
+- `RULES.md` workflow gates: the spec and the plan ship as a docs-only PR before
+  the build, and the build starts only on the user's explicit go-ahead on the
+  final plan; a handoff saying "then build" does not count. Written down after
+  an edut-app session (2026-09-24, calendar series anchor) went from plan
+  review straight into the build with both documents on one local machine: the
+  practice existed (edut-app #489, #627) but no rule said so, and the
+  execution-mode gate's "after a plan is approved" never named who approves.
+
 ## core 1.1.0 — new `migrate` skill (Supabase migration workflow)
 
 - `migrate`: new skill orchestrating the full Supabase migration lifecycle —

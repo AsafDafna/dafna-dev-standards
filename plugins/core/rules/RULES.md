@@ -10,6 +10,9 @@
   implementation only for <=2-file changes.
 - Feature design uses brainstorming -> spec (committed to git) -> spec-review;
   plan mode is for execution planning, not feature design. Plans get plan-review.
+- Before the build: the spec and the plan ship as a docs-only PR, and the build
+  starts only on the user's explicit go-ahead on the final plan. A handoff that
+  says "then build" is not that go-ahead.
 - Bugs: investigate -> root cause -> fix -> verify. Never guess-and-patch.
 - Parallel sessions in one repo => git worktrees, never a shared checkout.
 
