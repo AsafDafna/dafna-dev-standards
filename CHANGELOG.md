@@ -1,5 +1,18 @@
 # Changelog
 
+## core 1.2.0 — new `diagram-rules` skill (universal diagram rules + Hebrew/RTL)
+
+- `diagram-rules`: new compact companion to the built-in `artifact-diagramming`
+  skill for architecture, flow, sequence, state, and ER diagrams (charts and
+  plots stay with `dataviz`). Distills the universal rules of
+  cathrynlavery/diagram-design (MIT, commit cea465e7): complexity budget,
+  anti-patterns, six connector rules, pre-output checklist. Adds theme-safe
+  color (`currentColor` + tokens, no hex) and a Hebrew/RTL section (flow
+  direction, base direction in SVG and HTML, `text-anchor` under rtl, mixed
+  runs, Hebrew-capable fonts), with renderer-dependent points marked "verify".
+- Skill added to the bootstrap-repo/dedup-local-skills FIXED skill lists and
+  the plugin/marketplace descriptions.
+
 ## core 1.1.0 — new `migrate` skill (Supabase migration workflow)
 
 - `migrate`: new skill orchestrating the full Supabase migration lifecycle —
