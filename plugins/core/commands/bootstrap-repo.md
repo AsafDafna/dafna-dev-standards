@@ -21,7 +21,7 @@ Steps, in order; show a summary table at the end:
    user from `gh api user -q .login` (ask if gh is unavailable).
 3. Skill-collision check (REPORT-ONLY) against the FIXED list of skills this
    marketplace ships — lessons-log, spec-review, plan-review, checklists,
-   dev-env-setup, migrate, coo (coo ships via the separate `coo` plugin of this
+   dev-env-setup, migrate, diagram-rules, coo (coo ships via the separate `coo` plugin of this
    marketplace, not core) — regardless of which plugins are currently installed:
    list matching directory names under ~/.claude/skills/. Print a warning table —
    plugin skills are namespaced, so local copies DUPLICATE rather than shadow
