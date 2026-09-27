@@ -14,7 +14,8 @@ for s in plugins/*/skills/*/SKILL.md; do
   [ "$dlen" -le 1024 ] || { echo "description over 1024 chars: $s"; exit 1; }
 done
 rc=0
-grep -rniE 'asaf|nir|edut|testimony|monday|/Users/|~/dev-projects|~/Downloads' plugins/ || rc=$?
+# A '<placeholder>' segment after Users/ (e.g. /mnt/c/Users/<you>/) is exempt; any literal name still fails.
+grep -rniE 'asaf|nir|edut|testimony|monday|/Users/([^<]|$)|~/dev-projects|~/Downloads' plugins/ || rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "LEAK in plugins/"; exit 1
 elif [ "$rc" -ne 1 ]; then
