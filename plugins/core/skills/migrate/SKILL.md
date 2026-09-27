@@ -150,6 +150,6 @@ Keep these in mind throughout the workflow:
 
 1. **Never auto-push** without showing the user the migration SQL and getting confirmation.
 2. **Never auto-repair** diverged migrations without explicit user confirmation.
-3. **Always create migration files with the CLI** (`supabase migration new`, or the declarative generate command), never by hand-writing the filename or its stamp.
+3. **Always create migration files with the CLI** (`supabase migration new`, or in declarative mode the `sync` / `db diff -f` step in Step 2), never by hand-writing the filename or its stamp.
 4. **Always validate SQL** before pushing, even for simple migrations.
 5. **Always use `2>/dev/null`** when running `supabase gen types`.
