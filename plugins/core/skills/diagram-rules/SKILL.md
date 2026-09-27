@@ -91,7 +91,8 @@ punctuation and mixed runs resolve against it: under an LTR base `שלום!` put
 - SVG: `direction="rtl"` on each Hebrew `<text>`, or on a `<g>` of RTL-only text.
   SVG has no `dir` attribute. Prefer a separate `<text>` per direction: any
   `<tspan>` reorders only with `unicode-bidi="embed"` (or `isolate`); `direction`
-  alone, even with its own x, flips the anchor but leaves `!` on the LTR side.
+  alone leaves `!` on the LTR side and may flip the anchor (when the tspan has its
+  own x or ends RTL text).
 - Inline SVG inherits CSS `direction` from the HTML `dir`, so an RTL host page flips
   every `<text>`. Set `direction` on the `<svg>` so the drawing ignores its host.
 - HTML labels, legends, captions: `dir="rtl"` on the container, `lang="he"`,
