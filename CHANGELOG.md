@@ -7,7 +7,7 @@
   increment" collision advice that contradicted "never sequential" is gone.
 - `migrate`: new declarative-schema branch (`supabase/schemas/`): edit the
   schema files, then generate the migration with `db schema declarative sync`
-  (pg-delta engine) or `db diff -f` with the stack stopped (legacy migra).
+  (plus `--experimental` on the legacy migra engine), never `db diff`.
 
 ## core 1.2.0 — new `diagram-rules` skill (universal diagram rules + Hebrew/RTL)
 

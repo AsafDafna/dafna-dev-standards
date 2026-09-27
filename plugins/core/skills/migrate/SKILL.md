@@ -16,7 +16,7 @@ Check the project root for `supabase/config.toml`:
 
 Then check for declarative schemas:
 
-- **`supabase/schemas/` exists, or `config.toml` sets `[db.migrations] schema_paths`** --> also **Declarative mode**. The schema files are the source of truth and migrations are generated from them, not hand-written. Note the diff engine: `config.toml` has `[experimental.pgdelta]` with `enabled = true` --> **pg-delta**; otherwise --> **legacy migra**.
+- **`supabase/schemas/` exists, or `config.toml` sets a non-empty `[db.migrations] schema_paths` or `[experimental.pgdelta] declarative_schema_path`** --> also **Declarative mode**. The schema files are the source of truth and migrations are generated from them, not hand-written. Note the diff engine: `config.toml` has `[experimental.pgdelta]` with `enabled = true` --> **pg-delta**; otherwise --> **legacy migra**.
 
 Report which mode (and, for declarative, which engine) was detected and which project directory you are in before proceeding.
 
@@ -24,11 +24,11 @@ Report which mode (and, for declarative, which engine) was detected and which pr
 
 1. Create the file with the Supabase CLI. Don't hand-write the filename or its stamp.
    - **Local-first or remote-only mode:** `npx supabase migration new <description>`. The CLI stamps the name from the UTC clock (`YYYYMMDDHHmmss`) and creates an empty `supabase/migrations/<timestamp>_<description>.sql`; write the SQL into it.
-   - **Declarative mode:** edit the files under `supabase/schemas/` (append new columns at the end of a table), then generate the migration:
+   - **Declarative mode:** edit the schema files (`supabase/schemas/` or the configured path; append new columns at the end of a table), then generate the migration:
      - pg-delta: `npx supabase db schema declarative sync -f <description> --no-apply`
-     - legacy migra: `npx supabase stop`, then `npx supabase db diff -f <description>`, then `npx supabase start`
+     - legacy migra: the same command plus `--experimental` (a one-run pg-delta opt-in): `npx supabase db schema declarative sync --experimental -f <description> --no-apply`
 
-     Both diff the schema files against `supabase/migrations`, not the live database, so a change made through Studio, the SQL editor, or `psql` is invisible to them and gets dropped. On pg-delta, don't use `db diff`: there it diffs the live database and ignores `supabase/schemas/`.
+     It diffs the schema files against `supabase/migrations`, not the live database, so a change made through Studio, the SQL editor, or `psql` is invisible to it and gets dropped. Don't use `db diff` here: on pg-delta it diffs the live database and ignores the schema files, and the legacy migra flow (`stop`, `db diff -f`, `start`) misses changes such as `alter policy` and stops a local stack other worktrees may share.
 2. Mind the stamp's order against the base branch:
    > **A stamp is not a reservation.** What decides acceptance is the base branch's head at
    > **merge** time, not the clock when you authored the file. If anything with a higher stamp
@@ -41,9 +41,9 @@ Report which mode (and, for declarative, which engine) was detected and which pr
    > So, as the **first** command of the PR-opening sequence:
    > `git fetch origin main && ls supabase/migrations | tail -3`
    > Any local migration stamped at or below main's newest is a blocker. Repair is cheap and boring:
-   > `git mv` to a fresh UTC stamp (`date -u +%Y%m%d%H%M%S`, the clock `migration new` uses), then
-   > `grep -rl "<old stamp>" src/ supabase/` (comments and test fixtures reference migration
-   > filenames), then a `db reset` to prove the replay.
+   > `git mv` to a fresh UTC stamp later than main's newest (`date -u +%Y%m%d%H%M%S`, the clock
+   > `migration new` uses), then `grep -rl "<old stamp>" src/ supabase/` (comments and test
+   > fixtures reference migration filenames), then a `db reset` to prove the replay.
    >
    > Better than remembering it: make CI fail the PR. If the repo has (or can add) a
    > migration-order lint — comparing each ADDED migration's stamp against the base branch's
@@ -87,9 +87,10 @@ Before pushing, review the migration SQL for these common problems:
 - If the migration creates triggers on `auth.users`: warn that triggers on `auth.users` defined in migrations may not fire on hosted Supabase. Suggest using Supabase Dashboard webhooks or database functions called via `auth.hook` instead.
 
 ### Declarative mode
-- Review the generated file with the same checks.
+- Review every file the command writes (it can write several) with the same checks.
+- Check for unexpected `DROP`s: the schema files are the complete desired state, so anything missing from them is dropped.
 - The diff never captures DML (including storage buckets, which are rows), so data changes go in a separate `migration new` file.
-- Generated `GRANT`/`REVOKE` lines you didn't write reflect default privileges.
+- Generated `GRANT`/`REVOKE` lines you didn't write reflect default privileges; if the project hasn't customized permissions, they're safe to remove.
 
 Report all findings to the user. Do not proceed to push until issues are resolved.
 
@@ -144,12 +145,12 @@ Keep these in mind throughout the workflow:
 | Env var typos | Typos like `SUPABASE_SERVICE_ROLE_KE` (missing the Y) cause silent auth failures. Double-check env var names. |
 | Partial push failures | When a migration fails mid-push, the next migration should use `IF NOT EXISTS` / `DROP IF EXISTS` guards for any objects that may have been partially created. |
 | WITH CHECK on RLS | INSERT and UPDATE policies without `WITH CHECK` silently reject all writes. This is the most common RLS mistake. |
-| Timestamp collisions | Two migrations created in the same second get the same stamp. On a collision, wait a second and re-run the CLI command; never hand-edit a stamp to make it unique. |
+| Timestamp collisions | Two migrations created in the same second get the same stamp. On a collision, delete the duplicate (still empty) file, wait a second, then re-run the CLI command; never hand-edit a stamp to make it unique. |
 
 ## Rules
 
 1. **Never auto-push** without showing the user the migration SQL and getting confirmation.
 2. **Never auto-repair** diverged migrations without explicit user confirmation.
-3. **Always create migration files with the CLI** (`supabase migration new`, or in declarative mode the `sync` / `db diff -f` step in Step 2), never by hand-writing the filename or its stamp.
+3. **Always create migration files with the CLI** (`supabase migration new`, or in declarative mode the `sync` step in Step 2), never by hand-writing the filename or its stamp (exception: the Step 2 restamp repair, using the same UTC clock).
 4. **Always validate SQL** before pushing, even for simple migrations.
 5. **Always use `2>/dev/null`** when running `supabase gen types`.
