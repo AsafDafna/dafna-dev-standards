@@ -1,5 +1,14 @@
 # Changelog
 
+## core 1.2.1 — `migrate` creates files with the Supabase CLI
+
+- `migrate`: new files come from `supabase migration new` (UTC stamp) instead of
+  a hand-built timestamp, matching the Supabase plugin's rule; the "manually
+  increment" collision advice that contradicted "never sequential" is gone.
+- `migrate`: new declarative-schema branch (`supabase/schemas/`): edit the
+  schema files, then generate the migration with `db schema declarative sync`
+  (pg-delta engine) or `db diff -f` with the stack stopped (legacy migra).
+
 ## core 1.2.0 — new `diagram-rules` skill (universal diagram rules + Hebrew/RTL)
 
 - `diagram-rules`: new compact companion to the built-in `artifact-diagramming`
