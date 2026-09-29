@@ -1,5 +1,20 @@
 # Changelog
 
+## core 1.3.0 — new `test-audit` skill (test authoring gate + pruning audits)
+
+- `test-audit`: new skill adapted from openclaw/openclaw's
+  `.agents/skills/test-audit` (MIT, commit 2aed866). Authoring gate (four
+  questions every new test must answer), a junk-pattern list, a retention bar,
+  the evidence required before deleting a test, and a campaign mode
+  (`CAMPAIGN.md`) for pruning one area's whole test surface. The
+  openclaw-specific commands, `AGENTS.md` reads and review hooks are replaced
+  by "read the repo's `CLAUDE.md` and test-conventions doc first", which wins
+  on commands, scope and always-retained categories. Deletions need the
+  user's go-ahead on the candidate list.
+- `checklists/test.md` points to the new skill's authoring gate.
+- Skill added to the bootstrap-repo/dedup-local-skills FIXED skill lists and
+  the plugin/marketplace descriptions.
+
 ## core 1.2.1 — `migrate` creates files with the Supabase CLI
 
 - `migrate`: new files come from `supabase migration new` (UTC stamp) instead of

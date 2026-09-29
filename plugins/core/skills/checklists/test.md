@@ -1,5 +1,10 @@
 # Testing Checklist
 
+Before adding or changing a test, pass the authoring gate in the `test-audit`
+skill; use that skill, not this list, to judge whether an existing test is
+worth keeping. This checklist covers what to test, not whether a test earns
+its place.
+
 ## Test Categories
 
 ### Unit Tests
