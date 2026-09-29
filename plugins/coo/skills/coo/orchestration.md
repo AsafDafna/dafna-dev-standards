@@ -6,7 +6,7 @@ The orchestration working agreement. Governs multi-workstream / cross-repo work;
 - **Model tier per dispatch (2026-09-19, split 2026-09-20).** Pass `model:` explicitly on EVERY `Agent` dispatch and say the tier in the dispatch line. Four tiers, not three: opus and fable are not interchangeable. Opus is the liberal default for real work; fable is a reserve for the highest-blast-radius work only. Default map:
   - `haiku`: read-only lookups, status polls, comment/typo fix-ups.
   - `sonnet`: orientation digests, dry-run tooling, docs/PR-body drafts, small config diffs and their review.
-  - `opus` (the liberal default for real work): feature/tool implementation, simplify passes, standard hostile pre-PR review, plan/spec review, Monday/API scripts.
+  - `opus` (the liberal default for real work): feature/tool implementation, simplify passes, standard hostile pre-PR review, plan/spec review, third-party API scripts.
   - `fable` (Mythos-class, reserve): migration/RPC/sync-engine/live-path implementation, hostile review of that code, irreversible data ops. Use it only when the blast radius or subtlety warrants; if unsure between opus and fable for a review, opus.
 
   Never trade quality for quota: a genuinely frontier-grade task runs frontier (opus or fable, per the map above) or parks — a degraded run is never the answer (mirrors the usage-limit rule in the user's global CLAUDE.md). This is the one place the tier default lives; the adversarial-review bullet below cross-references it instead of restating it.

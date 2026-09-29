@@ -9,7 +9,7 @@
     {
       "name": "core",
       "source": "./plugins/core",
-      "description": "Always-on workflow rules (SessionStart-injected) + lessons-log, spec-review, plan-review, checklists, dev-env-setup skills + bootstrap-repo/dedup-local-skills commands"
+      "description": "Always-on workflow rules (SessionStart-injected) + lessons-log, spec-review, plan-review, checklists, dev-env-setup, migrate, diagram-rules, test-audit skills + bootstrap-repo/dedup-local-skills commands"
     },
     {
       "name": "coo",

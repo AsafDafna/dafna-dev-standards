@@ -16,6 +16,59 @@
   migration/RPC/sync-engine/live-path work and irreversible data ops); they
   are not interchangeable, and opus can be used far more freely than fable.
 
+## core 1.3.0 — new `test-audit` skill (test authoring gate + pruning audits)
+
+- `test-audit`: new skill adapted from openclaw/openclaw's
+  `.agents/skills/test-audit` (MIT, commit 2aed866). Authoring gate (four
+  questions every new test must answer), a junk-pattern list, a retention bar,
+  the evidence required before deleting a test, and a campaign mode
+  (`CAMPAIGN.md`) for pruning one area's whole test surface. The
+  openclaw-specific commands, `AGENTS.md` reads and review hooks are replaced
+  by "read the repo's `CLAUDE.md` and test-conventions doc first", which wins
+  on commands, scope and always-retained categories. Deletions need the
+  user's go-ahead on the candidate list.
+- `checklists/test.md` points to the new skill's authoring gate.
+- Skill added to the bootstrap-repo/dedup-local-skills FIXED skill lists and
+  the plugin/marketplace descriptions.
+
+## core 1.2.1 — `migrate` creates files with the Supabase CLI
+
+- `migrate`: new files come from `supabase migration new` (UTC stamp) instead of
+  a hand-built timestamp, matching the Supabase plugin's rule; the "manually
+  increment" collision advice that contradicted "never sequential" is gone.
+- `migrate`: new declarative-schema branch (`supabase/schemas/`): edit the
+  schema files, then generate the migration with `db schema declarative sync`
+  (plus `--experimental` on the legacy migra engine), never `db diff`.
+
+## core 1.2.0 — new `diagram-rules` skill (universal diagram rules + Hebrew/RTL)
+
+- `diagram-rules`: new compact companion to the built-in `artifact-diagramming`
+  skill for architecture, flow, sequence, state, and ER diagrams (charts and
+  plots stay with `dataviz`). Distills the universal rules of
+  cathrynlavery/diagram-design (MIT, commit cea465e7): complexity budget,
+  anti-patterns, six connector rules, pre-output checklist. Adds theme-safe
+  color (`currentColor` + tokens, no hex) and a Hebrew/RTL section (flow
+  direction, base direction in SVG and HTML, `text-anchor` under rtl, mixed
+  runs, Hebrew-capable fonts), with renderer-dependent points marked "verify".
+- Skill added to the bootstrap-repo/dedup-local-skills FIXED skill lists and
+  the plugin/marketplace descriptions.
+
+## core 1.1.0 — new `migrate` skill (Supabase migration workflow)
+
+- `migrate`: new skill orchestrating the full Supabase migration lifecycle —
+  detect local-first vs remote-only project mode, create the migration file
+  (real timestamp, header comment, `WITH CHECK` reminder), validate SQL before
+  push (RLS completeness, idempotency guards, `auth.users` trigger warnings),
+  push with confirmation, and post-push steps (type generation, drift/repair
+  handling). Includes the migration-timestamp-ordering guidance (a stamp is
+  not a reservation — the base branch's head at merge time decides acceptance,
+  not the authoring clock) and a known-gotchas table. Ported from a personal
+  skill at Nir's request (Slack, 2026-08-08); genericized to any Supabase repo
+  — no hardcoded project paths or lint-script names, phrased as "if the repo
+  has a migration-order lint" instead.
+- Skill added to the bootstrap-repo/dedup-local-skills FIXED skill lists and
+  the plugin/marketplace descriptions.
+
 ## core 1.0.1 — WSL VM sizing, freeze forensics, Optimus GPU section
 
 - `dev-env-setup`: new `windows-wsl.md` §9 on sizing the WSL2 VM, from a
