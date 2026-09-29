@@ -1,5 +1,21 @@
 # Changelog
 
+## coo 1.0.3 — model tier per dispatch rule
+
+- `coo`: SKILL.md + orchestration.md now require an explicit `model:` on every
+  subagent dispatch, stated in the dispatch line, with a default tier map
+  (haiku for read-only lookups/fix-ups/polls, sonnet for digests/dry-runs/
+  simplify/docs/small diffs, frontier only for migration/RPC/engine/live-path
+  work and its reviewer). Motivated by a 2026-09-19 recurrence where every
+  subagent in a root /coo session inherited the orchestrator's frontier tier
+  — including a read-only digest, a simplify pass, and a comment-only
+  fix-up batch — on an org seat with a hard-stop quota. Folds the reviewer's
+  prior "Model-match" sentence into a single cross-referenced rule.
+- `coo`: (2026-09-20) split the former single frontier tier into `opus`
+  (liberal default for real work) and `fable` (Mythos-class reserve for
+  migration/RPC/sync-engine/live-path work and irreversible data ops); they
+  are not interchangeable, and opus can be used far more freely than fable.
+
 ## core 1.3.0 — new `test-audit` skill (test authoring gate + pruning audits)
 
 - `test-audit`: new skill adapted from openclaw/openclaw's
