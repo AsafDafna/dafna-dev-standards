@@ -1,0 +1,3 @@
+# Eval gate: prompt-bearing paths beyond **/SKILL.md (files that skills read).
+plugins/core/shared/review-fundamentals.md
+plugins/coo/skills/coo/orchestration.md
