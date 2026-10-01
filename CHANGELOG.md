@@ -1,5 +1,17 @@
 # Changelog
 
+## core 1.4.0 — code-comment rule in RULES.md
+
+- `RULES.md`: new "Code comments" section. Default to no comment; comment only
+  a non-obvious why, a constraint enforced elsewhere (named), or a public API
+  contract the types can't express, in one or two lines (longer rationale goes
+  in a doc the comment points to). Bans banners, restating comments, change
+  narration and history. Overrides the system prompt's "match its comment
+  density", which kept already over-commented code growing. Tool-read lines and
+  repo- or skill-required headers are exempt and still written. Editing a
+  function cleans its banners and restating comments, never its why comments.
+  Rules marker stays v1.0.0 (additive change).
+
 ## coo 1.0.3 — model tier per dispatch rule
 
 - `coo`: SKILL.md + orchestration.md now require an explicit `model:` on every
