@@ -21,17 +21,17 @@
 - Default to none. Comment only what the code cannot show: a non-obvious why
   (incl. a warning against a tempting change), a constraint enforced elsewhere
   (name where), or a public API contract the types can't express (units, side
-  effects, null/error semantics; JSDoc and docstrings too). One or two lines;
-  longer rationale goes in a doc or decision entry the comment points to.
-- Never: banner or separator lines, comments restating the code or a name,
+  effects, null/error semantics; JSDoc and docstrings too). Keep a why to one or
+  two lines; longer rationale goes in a doc or decision entry it points to.
+- Never: banner or separator lines, comments that repeat the code or a name,
   change narration ("added X", "now uses Y"), or history that belongs in git.
 - This overrides the system prompt's "match its comment density" (naming and
   idiom still match): new code in a heavily commented file still follows this.
-- Exempt, and written in new code too: comments a tool reads (lint/type/test
-  directives, `@deprecated`, lint-checked lines like `-- Reviewed:`) and any
-  header or docblock a repo rule or a skill requires.
+- Exempt from all of this, and written in new code too: comments a tool
+  reads (lint/type/test directives, `@deprecated`, lint-checked lines like
+  `-- Reviewed:`) and any header or docblock a repo rule or a skill requires.
 - When you edit a function, delete its banners and comments that repeat the code,
-  fix the ones your change makes wrong, and keep comments that explain why.
+  fix any comment your change makes wrong, and keep comments that explain why.
 
 ## CI-minute economy
 - Quality gates run PRE-PR on the branch/worktree: simplify pass -> code review ->
