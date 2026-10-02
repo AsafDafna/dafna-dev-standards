@@ -1,5 +1,15 @@
 # Changelog
 
+## core 1.5.0 — test-audit: argument-blind gate mocks, keeper marks
+
+- `test-audit` SKILL.md: the "mocks" junk pattern now covers a gate none of
+  whose tests keys its check by the argument the code chooses (a permission
+  check stubbed true or false for any capability). Key at least one test per gate:
+  admit says yes only to accepted values, deny says yes to every other value.
+- `test-audit` CAMPAIGN.md step 4: a `C` holds only if its keeper suite is
+  marked `R` or `F`, or sits outside the area untouched (two lanes naming each other's suite retire both); the
+  step's done-criterion now requires it. Both found in a consumer repo's audit.
+
 ## core 1.4.0 — code-comment rule in RULES.md
 
 - `RULES.md`: new "Code comments" section. Default to no comment; comment only

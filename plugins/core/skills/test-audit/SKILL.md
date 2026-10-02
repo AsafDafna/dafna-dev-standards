@@ -63,8 +63,15 @@ matches one; audits hunt for existing tests that do.
 - tests whose only purpose is preserving test-only exports, globals, or wrappers;
 - dead production code whose only callers are tests;
 - expected values produced by the helper or renderer under test;
-- mocks that implement the asserted behavior, or one identical mock standing in
-  for different APIs;
+- mocks that implement the asserted behavior, or answer the same whatever they
+  are asked: one identical mock standing in for different APIs, or a gate none
+  of whose admit or deny tests keys its check by the argument the code under
+  test chooses (a permission check stubbed `true` or `false` for any capability
+  passes whichever capability the gate asks for). Key at least one test per gate: admit
+  says yes only to the values the gate accepts, deny says yes to every other
+  value (a deny keyed only to the accepted value, saying no there and falling
+  back to the mock's falsy default for every other value, is constant too, so it
+  cannot catch a wrong argument either);
 - fixtures that supply the result, ordering, or callback the code under test
   should produce, or persistence asserted against a store the path never writes;
 - capability or permission tests that restate declared flags instead of
