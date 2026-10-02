@@ -69,6 +69,12 @@ matches one; audits hunt for existing tests that do.
   should produce, or persistence asserted against a store the path never writes;
 - capability or permission tests that restate declared flags instead of
   exercising the access the flag grants or denies;
+- a stub that gives one answer for every argument when the code under test
+  chooses the argument, such as a permission check stubbed `true` or `false`
+  for any capability: it passes whichever capability the gate asks for. Key at
+  least one row per gate by the argument. An admit row answers yes only for the
+  expected value; a deny row answers yes for every other value (a deny keyed to
+  the expected value is no for every value, so it cannot fail either);
 - negative controls that pass for an unrelated reason, such as a denial from a
   different guard or a rejection the production path never reaches;
 - names or fixtures that promise more than the input exercises.

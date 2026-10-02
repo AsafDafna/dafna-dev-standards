@@ -1,5 +1,5 @@
 {
   "name": "core",
   "description": "Shared dev-workflow standards: always-on process rules plus review, lessons-log, checklists, dev-env-setup, migrate, diagram-rules, and test-audit skills",
-  "version": "1.4.0"
+  "version": "1.4.1"
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## core 1.4.1 — test-audit: argument-blind stubs, keeper cycles
+
+- `test-audit` SKILL.md: new junk pattern. A stub that gives one answer for
+  every argument the code under test chooses (a permission check stubbed true
+  or false for any capability) passes whichever capability the gate asks for;
+  key one row per gate by the argument, with the deny row answering yes for
+  every other value.
+- `test-audit` CAMPAIGN.md step 4: a consolidation holds only if its keeper
+  stays; check keeper marks across lanes in both directions, since two lanes
+  naming each other's test retire both. Both found in a consumer repo's audit.
+
 ## core 1.4.0 — code-comment rule in RULES.md
 
 - `RULES.md`: new "Code comments" section. Default to no comment; comment only

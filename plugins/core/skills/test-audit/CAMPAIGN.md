@@ -52,6 +52,10 @@ exercises it for real. Name the **keeper** suite for each contract. Prefer the
 real boundary (a real database, a fake network) over a mocked collaborator.
 Correct any ledger errors this pass finds.
 
+A `C` holds only if its keeper stays. Check every keeper's own mark in every
+lane, in both directions: two lanes that name each other's test as the keeper
+retire both.
+
 Done when each lane plan names its retired files, its keeper per contract, the
 assertions to carry into keepers, and the test-only production seams unlocked.
 
