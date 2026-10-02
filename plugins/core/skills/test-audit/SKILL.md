@@ -67,10 +67,11 @@ matches one; audits hunt for existing tests that do.
   are asked: one identical mock standing in for different APIs, or a gate none
   of whose admit or deny tests keys its check by the argument the code under
   test chooses (a permission check stubbed `true` or `false` for any capability
-  passes whichever capability the gate asks for). Key one test per gate: admit
+  passes whichever capability the gate asks for). Key at least one test per gate: admit
   says yes only to the values the gate accepts, deny says yes to every other
-  value (a deny that says no to an accepted value and falls back to the mock's
-  falsy default is constant too, so it cannot catch a wrong argument either);
+  value (a deny keyed only to the accepted value, saying no there and falling
+  back to the mock's falsy default for every other value, is constant too, so it
+  cannot catch a wrong argument either);
 - fixtures that supply the result, ordering, or callback the code under test
   should produce, or persistence asserted against a store the path never writes;
 - capability or permission tests that restate declared flags instead of
