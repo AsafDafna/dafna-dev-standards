@@ -1,15 +1,14 @@
 # Changelog
 
-## core 1.4.1 — test-audit: argument-blind stubs, keeper cycles
+## core 1.5.0 — test-audit: argument-blind gate mocks, keeper marks
 
-- `test-audit` SKILL.md: new junk pattern. A stub that gives one answer for
-  every argument the code under test chooses (a permission check stubbed true
-  or false for any capability) passes whichever capability the gate asks for;
-  key one row per gate by the argument, with the deny row answering yes for
-  every other value.
-- `test-audit` CAMPAIGN.md step 4: a consolidation holds only if its keeper
-  stays; check keeper marks across lanes in both directions, since two lanes
-  naming each other's test retire both. Both found in a consumer repo's audit.
+- `test-audit` SKILL.md: the "mocks" junk pattern now covers a gate none of
+  whose tests keys its check by the argument the code chooses (a permission
+  check stubbed true or false for any capability). Key one test per gate:
+  admit says yes only to accepted values, deny says yes to every other value.
+- `test-audit` CAMPAIGN.md step 4: a `C` holds only if its keeper suite is
+  marked `R` or `F` (two lanes naming each other's suite retire both); the
+  step's done-criterion now requires it. Both found in a consumer repo's audit.
 
 ## core 1.4.0 — code-comment rule in RULES.md
 

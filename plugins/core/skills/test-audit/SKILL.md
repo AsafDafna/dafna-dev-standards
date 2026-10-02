@@ -63,18 +63,18 @@ matches one; audits hunt for existing tests that do.
 - tests whose only purpose is preserving test-only exports, globals, or wrappers;
 - dead production code whose only callers are tests;
 - expected values produced by the helper or renderer under test;
-- mocks that implement the asserted behavior, or one identical mock standing in
-  for different APIs;
+- mocks that implement the asserted behavior, or answer the same whatever they
+  are asked: one identical mock standing in for different APIs, or a gate none
+  of whose admit or deny tests keys its check by the argument the code under
+  test chooses (a permission check stubbed `true` or `false` for any capability
+  passes whichever capability the gate asks for). Key one test per gate: admit
+  says yes only to the values the gate accepts, deny says yes to every other
+  value (a deny that says no to an accepted value and falls back to the mock's
+  falsy default is constant too, so it cannot catch a wrong argument either);
 - fixtures that supply the result, ordering, or callback the code under test
   should produce, or persistence asserted against a store the path never writes;
 - capability or permission tests that restate declared flags instead of
   exercising the access the flag grants or denies;
-- a stub that gives one answer for every argument when the code under test
-  chooses the argument, such as a permission check stubbed `true` or `false`
-  for any capability: it passes whichever capability the gate asks for. Key at
-  least one row per gate by the argument. An admit row answers yes only for the
-  expected value; a deny row answers yes for every other value (a deny keyed to
-  the expected value is no for every value, so it cannot fail either);
 - negative controls that pass for an unrelated reason, such as a denial from a
   different guard or a rejection the production path never reaches;
 - names or fixtures that promise more than the input exercises.
