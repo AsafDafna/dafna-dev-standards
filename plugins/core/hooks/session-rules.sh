@@ -1,12 +1,28 @@
 #!/bin/sh
 # SessionStart hook: inject the shared workflow rules into session context.
 # stdout from a SessionStart hook is appended to Claude's context.
+# With the argument "subagent" it is the SubagentStart hook instead: rules only.
 RULES="${CLAUDE_PLUGIN_ROOT}/rules/RULES.md"
-if [ -f "$RULES" ]; then
-  cat "$RULES"
-else
-  echo "[dafna-core rules MISSING - plugin install is broken, RULES.md not found]"
+rules() {
+  if [ -f "$RULES" ]; then
+    cat "$RULES"
+  else
+    echo "[dafna-core rules MISSING - plugin install is broken, RULES.md not found]"
+  fi
+}
+
+if [ "$1" = "subagent" ]; then
+  # SubagentStart reads only JSON additionalContext, never plain stdout. Escape in
+  # sed, not awk gsub (backslashes differ macOS vs Linux) or jq (absent on WSL).
+  tab=$(printf '\t')
+  rules | tr -d '\000-\010\013-\037' \
+    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$tab/\\\\t/g" \
+    | awk '{ s = s $0 "\\n" }
+      END { printf "{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"%s\"}}\n", s }'
+  exit 0
 fi
+
+rules
 
 # Git drift briefing: a collaborator may have pushed since the last session.
 # GIT_TERMINAL_PROMPT=0 prevents auth prompts from hanging a session start;

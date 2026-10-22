@@ -1,5 +1,16 @@
 # Changelog
 
+## core 1.6.0 — rules reach subagents (SubagentStart hook)
+
+- `hooks.json`: new SubagentStart hook runs `session-rules.sh subagent`, which
+  injects RULES.md (or the missing-file marker) into every subagent as JSON
+  `additionalContext`; SubagentStart ignores plain stdout. No git-drift
+  briefing for subagents. Subagents never receive SessionStart output, so
+  implementer and reviewer subagents worked without the shared rules (seen
+  as subagent-written SQL breaking the code-comment rules, unflagged by
+  subagent reviewers). The JSON escaping uses POSIX `tr`/`sed`/`awk` only,
+  since base WSL Ubuntu ships neither jq nor python3. Rules marker stays v1.0.0.
+
 ## core 1.5.0 — test-audit: argument-blind gate mocks, keeper marks
 
 - `test-audit` SKILL.md: the "mocks" junk pattern now covers a gate none of
