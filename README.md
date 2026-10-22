@@ -28,7 +28,9 @@ should run Claude Code inside WSL2; see the `dev-env-setup` skill in
 
 `core` ships a SessionStart hook that injects `plugins/core/rules/RULES.md`
 into every session's context — no copying rules into per-repo CLAUDE.md
-files, so a plugin update changes behavior everywhere at once.
+files, so a plugin update changes behavior everywhere at once. A
+SubagentStart hook injects the same file into every subagent, which never
+receives SessionStart output.
 
 The first line of RULES.md is a version marker, e.g. `[dafna-core rules
 v1.0.0]`. If a session shows no such marker anywhere in context, the plugin
