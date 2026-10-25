@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript + JSX against the Claude Code 2.1.310 mod API (`import type … from 'claude-code'`), test kit `claude-code/testing`, live render harness in Python + tmux.
 
-**Spec:** `docs/superpowers/specs/2026-10-25-open-items-pane-design.md`. Upstream's design doc (delivery and persistence logic) is at `/private/tmp/claude-501/-Users-asafdafna-dev-projects/5c7cde45-e78a-47fb-a6ac-8def80cf620a/scratchpad/hitl-src/repo/docs/DESIGN.md`. Plan review: `/private/tmp/claude-501/-Users-asafdafna-dev-projects/5c7cde45-e78a-47fb-a6ac-8def80cf620a/scratchpad/open-items-plan-review.md`.
+**Spec:** `docs/superpowers/specs/2026-10-25-open-items-pane-design.md`. Upstream's design doc (delivery and persistence logic) is at https://github.com/tzafrir/human-in-the-loop/blob/bf8233cd24e9d038516b307f7f13e2449aba1b60/docs/DESIGN.md. The plan review's findings are folded into this revision.
 
 **Out of this plan (done by the controller session):** the private alert hook `~/.claude/hooks/plugin-notify-macos.sh` and its `Notification` wiring on both seats (done, claude-config `c21941a`, `827767e`); the CLAUDE.md batch-rule amendment (done); the coo amendment (on PR #18); the install on both seats and Asaf's smoke test (after the PR merges).
 
