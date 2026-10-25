@@ -19,7 +19,7 @@ const GLYPH_CELLS = 2
 const MIN_FIELD_COLUMNS = 12
 
 /**
- * What the Open items pane draws from: the tasks, which is selected and which
+ * What the Open items pane draws from: the items, which is selected and which
  * field is open, and what each row's words depend on. The render hook and
  * `rowsFor` both read it, so the rows asked for are the rows drawn.
  */
@@ -79,7 +79,7 @@ export function titleOf(task: Task): string {
   return `#${task.id} ${nameOf(task)}`
 }
 
-/** `  3m`, drawn dim after an open task's title. */
+/** `  3m`, drawn dim after an open item's title. */
 export function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
   return `  ${ago(view.nowMs - task.createdMs)}`
 }
@@ -97,7 +97,7 @@ export function savedOf(task: Task): string {
   return `${titleOf(task)} · not sent yet`
 }
 
-/** The selected task's buttons, as `hotkey` and `label`. */
+/** The selected item's buttons, as `hotkey` and `label`. */
 export function actionsOf(task: Task, canType: boolean): { key: string; hotkey: string; label: string; option?: string }[] {
   if (task.kind === 'info') {
     return [{ key: 'seen', hotkey: 'd', label: 'Seen' }]
@@ -247,15 +247,15 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
   const inner = Math.max(1, width - GLYPH_CELLS)
-  const active = groupsOf(view.shown.filter(isActive))
+  const groups = groupsOf(view.shown.filter(isActive))
   const saved = view.shown.filter(task => !isActive(task))
   const selected = selectedOf(view)
   const head = headlineOf(view)
   let rows = rowsOf(`${head.glyph}${head.headline}${head.note}`, width) + 1
 
-  rows += Math.max(0, active.length * 2 - 1)
+  rows += Math.max(0, groups.length * 2 - 1)
 
-  for (const task of active.flatMap(group => group.tasks)) {
+  for (const task of groups.flatMap(group => group.tasks)) {
     if (task !== selected) {
       // `#2` is the button that selects it; the title wraps beside it.
       rows += rowsOf(` ${nameOf(task)}${ageOf(task, view)}`, Math.max(1, inner - cellsOf(`#${task.id}`)))

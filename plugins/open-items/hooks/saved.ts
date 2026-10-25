@@ -1,11 +1,11 @@
-import type { Task } from '../types'
+import type { Task, TaskKind } from '../types'
+import { KINDS } from './tasks'
 
 /** How long a session's saved items wait for `claude --resume`: an older key is deleted at the next start. */
 export const KEEP_MS = 30 * 24 * 60 * 60_000
 
 const PREFIX = 'session:'
 
-const KINDS: readonly string[] = ['decision', 'question', 'action', 'info']
 const STATES: readonly string[] = ['open', 'done', 'rejected', 'withdrawn', 'seen']
 const UPDATES: readonly string[] = ['none', 'pending', 'delivered']
 
@@ -23,7 +23,7 @@ export function isSavedKey(key: string): boolean {
   return key.startsWith(PREFIX)
 }
 
-export function isTask(value: unknown): value is Task {
+function isTask(value: unknown): value is Task {
   const task = value as Record<string, unknown> | null
   const isText = (key: string) => typeof task?.[key] === 'string'
   const options = task?.['options']
@@ -33,7 +33,7 @@ export function isTask(value: unknown): value is Task {
     typeof task === 'object' &&
     ['id', 'createdMs', 'updatedMs'].every(key => typeof task[key] === 'number') &&
     ['title', 'why', 'sessionId'].every(isText) &&
-    KINDS.includes(task['kind'] as string) &&
+    KINDS.includes(task['kind'] as TaskKind) &&
     STATES.includes(task['state'] as string) &&
     UPDATES.includes(task['update'] as string) &&
     ['doneWhen', 'answer', 'reason', 'recommended'].every(key => task[key] === undefined || isText(key)) &&
@@ -41,7 +41,7 @@ export function isTask(value: unknown): value is Task {
   )
 }
 
-/** A stored value as a session's saved items, less any entry that isn't a task; nothing when it isn't one. */
+/** A stored value as a session's saved items, less any entry that isn't an item; nothing when it isn't one. */
 export function savedIn(raw: unknown): Saved | undefined {
   const value = raw as Record<string, unknown> | null
 

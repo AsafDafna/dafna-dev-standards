@@ -12,7 +12,7 @@ export const MAX_OPTION = 60
 /** Answers longer than this are named in a digest, not quoted. */
 const MAX_INLINE_ANSWER = 2000
 
-const KINDS: readonly TaskKind[] = ['decision', 'question', 'action', 'info']
+export const KINDS: readonly TaskKind[] = ['decision', 'question', 'action', 'info']
 
 /** Still open for the user: any kind, `info` included. */
 export function isActive(task: Task): boolean {
@@ -89,7 +89,7 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
 }
 
 /**
- * What the user did with a task, after its head: their answer, choice or
+ * What the user did with an item, after its head: their answer, choice or
  * reason; '' when there is nothing more to say. `isFull` quotes a long
  * answer whole; a digest names it instead and points at `list_items`.
  */
@@ -135,7 +135,7 @@ export function ownHeadOf(task: Task): string {
   return `#${task.id} ${task.title}:`
 }
 
-/** What the user did with a task, in their own words. */
+/** What the user did with an item, in their own words. */
 function ownWordsOf(task: Task): string {
   const head = ownHeadOf(task)
 

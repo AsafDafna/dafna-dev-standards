@@ -420,7 +420,7 @@ export const register: Register = on => {
       $.ui.notify(printable(task.title, MAX_TITLE), { title: 'Open items' }).catch(() => undefined)
     }
 
-    return { result: addedOf(task, Math.min(group.length + 1, isInfo ? MAX_INFO : MAX_OPEN)) }
+    return { result: addedOf(task, group.length + 1 - dropped.length) }
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
@@ -531,8 +531,9 @@ export const register: Register = on => {
     await syncWorking($)
 
     if (e.agentId === undefined) {
-      // Answers saved while Claude worked go now that it's free, unless a
-      // task is still open: then they go with that last answer, together.
+      // Answers saved while Claude worked go now that it's free, unless an
+      // item that asks something is still open: then they go with that last
+      // answer, together.
       // One a prompt entered without goes with them, but sends nothing alone.
       const all = await read($, tasks)
       const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isAsk)
@@ -607,7 +608,7 @@ export const register: Register = on => {
         live.batch = null
       }
 
-      // A task closed meanwhile (Claude withdrew it, say) keeps no answer:
+      // An item closed meanwhile (Claude withdrew it, say) keeps no answer:
       // the prompt goes as typed.
       const was = await resolve($, task.id, { state: 'done', ...given }, 'later')
       isAnswered = was !== undefined && isActive(was)
@@ -642,10 +643,8 @@ export const register: Register = on => {
     return passOn($, due, inDigest, 'nothing', () => next({ ...e, context: [...(e.context ?? []), digestOf(due)] }))
   })
 
-  // Read at a conversation's start and again after a compaction: what is
-  // still with the user, so Claude neither forgets nor adds it twice.
-  // Added last, on the session's side of the cache boundary, wherever the
-  // tool can be reached: offered outright, or found through ToolSearch.
+  // The steering goes last, on the session's side of the cache boundary,
+  // wherever the tool can be reached: offered outright, or found through ToolSearch.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     const isReachable = e.tools.some(tool => tool === ADD || tool === 'ToolSearch')
@@ -657,6 +656,8 @@ export const register: Register = on => {
     return { sections: [...composed.sections, { id: 'open-items:steering', text: STEERING, scope: 'session' }] }
   })
 
+  // Read at a conversation's start and again after a compaction: what is
+  // still with the user, so Claude neither forgets nor adds it twice.
   on('prompt.context', async ($, e, next) => {
     const result = await next(e)
     const shown = (await read($, tasks)).filter(task => isShown(task) && task.kind !== 'info')
@@ -900,7 +901,7 @@ export const register: Register = on => {
     }
 
     const selectedRows = (task: Task) => {
-      // A field open on a surface that draws one: elsewhere the task keeps its buttons.
+      // A field open on a surface that draws one: elsewhere the item keeps its buttons.
       const isEditing = view.canType && field !== null && field.id === task.id
       const [input, buttons]: Controls = !isEditing
         ? [null, actionsOf(task)]
@@ -910,7 +911,7 @@ export const register: Register = on => {
       const doneWhen = doneWhenOf(task)
 
       // The terminal sizes a field by the pane's body, whatever box holds it:
-      // it goes out of the task's indent, across the body's whole width.
+      // it goes out of the item's indent, across the body's whole width.
       return (
         <Box key={`task-${task.id}`} flexDirection="column" flexShrink={0}>
           <Box flexDirection="row">
@@ -1324,7 +1325,7 @@ async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () 
 }
 
 /**
- * Keeps the status line in step with the tasks, and closes the pane once
+ * Keeps the status line in step with the items, and closes the pane once
  * nothing is left in it. Resolves whether anything is shown.
  */
 async function refresh($: EngineInterface): Promise<boolean> {
@@ -1373,8 +1374,8 @@ async function show($: EngineInterface, isAsked: boolean): Promise<boolean> {
 /** Opens the Open items pane `rows` tall, or re-sizes it; resolves whether the surface seated it. */
 async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promise<boolean> {
   live.rows = rows
-  // The pane is a view of the tasks: one that can't open costs the user a
-  // click on /open-items, never the task itself.
+  // The pane is a view of the items: one that can't open costs the user a
+  // click on /open-items, never the item itself.
   const opened = await $.ui
     .open({ id: PANE, title: PANE_TITLE, rows, ...(isAsked ? { focus: true as const } : {}) })
     .catch(() => ({ isPlaced: false as const }))
@@ -1489,7 +1490,7 @@ function fieldValueOf(surface: RenderSurface, key: string): string {
 }
 
 /**
- * Changes task `id` with `fn` while it is open, and resolves the task as the
+ * Changes item `id` with `fn` while it is open, and resolves the item as the
  * change found it: one closed meanwhile (Claude withdrew it, or a press from
  * an older render answered it) or gone (a /clear) stays as it is.
  */
@@ -1667,12 +1668,11 @@ function isRepeatOf(was: Task | undefined, patch: Pick<Task, 'state'> & Partial<
 }
 
 /**
- * A press on the pane resolves task `id`, as `resolve` does. One Claude
+ * A press on the pane resolves item `id`, as `resolve` does. One Claude
  * withdrew, or the user answered otherwise (on another surface, say), since
- * the pane drew it says so, and what the user
- * typed for it (`typedText`) goes to the prompt box, unless it looks like a
- * secret; one already answered as this press would answer it (a second
- * press) stays answered.
+ * the pane drew it says so, and what the user typed for it (`typedText`)
+ * goes to the prompt box, unless it looks like a secret; one already
+ * answered as this press would answer it (a second press) stays answered.
  */
 async function respond($: EngineInterface, id: number, patch: Pick<Task, 'state'> & Partial<Task>, how: How, typedText = '') {
   const was = await resolve($, id, patch, how)
@@ -1714,7 +1714,6 @@ async function answerTyped($: EngineInterface, id: number, how: How) {
 async function markSeen($: EngineInterface, id: number) {
   if (await edit($, id, task => ({ ...task, state: 'seen' }))) {
     await settle($, id)
-    await reselect($)
   }
 }
 

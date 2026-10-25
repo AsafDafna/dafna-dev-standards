@@ -18,7 +18,7 @@ export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn' | 'seen'
  */
 export type TaskUpdate = 'none' | 'pending' | 'delivered'
 
-/** A task Claude gave the user. */
+/** An item Claude gave the user. */
 export type Task = {
   /** Counts up per session: #1, #2, … */
   id: number
