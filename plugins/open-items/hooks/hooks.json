@@ -1,4 +1,4 @@
 {
-  "description": "Human in the loop: tools Claude assigns tasks with, the band where they wait for you, and the delivery of your answers to Claude",
+  "description": "Open items: tools Claude adds items with, the band where they wait for you, and the delivery of your answers to Claude",
   "modules": ["./register.tsx"]
 }

@@ -6,17 +6,17 @@ import { fieldRowsOf, rowsFor } from '../hooks/pane'
 import { keysOf, projectOf } from '../hooks/project'
 import { cellsOf, rowsOf, wrapRows } from '../hooks/text'
 
-const ASSIGN = 'mcp__human-in-the-loop__assign_task'
-const LIST = 'mcp__human-in-the-loop__list_tasks'
-const WITHDRAW = 'mcp__human-in-the-loop__withdraw_task'
+const ASSIGN = 'mcp__open-items__add_item'
+const LIST = 'mcp__open-items__list_items'
+const WITHDRAW = 'mcp__open-items__withdraw_item'
 
 const PANE = {
-  plugin: 'human-in-the-loop',
+  plugin: 'open-items',
   surface: 'terminal',
   component: 'Pane',
-  requestId: 'my-tasks',
+  requestId: 'open-items',
   props: {
-    title: 'My tasks',
+    title: 'Open items',
     isFocused: true,
     bodyColumns: 100,
     placement: 'dock',
@@ -196,7 +196,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     return refused('keys') ?? { value: Object.keys(world.store) }
   })
 
-  on('state.get', { plugin: 'human-in-the-loop' }, async ($, e, next) => {
+  on('state.get', { plugin: 'open-items' }, async ($, e, next) => {
     const read = await next(e)
     world.tasksRead += e.key === 'tasks' ? 1 : 0
 
@@ -222,7 +222,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
   on('session.detach', ($, e) => ({ clientId: e.clientId }))
   on('session.root', () => ({ value: world.root }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('tool.register', ($, e) => ({ value: { tool: `mcp__human-in-the-loop__${e.name}` } }))
+  on('tool.register', ($, e) => ({ value: { tool: `mcp__open-items__${e.name}` } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)
@@ -253,7 +253,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
       return { deny: 'The surface is busy.' }
     }
 
-    const value = world.isPaneOpen ? [{ id: 'my-tasks', title: 'My tasks', isShown: true, isFocused: true, isPlaced: !world.isNarrow }] : []
+    const value = world.isPaneOpen ? [{ id: 'open-items', title: 'Open items', isShown: true, isFocused: true, isPlaced: !world.isNarrow }] : []
 
     if (world.panesMs > 0) {
       await clock.sleep(world.panesMs)
@@ -334,7 +334,7 @@ function typed(text: string, turnId?: string): PromptSubmitInput {
 
 async function runTasks($: Engine) {
   return $.command.run({
-    command: 'my-tasks',
+    command: 'open-items',
     args: '',
     origin: { kind: 'composer' },
     presentation: { isFullscreen: true, columns: 160 },
@@ -376,11 +376,11 @@ describe('assigning', () => {
     const assigned = await $.tool.call(KEY_TASK)
     const ui = await $.ui.mount(PANE)
 
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #1')
-    expect(world.opens.at(-1)?.id).toBe('my-tasks')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
+    expect(world.opens.at(-1)?.id).toBe('open-items')
     expect(world.opens.at(-1)?.focus).toBeUndefined()
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
-    expect(await textOf(ui, 'head')).toContain('1 task for you')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(await textOf(ui, 'head')).toContain('1 item for you')
     expect(await textOf(ui, 'task-1')).toContain("The webhook test can't run without it.")
     expect(await textOf(ui, 'task-1')).toContain('Done when:')
     expect(await textOf(ui, 'actions')).toContain('Done')
@@ -388,15 +388,15 @@ describe('assigning', () => {
     expect(world.toasts).toHaveLength(0)
   })
 
-  test('where the pane cannot be seated unasked, a toast points at /my-tasks', async ($, on) => {
+  test('where the pane cannot be seated unasked, a toast points at /open-items', async ($, on) => {
     const { world } = seat(on)
     world.isNarrow = true
     await start($)
 
     await $.tool.call(KEY_TASK)
 
-    expect(world.toasts[0]).toBe('Claude assigned you a task: Add STRIPE_SECRET_KEY to .env. See /my-tasks')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.toasts[0]).toBe('Claude added an item for you: Add STRIPE_SECRET_KEY to .env. See /open-items')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('the same ask twice is one task, and a sixth open task is refused', async ($, on) => {
@@ -405,14 +405,14 @@ describe('assigning', () => {
 
     await $.tool.call(KEY_TASK)
     const again = await $.tool.call({ ...KEY_TASK, title: 'add stripe_secret_key to .env!' })
-    expect(String((again as { result?: unknown }).result)).toContain('Task #1 already asks')
+    expect(String((again as { result?: unknown }).result)).toContain('Item #1 already asks')
 
     for (const n of [2, 3, 4, 5]) {
       await $.tool.call({ ...KEY_TASK, title: `Do thing number ${n}` })
     }
 
     const sixth = await $.tool.call({ ...KEY_TASK, title: 'One task too many' })
-    expect((sixth as { deny?: string }).deny).toContain('already has 5 open tasks')
+    expect((sixth as { deny?: string }).deny).toContain('already has 5 open items')
   })
 
   test("the tools stay in the prompt's list, where the engine puts an MCP tool behind ToolSearch", async ($, on) => {
@@ -421,7 +421,7 @@ describe('assigning', () => {
     await start($)
 
     for (const tool of [ASSIGN, LIST, WITHDRAW]) {
-      const described = await $.tool.describe({ tool, description: 'From the server.', isDeferred: true, provider: { plugin: 'human-in-the-loop', tier: 'user' } })
+      const described = await $.tool.describe({ tool, description: 'From the server.', isDeferred: true, provider: { plugin: 'open-items', tier: 'user' } })
 
       expect(described).toEqual({ description: 'From the server.', isDeferred: false })
     }
@@ -446,7 +446,7 @@ describe('assigning', () => {
 
     expect(world.isPaneOpen).toBe(false)
     expect(world.status).toBeUndefined()
-    expect(world.toasts.at(-1)).toBe('Claude withdrew the task: Add STRIPE_SECRET_KEY to .env. Found the key in the vault')
+    expect(world.toasts.at(-1)).toBe('Claude withdrew the item: Add STRIPE_SECRET_KEY to .env. Found the key in the vault')
   })
 })
 
@@ -721,7 +721,7 @@ describe('long titles', () => {
   test("clients leaving as the roster's write answers late, the pane still fits those left", async ($, on) => {
     const { world, clock } = seat(on, earlier([INSTRUMENTS, XCODE_LONG]))
     let lateMs = 0
-    on('state.set', { plugin: 'human-in-the-loop' }, async ($, e, next) => {
+    on('state.set', { plugin: 'open-items' }, async ($, e, next) => {
       const set = await next(e)
 
       if (e.key === 'clients' && lateMs > 0) {
@@ -766,7 +766,7 @@ describe('long titles', () => {
   test("a client leaving and attaching again as the roster's write answers late keeps the rows it draws", async ($, on) => {
     const { world, clock } = seat(on, earlier([INSTRUMENTS, XCODE_LONG]))
     const lateMs: number[] = []
-    on('state.set', { plugin: 'human-in-the-loop' }, async ($, e, next) => {
+    on('state.set', { plugin: 'open-items' }, async ($, e, next) => {
       const ms = e.key === 'clients' ? (lateMs.shift() ?? 0) : 0
       const set = await next(e)
 
@@ -803,7 +803,7 @@ describe('long titles', () => {
   test('a client leaving and attaching again stays counted, though the write of its leaving lands late', async ($, on) => {
     const { world, clock } = seat(on, earlier([INSTRUMENTS, XCODE_LONG]))
     let lateMs = 0
-    on('state.set', { plugin: 'human-in-the-loop' }, async ($, e, next) => {
+    on('state.set', { plugin: 'open-items' }, async ($, e, next) => {
       if (e.key === 'clients' && lateMs > 0) {
         const ms = lateMs
         lateMs = 0
@@ -887,7 +887,7 @@ describe('long titles', () => {
   test("the clients attached are kept in the session's state, which a reload of the code keeps", async ($, on) => {
     seat(on)
     let roster: unknown
-    on('state.set', { plugin: 'human-in-the-loop' }, ($, e, next) => {
+    on('state.set', { plugin: 'open-items' }, ($, e, next) => {
       roster = e.key === 'clients' ? e.value : roster
       return next(e)
     })
@@ -1124,7 +1124,7 @@ describe('long titles', () => {
     await start($)
 
     const ui = await $.ui.mount({
-      plugin: 'human-in-the-loop',
+      plugin: 'open-items',
       surface: 'terminal',
       component: 'ToolUse',
       props: {
@@ -1141,16 +1141,16 @@ describe('long titles', () => {
 
     expect((await ui.drawn()).type).toBe('Text')
     expect(row?.props.wrap).toBe('wrap')
-    expect(row?.text).toBe(`☐ Assigned you a task: ${XCODE_LONG.title}`)
+    expect(row?.text).toBe(`☐ Added an item for you: ${XCODE_LONG.title}`)
   })
 })
 
-describe('the pane and /my-tasks', () => {
-  test('/my-tasks opens the pane with the keyboard, or says there is nothing', async ($, on) => {
+describe('the pane and /open-items', () => {
+  test('/open-items opens the pane with the keyboard, or says there is nothing', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
-    expect((await runTasks($)).text).toBe('No tasks for you right now.')
+    expect((await runTasks($)).text).toBe('No items for you right now.')
 
     await $.tool.call(KEY_TASK)
     await runTasks($)
@@ -1172,7 +1172,7 @@ describe('the pane and /my-tasks', () => {
     await clock.settle()
 
     expect(world.submitted).toEqual([
-      "My response to a task you gave me (Human in the loop):\n\n#1 Run xcodebuild test on your Mac, paste the failures: I won't do this.",
+      "My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures: I won't do this.",
     ])
   })
 
@@ -1198,7 +1198,7 @@ describe('the pane and /my-tasks', () => {
     await ui.press({ key: 'hide' })
 
     expect(world.isPaneOpen).toBe(false)
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 })
 
@@ -1209,8 +1209,8 @@ const ANDROID_TASK = { ...XCODE_TASK, title: 'Run the Android tests on your phon
 function ringTo(element: string) {
   return {
     component: 'Pane',
-    requestId: 'my-tasks',
-    plugin: 'human-in-the-loop',
+    requestId: 'open-items',
+    plugin: 'open-items',
     element,
     origin: { kind: 'person' },
   } as const
@@ -1501,7 +1501,7 @@ describe('responding', () => {
     await clock.settle()
 
     expect(world.submitted).toHaveLength(1)
-    expect(world.submitted[0]).toBe('My response to a task you gave me (Human in the loop):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.')
+    expect(world.submitted[0]).toBe('My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.')
     expect(world.isPaneOpen).toBe(false)
     expect(world.status).toBeUndefined()
   })
@@ -1525,13 +1525,13 @@ describe('responding', () => {
     expect(await textOf(ui, 'saved-1')).toContain('not sent yet')
     // The pane has the room to say what is not sent; the status line says it short.
     expect(await textOf(ui, 'head')).toContain('✓ 1 response not sent yet')
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
 
     await $.turn.complete({ ...DONE, turnId: 't1' })
     await clock.settle()
 
     expect(world.submitted).toEqual([
-      'My response to a task you gave me (Human in the loop):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nLoginTests.testExpiredToken failed',
+      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nLoginTests.testExpiredToken failed',
     ])
     expect(world.status).toBeUndefined()
   })
@@ -1553,7 +1553,7 @@ describe('responding', () => {
     await clock.settle()
 
     expect(world.submitted).toHaveLength(0)
-    expect(world.status).toBe('☐ 1 task for you · 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
 
     const next = await $.prompt.submit(typed('now the cart'))
 
@@ -1581,13 +1581,13 @@ describe('responding', () => {
     expect(blocked.drop).toBe('Blocked by your organization.')
     // The engine shows why the prompt didn't enter; the answer waits, as it did.
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 task for you · 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
 
     world.refusingTyped = undefined
     const next = await $.prompt.submit(typed('now the cart'))
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('a saved answer that a hook beneath takes out of a typed prompt waits for the next one, and a toast says so', async ($, on) => {
@@ -1608,8 +1608,8 @@ describe('responding', () => {
     const stripped = await $.prompt.submit(typed('now the cart'))
 
     expect(stripped.context).toBeUndefined()
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /my-tasks.")
-    expect(world.status).toBe('☐ 1 task for you · 1 not sent yet · /my-tasks')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
+    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
 
     world.isStripping = false
     const next = await $.prompt.submit(typed('now the cart'))
@@ -1635,7 +1635,7 @@ describe('responding', () => {
     const stripped = await $.prompt.submit(typed('Earlier you wrote "#1 done: Run xcodebuild test on your Mac, paste the failures." Why?'))
 
     expect(stripped.context).toBeUndefined()
-    expect(world.status).toBe('☐ 1 task for you · 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
   })
 
   test('a saved answer that a hook beneath rewrites as it rides a typed prompt reaches Claude', async ($, on) => {
@@ -1657,7 +1657,7 @@ describe('responding', () => {
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed with token ******')
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('of two saved answers riding a typed prompt, the one a hook beneath takes out waits for the next', async ($, on) => {
@@ -1682,8 +1682,8 @@ describe('responding', () => {
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
     expect(next.context?.[0]).not.toContain('#2 ')
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #2: a hook took it out of the prompt. It's saved; press Send now in /my-tasks.")
-    expect(world.status).toBe('☐ 1 task for you · 1 not sent yet · /my-tasks')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #2: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
+    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
 
     world.rewriting = undefined
     const again = await $.prompt.submit(typed('and the docs'))
@@ -1705,7 +1705,7 @@ describe('responding', () => {
     await clock.settle()
 
     expect(world.submitted).toHaveLength(1)
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /my-tasks.")
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
 
     // The turn that message starts ends, and another after it.
     for (const turnId of ['t1', 't2']) {
@@ -1715,7 +1715,7 @@ describe('responding', () => {
     }
 
     expect(world.submitted).toHaveLength(1)
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
 
     world.masking = undefined
     await ui.press({ key: 'send-1' })
@@ -1744,8 +1744,8 @@ describe('responding', () => {
     await expect($.prompt.submit(typed('now the cart'))).rejects.toThrow('no implementation for prompt.submit')
 
     expect(world.toasts.at(-1)).toContain("Claude didn't get your response to #1: no implementation for prompt.submit")
-    expect(world.toasts.at(-1)).toContain("It's saved; press Send now in /my-tasks.")
-    expect(world.status).toBe('☐ 1 task for you · 1 not sent yet · /my-tasks')
+    expect(world.toasts.at(-1)).toContain("It's saved; press Send now in /open-items.")
+    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
 
     world.isTypedFailing = false
     world.isStoreFailing = false
@@ -1794,7 +1794,7 @@ describe('responding', () => {
 
     // Claude has the row already, so the answer doesn't go again; but no step
     // read it before the turn ended, so a one-line prompt wakes Claude for it.
-    expect(world.submitted).toEqual(['I answered a task while you were finishing your reply; my answer is above.'])
+    expect(world.submitted).toEqual(['I answered an item while you were finishing your reply; my answer is above.'])
   })
 
   test('a prompt typed while Send now joins the turn carries no second copy of the answer', async ($, on) => {
@@ -1818,7 +1818,7 @@ describe('responding', () => {
 
     expect(typedMeanwhile.context).toBeUndefined()
     expect(world.appended.filter(row => row.type === 'user')).toHaveLength(1)
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('Send now that the running turn refuses goes the moment the turn ends', async ($, on) => {
@@ -1920,16 +1920,16 @@ describe('responding', () => {
 
     expect(world.submitted).toHaveLength(0)
     expect(world.toasts.at(-1)).toBe(
-      "Claude didn't get your response to #1: Another plugin held the prompt. It's saved; press Send now in /my-tasks.",
+      "Claude didn't get your response to #1: Another plugin held the prompt. It's saved; press Send now in /open-items.",
     )
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
 
     world.refusing = undefined
     await runTasks($)
     await ui.press({ key: 'send-1' })
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
     expect(world.status).toBeUndefined()
   })
 
@@ -1948,7 +1948,7 @@ describe('responding', () => {
     expect(await textOf(ui, 'held')).toContain('looks like a secret')
   })
 
-  test('list_tasks shows a saved answer and marks it heard', async ($, on) => {
+  test('list_items shows a saved answer and marks it heard', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -1963,7 +1963,7 @@ describe('responding', () => {
     expect(world.isPaneOpen).toBe(false)
   })
 
-  test('list_tasks for one task marks only that one heard', async ($, on) => {
+  test('list_items for one task marks only that one heard', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -1975,14 +1975,14 @@ describe('responding', () => {
     await ui.input({ key: 'answer-1', text: 'Two failures' })
     await ui.press({ key: 'option-1' })
 
-    expect(world.status).toBe('✓ 2 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 2 not sent yet · /open-items')
 
     const listed = await $.tool.call({ tool: LIST, id: 1 })
     expect(String((listed as { result?: unknown }).result)).toContain('Two failures')
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
   })
 
-  test('a response that comes in while list_tasks reads is not marked heard: it goes later', async ($, on) => {
+  test('a response that comes in while list_items reads is not marked heard: it goes later', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
@@ -1992,7 +1992,7 @@ describe('responding', () => {
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'answer' })
     await ui.input({ key: 'answer-1', text: 'Two failures' })
-    // list_tasks reads the task list late: Done on #2 lands meanwhile, and
+    // list_items reads the task list late: Done on #2 lands meanwhile, and
     // its write of #1 heard reads the list again.
     world.slowRead = 'tasks'
     world.readMs = 500
@@ -2004,12 +2004,12 @@ describe('responding', () => {
 
     expect(result).toContain('Two failures')
     expect(result).toContain('#2 open')
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
 
     await $.turn.complete({ ...DONE, turnId: 't1' })
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#2 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#2 Add STRIPE_SECRET_KEY to .env: Done.'])
   })
 
   test('a withdraw that meets an answer given a moment before leaves the answer, and Claude hears it', async ($, on) => {
@@ -2027,13 +2027,13 @@ describe('responding', () => {
     await ui.press({ key: 'done' })
     await clock.advance(500)
 
-    expect(((await withdrawn) as { deny?: string }).deny).toBe('Task #1 is already done; there is nothing to withdraw.')
+    expect(((await withdrawn) as { deny?: string }).deny).toBe('Item #1 is already done; there is nothing to withdraw.')
     expect(world.toasts).toEqual([])
 
     await $.turn.complete({ ...DONE, turnId: 't1' })
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
   })
 
   test('a press from a render older than a withdraw leaves the task withdrawn, and a toast says so', async ($, on) => {
@@ -2053,9 +2053,9 @@ describe('responding', () => {
     await pressed
     await clock.settle()
 
-    expect(world.toasts.at(-1)).toBe("Task #1 isn't open any more, so your response wasn't saved.")
+    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved.")
     expect(world.submitted).toEqual([])
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('Save for later with nothing typed asks for an answer, or, pressed as Claude withdraws its task, says the task is gone', async ($, on) => {
@@ -2077,7 +2077,7 @@ describe('responding', () => {
     held.letGo()
     await pressed
 
-    expect(world.toasts.at(-1)).toBe("Task #1 isn't open any more, so your response wasn't saved.")
+    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved.")
   })
 
   test('Save for later pressed as Claude withdraws its task puts what was typed in the prompt box', async ($, on) => {
@@ -2099,7 +2099,7 @@ describe('responding', () => {
     held.letGo()
     await pressed
 
-    expect(world.toasts.at(-1)).toBe("Task #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box.")
+    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box.")
     expect(world.composer).toBe('LoginTests.testExpiredToken failed')
   })
 
@@ -2120,7 +2120,7 @@ describe('responding', () => {
     held.letGo()
     await pressed
 
-    expect(world.toasts.at(-1)).toBe("Task #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box.")
+    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box.")
     expect(world.composer).toBe('LoginTests.testExpiredToken failed')
   })
 
@@ -2143,7 +2143,7 @@ describe('responding', () => {
     await pressed
 
     expect(await ui.find({ type: 'Input', key: 'answer-2' })).toBeDefined()
-    expect(world.toasts.at(-1)).toBe('Claude withdrew the task: Run xcodebuild test on your Mac, paste the failures')
+    expect(world.toasts.at(-1)).toBe('Claude withdrew the item: Run xcodebuild test on your Mac, paste the failures')
   })
 
   test('Save for later pressed as the same answer lands from the prompt box says nothing, as a second press does', async ($, on) => {
@@ -2194,7 +2194,7 @@ describe('responding', () => {
     letGo()
     await entered
 
-    expect(world.toasts.at(-1)).toBe("Task #1 isn't open any more, so your response wasn't saved.")
+    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved.")
     expect(world.composer).toBe('')
   })
 
@@ -2214,7 +2214,7 @@ describe('responding', () => {
     await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found it in the CI logs' })
 
     expect(world.composer).toBe('Also bump the version')
-    expect(world.toasts.at(-1)).toBe('Claude withdrew the task: Run xcodebuild test on your Mac, paste the failures. Found it in the CI logs')
+    expect(world.toasts.at(-1)).toBe('Claude withdrew the item: Run xcodebuild test on your Mac, paste the failures. Found it in the CI logs')
   })
 
   test("of two presses from one render, the response that lands first stands, and a toast says the other wasn't saved", async ($, on) => {
@@ -2235,8 +2235,8 @@ describe('responding', () => {
     await $.turn.complete({ ...DONE, turnId: 't1' })
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Pick a pagination strategy for /feed: I chose "Cursor".'])
-    expect(world.toasts).toEqual(["Task #1 isn't open any more, so your response wasn't saved."])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Pick a pagination strategy for /feed: I chose "Cursor".'])
+    expect(world.toasts).toEqual(["Item #1 isn't open any more, so your response wasn't saved."])
   })
 
   test('the same press twice from one render answers once, says nothing, and holds back no batch under way', async ($, on) => {
@@ -2260,7 +2260,7 @@ describe('responding', () => {
 
     await clock.advance(300)
 
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Pick a pagination strategy for /feed: I chose "Cursor".'])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Pick a pagination strategy for /feed: I chose "Cursor".'])
     expect(world.toasts).toEqual([])
   })
 
@@ -2285,9 +2285,9 @@ describe('responding', () => {
     await answered
     await clock.advance(1000)
 
-    expect(world.toasts).toEqual(["Task #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box."])
+    expect(world.toasts).toEqual(["Item #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box."])
     expect(world.composer).toBe('and check the cart\nTwo failures')
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Run xcodebuild test on your Mac, paste the failures: Done.'])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures: Done.'])
   })
 
   test('an answer held for looking like a secret, sent anyway as its task is answered elsewhere, stays out of the prompt box', async ($, on) => {
@@ -2309,7 +2309,7 @@ describe('responding', () => {
     await clock.advance(500)
     await sent
 
-    expect(world.toasts).toEqual(["Task #1 isn't open any more, so your response wasn't saved."])
+    expect(world.toasts).toEqual(["Item #1 isn't open any more, so your response wasn't saved."])
     expect(world.composer).toBe('')
   })
 
@@ -2383,8 +2383,8 @@ describe('long answers in the prompt box', () => {
 
     expect(blocked.drop).toBe('Blocked by your organization.')
     // The engine shows why; the toast says the answer is kept.
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1. It's saved; press Send now in /my-tasks.")
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1. It's saved; press Send now in /open-items.")
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
   })
 
   test('typed while Claude is idle and a response is about to go, the prompt carries both', async ($, on) => {
@@ -2424,7 +2424,7 @@ describe('long answers in the prompt box', () => {
 
     expect(sent.drop).toBe('Your answer to #2 already went to Claude.')
     expect(world.submitted).toEqual([
-      'My response to a task you gave me (Human in the loop):\n\n#2 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
+      'My response to an item you gave me (Open items):\n\n#2 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
     ])
   })
 
@@ -2484,12 +2484,12 @@ describe('the system prompt', () => {
     const headless = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ASSIGN], traits: ['print'] })
     const without = await $.prompt.compose({ ...COMPOSE, tools: ['Bash'], traits: [] })
 
-    expect(offered.sections.at(-1)?.id).toBe('human-in-the-loop:tasks')
+    expect(offered.sections.at(-1)?.id).toBe('open-items:tasks')
     expect(offered.sections.at(-1)?.scope).toBe('session')
-    expect(offered.sections.at(-1)?.text).toContain('assign it with mcp__human-in-the-loop__assign_task so it stays in front of them')
-    expect(offered.sections.at(-1)?.text).toContain('or opens it with /my-tasks')
-    expect(offered.sections.at(-1)?.text).toContain('review or approve your work: assign it as a task even when you also ask in your reply')
-    expect(deferred.sections.at(-1)?.id).toBe('human-in-the-loop:tasks')
+    expect(offered.sections.at(-1)?.text).toContain('add it with mcp__open-items__add_item so it stays in front of them')
+    expect(offered.sections.at(-1)?.text).toContain('or opens it with /open-items')
+    expect(offered.sections.at(-1)?.text).toContain('review or approve your work: add it as an item even when you also ask in your reply')
+    expect(deferred.sections.at(-1)?.id).toBe('open-items:tasks')
     expect(headless.sections).toHaveLength(1)
     expect(without.sections).toHaveLength(1)
   })
@@ -2531,8 +2531,8 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
-    expect(world.opens.at(-1)?.id).toBe('my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.opens.at(-1)?.id).toBe('open-items')
 
     const ui = await $.ui.mount(PANE)
     expect(await textOf(ui, 'task-7')).toContain('from an earlier session')
@@ -2541,7 +2541,7 @@ describe('across sessions', () => {
     expect(context.blocks.at(-1)?.text).toContain('#7 open (from an earlier session): Rotate the leaked token in Vault')
 
     const assigned = await $.tool.call(KEY_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #8')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #8')
     expect(world.store['tasks:/repo']).toEqual({ nextId: 8, sessions: {}, taken: {} })
   })
 
@@ -2552,14 +2552,14 @@ describe('across sessions', () => {
     await start($)
 
     expect(world.opens).toHaveLength(0)
-    expect(world.status).toBe('1 task in another session')
+    expect(world.status).toBe('1 item in another session')
 
     const context = await $.prompt.context({ blocks: [] })
     expect(context.blocks).toHaveLength(0)
 
     const assigned = await $.tool.call(KEY_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #8')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #8')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
 
     // 0.1.4's value keeps its live session's slot as it wrote it, its count raised past #8, which
     // that session numbers from; this session's slot has a key of its own.
@@ -2599,7 +2599,7 @@ describe('across sessions', () => {
     await start($)
 
     const ui = await $.ui.mount(PANE)
-    expect(world.status).toBe('☐ 2 tasks for you · /my-tasks')
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
     expect(await textOf(ui, 'task-7')).toContain('from an earlier session')
 
     // The quiet one may come back (a laptop asleep), on 0.1.4: its value notes what it lets go of then.
@@ -2618,7 +2618,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 2 tasks for you · /my-tasks')
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
     expect(Object.keys(slotsIn(world.store)).sort()).toEqual(['session-1', 'session-x'])
     expect(slotsIn(world.store)['session-1']?.took).toEqual({
       'session-0': { tasks: [refOf(ROTATE)], atMs: NOW, isEnded: true },
@@ -2631,7 +2631,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     expect(slotsIn(world.store)['session-1']?.took).toBeUndefined()
-    expect(world.status).toBe('☐ 2 tasks for you · /my-tasks')
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
   })
 
   test('where two sessions drew one number, the session taking on both gives the later a new one', async ($, on) => {
@@ -2655,7 +2655,7 @@ describe('across sessions', () => {
     expect(context.blocks.at(-1)?.text).toContain('#8 open (from an earlier session): Approve the staging migration')
 
     const assigned = await $.tool.call(KEY_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #9')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #9')
   })
 
   test('a slot its session writes again after this one read it stays', async ($, on) => {
@@ -2685,11 +2685,11 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #1')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.id)).toEqual([1, 7])
     expect(slotsIn(world.store)['session-1']?.seenMs).toBe(NOW + 60_000)
-    expect(world.status).toBe('☐ 2 tasks for you · /my-tasks')
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
   })
 
   test('a session that reads the project late keeps the tasks it was done with, and no task it takes on gets their numbers', async ($, on) => {
@@ -2725,8 +2725,8 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
-    expect(world.opens.at(-1)?.id).toBe('my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.opens.at(-1)?.id).toBe('open-items')
     expect(world.opens.at(-1)?.focus).toBeUndefined()
   })
 
@@ -2743,8 +2743,8 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
-    expect(world.opens.at(-1)?.id).toBe('my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.opens.at(-1)?.id).toBe('open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-0'])
 
     // The next heartbeat makes the writes, and the slot it took the task from leaves.
@@ -2765,7 +2765,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(slotsIn(world.store)['session-1']?.took).toEqual({ 'session-x': note })
   })
 
@@ -2782,7 +2782,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store)).sort()).toEqual(['session-1', 'session-9'])
   })
 
@@ -2802,7 +2802,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.id)).toEqual([7])
   })
 
@@ -2823,7 +2823,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(slotsIn(world.store)['session-1']?.took?.['session-t']?.tasks).toEqual([refOf(mine)])
   })
 
@@ -2846,16 +2846,16 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on task #7 while this one was away. Answer it there.')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on item #7 while this one was away. Answer it there.')
     expect(slotsIn(world.store)['session-1']).toEqual({ tasks: [], seenMs: NOW + 300_000, nextId: 8 })
-    expect(world.status).toBe('1 task in another session')
+    expect(world.status).toBe('1 item in another session')
 
     // Session r drops its note once this slot has let #7 go: #7 is still its own.
     world.store[KEYS.session('session-r')] = { tasks: [held], seenMs: NOW + 330_000, nextId: 8 }
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.status).toBe('1 task in another session')
+    expect(world.status).toBe('1 item in another session')
   })
 
   test('a resumed session whose task was taken back while it was gone holds nothing, and notes nothing as it joins', async ($, on) => {
@@ -2867,7 +2867,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('1 task in another session')
+    expect(world.status).toBe('1 item in another session')
     expect(slotsIn(world.store)['session-1']).toEqual({ tasks: [], seenMs: NOW, nextId: 8 })
   })
 
@@ -2886,7 +2886,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(world.store['tasks:/repo']).toEqual({ nextId: 8, sessions: {}, taken: {} })
   })
 
@@ -2896,7 +2896,7 @@ describe('across sessions', () => {
     const { world } = seat(on, { 'tasks:/repo': legacy })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(world.store['tasks:/repo']).toEqual({ nextId: 8, sessions: {}, taken: {} })
     expect(slotsIn(world.store)['session-1']?.tasks).toEqual([mine])
 
@@ -2904,7 +2904,7 @@ describe('across sessions', () => {
     world.store['tasks:/repo'] = legacy
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(world.store['tasks:/repo']).toEqual({ nextId: 8, sessions: {}, taken: {} })
     expect(slotsIn(world.store)['session-1']?.tasks).toEqual([mine])
   })
@@ -2931,8 +2931,8 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on tasks #1, #2 while this one was away. Answer them there.')
-    expect(world.status).toBe('2 tasks in another session')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on items #1, #2 while this one was away. Answer them there.')
+    expect(world.status).toBe('2 items in another session')
     expect(world.isPaneOpen).toBe(false)
 
     // Its slot stays, empty, to carry its count.
@@ -2948,9 +2948,9 @@ describe('across sessions', () => {
     takeOn(world.store)
     const assigned = await $.tool.call(XCODE_TASK)
 
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #2')
-    expect(String((assigned as { result?: unknown }).result)).toContain('Open tasks: 1 of 5.')
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on task #1 while this one was away. Answer it there.')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #2')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Open items: 1 of 5.')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on item #1 while this one was away. Answer it there.')
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.id)).toEqual([2])
     expect(slotsIn(world.store)['session-2']?.tasks.map(task => task.id)).toEqual([1])
   })
@@ -2964,9 +2964,9 @@ describe('across sessions', () => {
     takeOn(world.store, [2])
     const again = await $.tool.call(KEY_TASK)
 
-    expect(String((again as { result?: unknown }).result)).toContain('Task #1 already asks the user for this')
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on task #2 while this one was away. Answer it there.')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(String((again as { result?: unknown }).result)).toContain('Item #1 already asks the user for this')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on item #2 while this one was away. Answer it there.')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
     // Nothing was assigned, and the slot no longer holds what was let go.
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.id)).toEqual([1])
   })
@@ -2984,8 +2984,8 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on task #2 while this one was away. Answer it there.')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on item #2 while this one was away. Answer it there.')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('a press while a heartbeat lets tasks go is kept', async ($, on) => {
@@ -3008,9 +3008,9 @@ describe('across sessions', () => {
     await clock.advance(1000)
     await clock.settle()
 
-    expect(world.toasts).toContain('Another session in this project took on task #2 while this one was away. Answer it there.')
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
-    expect(world.status).toBe('1 task in another session')
+    expect(world.toasts).toContain('Another session in this project took on item #2 while this one was away. Answer it there.')
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.status).toBe('1 item in another session')
   })
 
   test('Claude withdrawing, on waking, a task another session took on meanwhile is told it is gone', async ($, on) => {
@@ -3026,8 +3026,8 @@ describe('across sessions', () => {
 
     const withdrawn = await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found it in the vault' })
 
-    expect((withdrawn as { deny?: string }).deny).toBe('No task #1.')
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on task #1 while this one was away. Answer it there.')
+    expect((withdrawn as { deny?: string }).deny).toBe('No item #1.')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on item #1 while this one was away. Answer it there.')
   })
 
   test('assigning on waking reads the project once', async ($, on) => {
@@ -3062,7 +3062,7 @@ describe('across sessions', () => {
     await clock.advance(1000)
     await clock.settle()
 
-    expect(world.toasts.some(toast => toast.includes('took on task #1 while this one was away'))).toBe(true)
+    expect(world.toasts.some(toast => toast.includes('took on item #1 while this one was away'))).toBe(true)
     expect(world.submitted).toHaveLength(0)
   })
 
@@ -3090,8 +3090,8 @@ describe('across sessions', () => {
     const next = await $.prompt.submit(typed('now the cart'))
 
     expect(next.context).toBeUndefined()
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on tasks #1, #2 while this one was away. Answer them there.')
-    expect(world.status).toBe('2 tasks in another session')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on items #1, #2 while this one was away. Answer them there.')
+    expect(world.status).toBe('2 items in another session')
   })
 
   test('an answer typed during a turn, on waking, to a task another session took on meanwhile goes as typed', async ($, on) => {
@@ -3110,7 +3110,7 @@ describe('across sessions', () => {
     const sent = await $.prompt.submit(typed('↳ Answer to #1: Two failures', 't1'))
 
     expect(sent.text).toBe('↳ Answer to #1: Two failures')
-    expect(world.toasts.at(-1)).toBe('Another session in this project took on task #1 while this one was away. Answer it there.')
+    expect(world.toasts.at(-1)).toBe('Another session in this project took on item #1 while this one was away. Answer it there.')
   })
 
   test('the heartbeat keeps the slot alive and counts tasks other sessions take on', async ($, on) => {
@@ -3123,7 +3123,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     expect(slotsIn(world.store)['session-1']?.seenMs).toBe(NOW + 60_000)
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
   })
 
   test('assigning reads the project and writes the slot once', async ($, on) => {
@@ -3321,7 +3321,7 @@ describe('across sessions', () => {
     held.letGo()
     await pressed
 
-    expect(world.toasts.at(-1)).toBe("Task #1 isn't open any more, so your response wasn't saved.")
+    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved.")
     expect(world.composer).toBe('')
   })
 
@@ -3465,7 +3465,7 @@ describe('across sessions', () => {
 
     // Claude withdrawing #1 withdraws the Xcode task.
     await $.tool.call({ tool: WITHDRAW, id: 1 })
-    expect(seated.world.toasts.at(-1)).toBe('Claude withdrew the task: Run xcodebuild test on your Mac, paste the failures')
+    expect(seated.world.toasts.at(-1)).toBe('Claude withdrew the item: Run xcodebuild test on your Mac, paste the failures')
   })
 
   test('a session that ends after /clear before its join has begun ends all the same and takes nothing quiet', async ($, on) => {
@@ -3529,7 +3529,7 @@ describe('across sessions', () => {
     await clock.settle()
     const assigned = await $.tool.call(XCODE_TASK)
 
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #1')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
     expect(world.submitted).toHaveLength(0)
     // The response waits in the folder it was given in, for the next session there.
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.update)).toEqual(['pending'])
@@ -3665,11 +3665,11 @@ describe('across sessions', () => {
     await clock.advance(4000)
     expect(isWithdrawn).toBe(false)
     await clock.advance(1000)
-    expect(String(((await withdrawn) as { result?: unknown }).result)).toContain('Withdrew task #8')
+    expect(String(((await withdrawn) as { result?: unknown }).result)).toContain('Withdrew item #8')
 
     const assigned = await $.tool.call(XCODE_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #9')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #9')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
   })
 
   test('a store that stops answering is asked nothing more until it answers', async ($, on) => {
@@ -3710,7 +3710,7 @@ describe('across sessions', () => {
     world.unstick?.()
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
   })
 
@@ -3764,7 +3764,7 @@ describe('across sessions', () => {
 
     const ui = await $.ui.mount(PANE)
     expect(await textOf(ui, 'task-1')).toContain('from an earlier session')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-2'])
     expect(slotsIn(world.store)['session-2']?.took?.['session-1']?.isEnded).toBe(true)
   })
@@ -3781,7 +3781,7 @@ describe('across sessions', () => {
     await clock.settle()
     world.isStoreFailing = false
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
 
     await clock.advance(60_000)
@@ -3789,7 +3789,7 @@ describe('across sessions', () => {
 
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-2'])
     expect(slotsIn(world.store)['session-2']?.took?.['session-1']?.isEnded).toBe(true)
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('a session resumed in place while the store fails writes nothing until it reads the project, and keeps its own tasks', async ($, on) => {
@@ -3820,7 +3820,7 @@ describe('across sessions', () => {
 
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-3'])
     expect(slotsIn(world.store)['session-3']?.tasks).toEqual([own])
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('a session that ends before it could read the project hands on what it holds', async ($, on) => {
@@ -3878,7 +3878,7 @@ describe('across sessions', () => {
     await clock.advance(1000)
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to a task you gave me (Human in the loop):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
     expect(world.status).toBeUndefined()
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-2'])
     expect(slotsIn(world.store)['session-2']?.tasks).toEqual([])
@@ -3900,7 +3900,7 @@ describe('across sessions', () => {
     await clock.advance(1)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-3'])
     expect(slotsIn(world.store)['session-3']?.took?.['session-1']?.isEnded).toBe(true)
   })
@@ -3919,7 +3919,7 @@ describe('across sessions', () => {
 
     const ui = await $.ui.mount(PANE)
     expect(await textOf(ui, 'task-1')).toContain('from an earlier session')
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-2'])
     expect(slotsIn(world.store)['session-2']?.took?.['session-1']?.isEnded).toBe(true)
   })
@@ -3941,7 +3941,7 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
     expect(slotsIn(world.store)['session-1']).toEqual(resumed)
     expect(slotsIn(world.store)['session-2']?.tasks.map(task => task.title)).toEqual([KEY_TASK.title])
   })
@@ -3963,7 +3963,7 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 2 tasks for you · /my-tasks')
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
     expect(slotsIn(world.store)['session-2']?.tasks.map(task => task.id)).toEqual([1, 7])
     const note = slotsIn(world.store)['session-2']?.took?.['session-1']
     expect(note?.tasks.map(ref => ref.id)).toEqual([7])
@@ -4007,7 +4007,7 @@ describe('across sessions', () => {
     await start($)
 
     await $.tool.call(KEY_TASK)
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
 
     world.sessionId = 'session-3'
     world.root = '/other'
@@ -4021,7 +4021,7 @@ describe('across sessions', () => {
 
     // Numbered as a new process there would number it, without either project's count.
     const assigned = await $.tool.call(XCODE_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #1')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
   })
 
   test('a session resumed into another folder leaves behind the answer it was typing for this one', async ($, on) => {
@@ -4040,7 +4040,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     const assigned = await $.tool.call({ ...XCODE_TASK, title: 'Run the Android tests on your phone, paste the failures' })
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #1')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
 
     expect(await ui.find({ type: 'Input', key: 'answer-1' })).toBeUndefined()
     await ui.press({ key: 'answer' })
@@ -4116,7 +4116,7 @@ describe('across sessions', () => {
     await clock.advance(1)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(projectOf('/other', world.store).slots)).toEqual(['session-3'])
   })
 
@@ -4184,7 +4184,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test('a slot that leaves as this session takes it on hands its own notes on, so nothing it took is taken twice', async ($, on) => {
@@ -4197,7 +4197,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store)).sort()).toEqual(['session-1', 'session-q'])
     expect(slotsIn(world.store)['session-1']?.took?.['session-q']).toEqual(note)
 
@@ -4207,7 +4207,7 @@ describe('across sessions', () => {
     await clock.advance(1)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(slotsIn(world.store)['session-2']?.tasks.map(task => task.id)).toEqual([7])
   })
 
@@ -4226,11 +4226,11 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 2 tasks for you · /my-tasks')
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
     expect(world.store['tasks:/repo']).toEqual({ nextId: 9, sessions: {}, taken: { 'session-y': { ids: [8], atMs: NOW } } })
 
     const assigned = await $.tool.call(KEY_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #9')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #9')
   })
 
   test("what in a slot isn't a task, a count or a note is skipped", async ($, on) => {
@@ -4247,12 +4247,12 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks · 1 task in another session')
+    expect(world.status).toBe('☐ 1 item for you · /open-items · 1 item in another session')
     expect(Object.keys(slotsIn(world.store)).sort()).toEqual(['session-1', 'session-z'])
     expect((world.store[MINE] as { nextId?: unknown }).nextId).toBe(8)
 
     const assigned = await $.tool.call(KEY_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #8')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #8')
   })
 
   test("a slot that leaves takes with it the copy of it 0.1.4's value kept", async ($, on) => {
@@ -4265,7 +4265,7 @@ describe('across sessions', () => {
     })
     await start($)
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
     expect(world.store['tasks:/repo']).toEqual({ nextId: 8, sessions: {}, taken: {} })
   })
@@ -4284,7 +4284,7 @@ describe('across sessions', () => {
 
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
     expect(world.store['tasks:/repo']).toEqual({ nextId: 8, sessions: {}, taken: {} })
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
   })
 
   test("with a 0.1.4 session alive, a heartbeat reads its value once, and raises its count only when it fell back", async ($, on) => {
@@ -4326,7 +4326,7 @@ describe('across sessions', () => {
     world.store['tasks:/repo'] = { nextId: 3, sessions: {}, taken: { 'session-1': { ids: [2], atMs: NOW } } }
     const again = await $.tool.call(KEY_TASK)
 
-    expect(String((again as { result?: unknown }).result)).toContain('Task #1 already asks the user for this')
+    expect(String((again as { result?: unknown }).result)).toContain('Item #1 already asks the user for this')
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.id)).toEqual([1])
     expect(world.store['tasks:/repo']).toEqual({ nextId: 3, sessions: {}, taken: {} })
   })
@@ -4346,7 +4346,7 @@ describe('across sessions', () => {
     world.isWriteFailing = false
     const again = await $.tool.call(KEY_TASK)
 
-    expect(String((again as { result?: unknown }).result)).toContain('Task #1 already asks the user for this')
+    expect(String((again as { result?: unknown }).result)).toContain('Item #1 already asks the user for this')
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.id)).toEqual([1])
     expect(world.store['tasks:/repo']).toEqual({ nextId: 3, sessions: {}, taken: {} })
   })
@@ -4367,7 +4367,7 @@ describe('across sessions', () => {
     await clock.advance(60_000)
     await clock.settle()
 
-    expect(world.status).toBe('☐ 1 task for you · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · /open-items')
     expect(slotsIn(world.store)['session-1']?.tasks.map(task => task.title)).toEqual([ROTATE.title])
     expect(world.toasts).toHaveLength(0)
   })
@@ -4395,7 +4395,7 @@ describe('across sessions', () => {
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-2'])
 
     const assigned = await $.tool.call(KEY_TASK)
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #4')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #4')
   })
 
   test('the count of a session whose writes failed while it held a task reaches the store once it answers', async ($, on) => {
@@ -4422,7 +4422,7 @@ describe('across sessions', () => {
 
     const assigned = await $.tool.call(KEY_TASK)
 
-    expect(String((assigned as { result?: unknown }).result)).toContain('Assigned task #4')
+    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #4')
     expect(Object.keys(slotsIn(world.store))).toEqual(['session-1'])
     expect(slotsIn(world.store)['session-1']?.nextId).toBe(5)
   })
@@ -4455,7 +4455,7 @@ describe('the README example', () => {
     })
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'done' })
-    expect(world.status).toBe('✓ 1 not sent yet · /my-tasks')
+    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
 
     await $.tool.call({
       tool: ASSIGN,
@@ -4472,7 +4472,7 @@ describe('the README example', () => {
       why: 'stripe-webhooks is taken. The name goes in package.json and the README.',
       kind: 'answer',
     })
-    expect(world.status).toBe('☐ 1 task for you · 2 not sent yet · /my-tasks')
+    expect(world.status).toBe('☐ 1 item for you · 2 not sent yet · /open-items')
     await clock.advance(1000)
     expect(world.submitted).toHaveLength(0)
 
@@ -4488,7 +4488,7 @@ describe('the README example', () => {
 
     expect(world.submitted).toEqual([
       [
-        'My responses to tasks you gave me (Human in the loop):',
+        'My responses to items you gave me (Open items):',
         '',
         '#1 Add STRIPE_SECRET_KEY to .env: Done.',
         '',
@@ -4504,7 +4504,7 @@ describe('the README example', () => {
 
 describe('knowing whether Claude works', () => {
   const BAND = {
-    plugin: 'human-in-the-loop',
+    plugin: 'open-items',
     surface: 'terminal',
     component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },

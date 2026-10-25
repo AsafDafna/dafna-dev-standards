@@ -63,7 +63,7 @@ export type Editing = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'human-in-the-loop': {
+    'open-items': {
       tasks: readonly Task[]
       nextId: number
       /** The tasks this session took on from others, by their session id. */

@@ -1,8 +1,8 @@
-"""Draws the My tasks pane in a real Claude Code, in tmux, and prints the screen.
+"""Draws the Open items pane in a real Claude Code, in tmux, and prints the screen.
 
 The test kit checks the tree the plugin returns, never how a terminal lays it
 out. This runs the real engine instead: a throwaway config folder, the store
-seeded with tasks an ended session left, `/my-tasks`, and `tmux capture-pane`
+seeded with tasks an ended session left, `/open-items`, and `tmux capture-pane`
 at the width asked for. No model is called, so a dummy API key does.
 """
 
@@ -80,7 +80,7 @@ class Claude:
     def __init__(self, plugin_dir, claude='claude'):
         self.plugin_dir = os.path.abspath(plugin_dir)
         self.claude = shutil.which(claude) or claude
-        self.home = tempfile.mkdtemp(prefix='hitl-screen-')
+        self.home = os.path.realpath(tempfile.mkdtemp(prefix='hitl-screen-'))
         self.config = os.path.join(self.home, 'config')
         self.project = os.path.join(self.home, 'project')
         os.makedirs(self.config)
@@ -152,8 +152,8 @@ class Claude:
 
     def store_file(self):
         """The plugin's store, as the engine names it for a plugin loaded with --plugin-dir."""
-        digest = hashlib.sha256(b'human-in-the-loop@inline').hexdigest()[:12]
-        return os.path.join(self.config, 'plugins', 'store', f'human-in-the-loop_inline-{digest}.json')
+        digest = hashlib.sha256(b'open-items@inline').hexdigest()[:12]
+        return os.path.join(self.config, 'plugins', 'store', f'open-items_inline-{digest}.json')
 
     def seed(self, tasks):
         """Leaves `tasks` in the store as an ended session's, for the next one to take on."""
@@ -184,19 +184,19 @@ class Claude:
             json.dump({f'tasks:{self.project}#session:earlier': slot}, f)
 
     def pane(self, columns, rows, keys=(), name=None):
-        """The screen with the pane opened by /my-tasks, after `keys`; kept as `name` when given."""
+        """The screen with the pane opened by /open-items, after `keys`; kept as `name` when given."""
         self.start(columns, rows)
         # The session takes the tasks on as it starts; the status line counts
-        # them once it has. /my-tasks typed before that finds none.
+        # them once it has. /open-items typed before that finds none.
         try:
-            wait_for(self.session, lambda s: 'human-in-the-loop: ☐' in s or 'human-in-the-loop: ✓' in s)
+            wait_for(self.session, lambda s: 'open-items: ☐' in s or 'open-items: ✓' in s)
         except TimeoutError as error:
             # The engine names the store's file; the seed goes where store_file() says it does.
             raise RuntimeError(
                 f'the session took on none of the tasks seeded in {self.store_file()}: '
                 'if the engine names a --plugin-dir store otherwise now, store_file() must follow'
             ) from error
-        self.command('/my-tasks')
+        self.command('/open-items')
         wait_for(self.session, has_pane)
         if keys:
             # The pane takes the keys when the prompt lets it; else ctrl+x tab hands them over.
@@ -214,7 +214,7 @@ class Claude:
         return snapshot(self.session, name)
 
     def transcript(self, columns, rows, tool_input, name=None):
-        """The screen of a session resumed from a transcript where Claude called assign_task; kept as `name` when given."""
+        """The screen of a session resumed from a transcript where Claude called add_item; kept as `name` when given."""
         session = str(uuid.uuid4())
         folder = os.path.join(self.config, 'projects', re.sub(r'[^A-Za-z0-9]', '-', self.project))
         os.makedirs(folder, exist_ok=True)
@@ -225,7 +225,7 @@ class Claude:
             'type': 'message',
             'role': 'assistant',
             'model': 'claude-opus-5-5',
-            'content': [{'type': 'tool_use', 'id': 'toolu_render_check', 'name': 'mcp__human-in-the-loop__assign_task', 'input': tool_input}],
+            'content': [{'type': 'tool_use', 'id': 'toolu_render_check', 'name': 'mcp__open-items__add_item', 'input': tool_input}],
             'stop_reason': 'tool_use',
             'usage': {'input_tokens': 1, 'output_tokens': 1},
         }
@@ -237,7 +237,7 @@ class Claude:
                 'parentUuid': call,
                 'type': 'user',
                 'uuid': result,
-                'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_render_check', 'content': 'Assigned task #1'}]},
+                'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_render_check', 'content': 'Added item #1'}]},
             },
         ]
         with open(os.path.join(folder, f'{session}.jsonl'), 'w') as f:

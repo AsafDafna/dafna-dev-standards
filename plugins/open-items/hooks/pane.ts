@@ -3,7 +3,7 @@ import { MAX_OPTION, MAX_WHY, isActive, waitingOf } from './tasks'
 import { ago, cellsOf, clip, printable, rowsOf } from './text'
 
 /**
- * The longest title the pane and the transcript draw. `assign_task` takes
+ * The longest title the pane and the transcript draw. `add_item` takes
  * titles of at most MAX_TITLE characters; this bounds what an older version
  * or another session left in the store, never a title assigned now.
  */
@@ -19,7 +19,7 @@ const GLYPH_CELLS = 2
 const MIN_FIELD_COLUMNS = 12
 
 /**
- * What the My tasks pane draws from: the tasks, which is selected and which
+ * What the Open items pane draws from: the tasks, which is selected and which
  * field is open, and what each row's words depend on. The render hook and
  * `rowsFor` both read it, so the rows asked for are the rows drawn.
  */
@@ -45,7 +45,7 @@ export function selectedOf(view: PaneView): Task | undefined {
   return active.find(task => task.id === view.selectedId) ?? active[0]
 }
 
-/** The pane's head: `☐ 2 tasks for you · 1 not sent yet`, or `✓ 1 response not sent yet`. */
+/** The pane's head: `☐ 2 items for you · 1 not sent yet`, or `✓ 1 response not sent yet`. */
 export function headlineOf(view: PaneView): { glyph: string; headline: string; note: string } {
   return waitingOf(view.shown, 'response')
 }
@@ -213,7 +213,7 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
 }
 
 /**
- * The rows the My tasks pane's body takes at `columns` cells across, each
+ * The rows the Open items pane's body takes at `columns` cells across, each
  * text wrapped as the pane draws it: the head, the selected task whole, a
  * row (or more, for a long title) for every other task, and the foot; at
  * most `max`.

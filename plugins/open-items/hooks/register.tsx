@@ -6,7 +6,7 @@ import {
   MAX_OPEN,
   MAX_TITLE,
   answerIn,
-  assignedOf,
+  addedOf,
   bridgeOf,
   contextOf,
   digestOf,
@@ -68,23 +68,23 @@ import {
 import type { Adoption, LegacyEdit, Project, Slot } from './project'
 import { numbersOf, oneLine, printable } from './text'
 
-const PLUGIN = 'human-in-the-loop'
+const PLUGIN = 'open-items'
 
-const ASSIGN = 'mcp__human-in-the-loop__assign_task'
-const LIST = 'mcp__human-in-the-loop__list_tasks'
-const WITHDRAW = 'mcp__human-in-the-loop__withdraw_task'
+const ADD = 'mcp__open-items__add_item'
+const LIST = 'mcp__open-items__list_items'
+const WITHDRAW = 'mcp__open-items__withdraw_item'
 
 /**
  * Three lines at the end of the system prompt: where an ask for the user goes
  * so it stays in front of them, that a review is one even when the reply asks
  * for it too (the user is often busy and lets the reply's question go by),
  * and where they see it. Said as what to do,
- * never what not to: nothing here stops Claude reminding the user of a task.
+ * never what not to: nothing here stops Claude reminding the user of an item.
  */
 const STEERING = [
-  "When you need something only the user can do (a secret put in place, an action on their machine or an account you can't reach, a decision that's theirs), assign it with mcp__human-in-the-loop__assign_task so it stays in front of them until they act on it.",
-  'That includes asking the user to review or approve your work: assign it as a task even when you also ask in your reply, since they may be busy with other things when you ask, and the task keeps it in front of them.',
-  'The user sees open tasks in their My tasks pane, or opens it with /my-tasks, and their response reaches you as a message.',
+  "When you need something only the user can do (a secret put in place, an action on their machine or an account you can't reach, a decision that's theirs), add it with mcp__open-items__add_item so it stays in front of them until they act on it.",
+  'That includes asking the user to review or approve your work: add it as an item even when you also ask in your reply, since they may be busy with other things when you ask, and the item keeps it in front of them.',
+  'The user sees open items in their Open items pane, or opens it with /open-items, and their response reaches you as a message.',
 ].join('\n')
 
 /** Resolutions pressed this close together go to Claude as one message. */
@@ -93,18 +93,18 @@ const BATCH_MS = 800
 /** The longest a person, or Claude, waits on the store: what it doesn't answer by then finishes on its own. */
 const STORE_WAIT_MS = 5000
 
-/** What a tool answers while the session moves to another folder, before it has read that folder's tasks. */
-const MOVING = 'This session is still joining its project: the task store is slow to answer. Try again in a moment.'
+/** What a tool answers while the session moves to another folder, before it has read that folder's items. */
+const MOVING = 'This session is still joining its project: the item store is slow to answer. Try again in a moment.'
 
-/** The pane the tasks wait in, and the command that opens it. */
-const PANE = 'my-tasks'
-const PANE_TITLE = 'My tasks'
+/** The pane the items wait in, and the command that opens it. */
+const PANE = 'open-items'
+const PANE_TITLE = 'Open items'
 const MAX_PANE_ROWS = 18
 
 /** How a surface draws the pane: its body's width, whether it draws a field and holds the keys, and whether it seats the pane inline. */
 type Seat = Pick<PaneView, 'canType' | 'isFocused'> & { columns: number; isInline: boolean }
 
-/** What goes under the selected task: an open field, across the pane's body, and the buttons, in the task's indent. */
+/** What goes under the selected item: an open field, across the pane's body, and the buttons, in the item's indent. */
 type Controls = readonly [field: RenderElement | null, buttons: RenderElement | null]
 
 /** An 80-column terminal's main screen: the pane's seat until a surface draws it. */
@@ -123,18 +123,18 @@ function isAlike(one: Seat, other: Seat): boolean {
 
 const TOOLS: readonly ToolSpec[] = [
   {
-    name: 'assign_task',
+    name: 'add_item',
     description: [
-      'Give the user a task that only they can do, and keep it in front of them until they act on it.',
+      'Put an item in front of the user that only they can do, and keep it in front of them until they act on it.',
       'Use it for a secret or credential they must put in place, an action on their machine or on an account you cannot reach (a dashboard, a device, a deploy approval), a decision that is theirs to make, or a review or approval of your work.',
-      'Assign it even when you also ask in your reply: the user may be busy with other things, and the task keeps the ask in front of them.',
-      'A task does not block: you keep working while it waits, and the response reaches you whenever the user gets to it, so it suits anything you need from them at some point in the session.',
+      'Add it even when you also ask in your reply: the user may be busy with other things, and the item keeps the ask in front of them.',
+      'An item does not block: you keep working while it waits, and the response reaches you whenever the user gets to it, so it suits anything you need from them at some point in the session.',
       'AskUserQuestion is the blocking kind: it waits for the answer, so it suits what you need before you can go on.',
-      'One task per need: list_tasks shows what is already open.',
+      'One item per need: list_items shows what is already open.',
       'Write the title as an imperative the user can act on without scrolling back.',
-      'For a secret, ask the user to put it where it belongs and mark the task done, rather than paste it.',
-      'The user sees open tasks in their My tasks pane, or opens it with /my-tasks.',
-      'The user rejects (with a reason) or fulfills it (done, an option, or an answer in their words). Their response reaches you as a message, or when you call list_tasks.',
+      'For a secret, ask the user to put it where it belongs and mark the item done, rather than paste it.',
+      'The user sees open items in their Open items pane, or opens it with /open-items.',
+      'The user rejects (with a reason) or fulfills it (done, an option, or an answer in their words). Their response reaches you as a message, or when you call list_items.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -168,10 +168,10 @@ const TOOLS: readonly ToolSpec[] = [
     },
   },
   {
-    name: 'list_tasks',
+    name: 'list_items',
     description: [
-      'List the tasks you gave the user and what they did with them: accepted, done (with their answer or choice), rejected (with their reason).',
-      'Call it when you are about to need a task\'s result, when told an answer is saved for you, or before assigning, to avoid a duplicate.',
+      'List the items you gave the user and what they did with them: accepted, done (with their answer or choice), rejected (with their reason).',
+      'Call it when you are about to need an item\'s result, when told an answer is saved for you, or before adding, to avoid a duplicate.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -179,19 +179,19 @@ const TOOLS: readonly ToolSpec[] = [
         show: {
           type: 'string',
           enum: ['updates', 'open', 'all'],
-          description: 'updates (the default): open tasks and responses you have not seen. open: open tasks only. all: every task this session.',
+          description: 'updates (the default): open items and responses you have not seen. open: open items only. all: every item this session.',
         },
-        id: { type: 'number', description: 'One task, whole, by its number.' },
+        id: { type: 'number', description: 'One item, whole, by its number.' },
       },
     },
   },
   {
-    name: 'withdraw_task',
-    description: 'Take back a task you gave the user when you no longer need it: you found another way, or the plan changed. The user sees the reason.',
+    name: 'withdraw_item',
+    description: 'Take back an item you gave the user when you no longer need it: you found another way, or the plan changed. The user sees the reason.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'The task\'s number.' },
+        id: { type: 'number', description: 'The item\'s number.' },
         reason: { type: 'string', description: 'One short sentence the user sees.' },
       },
       required: ['id'],
@@ -199,17 +199,17 @@ const TOOLS: readonly ToolSpec[] = [
   },
 ]
 
-const tasks = atom({ plugin: 'human-in-the-loop', key: 'tasks' } as const, [] as readonly Task[])
-const nextId = atom({ plugin: 'human-in-the-loop', key: 'nextId' } as const, 1)
-const took = atom({ plugin: 'human-in-the-loop', key: 'took' } as const, {} as Readonly<Record<string, Took>>)
-const selectedId = atom({ plugin: 'human-in-the-loop', key: 'selectedId' } as const, null as number | null)
-const editing = atom({ plugin: 'human-in-the-loop', key: 'editing' } as const, null as Editing | null)
-const loadedFor = atom({ plugin: 'human-in-the-loop', key: 'loadedFor' } as const, null as string | null)
-const isWorking = atom({ plugin: 'human-in-the-loop', key: 'isWorking' } as const, false)
+const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, [] as readonly Task[])
+const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, 1)
+const took = atom({ plugin: 'open-items', key: 'took' } as const, {} as Readonly<Record<string, Took>>)
+const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, null as number | null)
+const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
+const loadedFor = atom({ plugin: 'open-items', key: 'loadedFor' } as const, null as string | null)
+const isWorking = atom({ plugin: 'open-items', key: 'isWorking' } as const, false)
 /** The remote clients attached, by surface, as the state's contract declares them. */
-type Roster = StateValue<'human-in-the-loop', 'clients'>
+type Roster = StateValue<'open-items', 'clients'>
 /** The roster, kept where a reload of the code finds it. */
-const clients = atom({ plugin: 'human-in-the-loop', key: 'clients' } as const, {} as Roster)
+const clients = atom({ plugin: 'open-items', key: 'clients' } as const, {} as Roster)
 
 /**
  * Send now goes to Claude as a message (`auto` while it is idle), Save for
@@ -329,7 +329,7 @@ export const register: Register = on => {
       await $.tool.register(tool)
     }
 
-    await $.command.register({ name: 'my-tasks', description: 'Show the tasks Claude gave you' })
+    await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
     await join($)
 
     return next(e)
@@ -367,11 +367,11 @@ export const register: Register = on => {
     return ended
   })
 
-  on('command.run', { command: 'my-tasks' }, async $ => {
+  on('command.run', { command: 'open-items' }, async $ => {
     await wake($)
 
     if ((await read($, tasks)).filter(isShown).length === 0) {
-      return { text: 'No tasks for you right now.' }
+      return { text: 'No items for you right now.' }
     }
 
     await show($, true)
@@ -381,14 +381,14 @@ export const register: Register = on => {
 
   // The tools stay in the prompt's list, descriptions and all, where an MCP
   // tool would wait behind ToolSearch: the description is what steers Claude
-  // to assign a task, so the ask stays in front of the user.
-  on('tool.describe', { tool: ASSIGN }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
+  // to add an item, so the ask stays in front of the user.
+  on('tool.describe', { tool: ADD }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
   on('tool.describe', { tool: LIST }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
   on('tool.describe', { tool: WITHDRAW }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
 
-  on('tool.call', { tool: ASSIGN }, async ($, e) => {
+  on('tool.call', { tool: ADD }, async ($, e) => {
     if (e.agentId !== undefined) {
-      return { deny: 'Only the main agent assigns tasks to the user. Say what you need from the user in your result instead.' }
+      return { deny: 'Only the main agent adds items for the user. Say what you need from the user in your result instead.' }
     }
 
     const ask = parseAsk(e as unknown as Record<string, unknown>)
@@ -398,7 +398,7 @@ export const register: Register = on => {
     }
 
     // Resumed into another folder, the session takes it on once the store
-    // work in flight is done and it has read it. A task assigned before then
+    // work in flight is done and it has read it. An item added before then
     // is the old folder's: the join drops it here, and the old session's end
     // write may leave it there.
     if (live.moving > 0) {
@@ -417,12 +417,12 @@ export const register: Register = on => {
     const same = active.find(task => sameAsk(task.title, ask.title))
 
     if (same !== undefined) {
-      return { result: `Task #${same.id} already asks the user for this ("${same.title}"); nothing new was assigned.` }
+      return { result: `Item #${same.id} already asks the user for this ("${same.title}"); nothing new was added.` }
     }
 
     if (active.length >= MAX_OPEN) {
       return {
-        deny: `The user already has ${MAX_OPEN} open tasks. Withdraw one you no longer need, or wait for them to act (list_tasks shows them).`,
+        deny: `The user already has ${MAX_OPEN} open items. Withdraw one you no longer need, or wait for them to act (list_items shows them).`,
       }
     }
 
@@ -449,10 +449,10 @@ export const register: Register = on => {
     await update($, selectedId, chosen => chosen ?? id)
 
     if (!(await show($, false))) {
-      $.ui.toast(`Claude assigned you a task: ${printable(task.title, MAX_TITLE)}. See /my-tasks`)
+      $.ui.toast(`Claude added an item for you: ${printable(task.title, MAX_TITLE)}. See /open-items`)
     }
 
-    return { result: assignedOf(task, active.length + 1) }
+    return { result: addedOf(task, active.length + 1) }
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
@@ -476,7 +476,7 @@ export const register: Register = on => {
             : list.filter(isShown)
 
     if (id !== undefined && picked.length === 0) {
-      return { result: `No task #${id}.` }
+      return { result: `No item #${id}.` }
     }
 
     // A subagent's read tells the main agent nothing. Claude hears the
@@ -490,7 +490,7 @@ export const register: Register = on => {
 
   on('tool.call', { tool: WITHDRAW }, async ($, e) => {
     if (e.agentId !== undefined) {
-      return { deny: 'Only the main agent withdraws tasks.' }
+      return { deny: 'Only the main agent withdraws items.' }
     }
 
     if (live.moving > 0) {
@@ -514,20 +514,20 @@ export const register: Register = on => {
           }))
 
     if (found === undefined) {
-      return { deny: `No task #${String(id)}.` }
+      return { deny: `No item #${String(id)}.` }
     }
 
     if (!isActive(found)) {
-      return { deny: `Task #${found.id} is already ${found.state}; there is nothing to withdraw.` }
+      return { deny: `Item #${found.id} is already ${found.state}; there is nothing to withdraw.` }
     }
 
     // Its fields go with it, and what was typed in them: put in the prompt
     // box unasked, it would join whatever the user is writing there.
     await settle($, found.id)
     const why = reason === '' ? '' : `. ${printable(reason, 200)}`
-    $.ui.toast(`Claude withdrew the task: ${printable(found.title, MAX_TITLE)}${why}`, { timeoutMs: 8000 })
+    $.ui.toast(`Claude withdrew the item: ${printable(found.title, MAX_TITLE)}${why}`, { timeoutMs: 8000 })
 
-    return { result: `Withdrew task #${found.id}; it is gone from the user's My tasks pane.` }
+    return { result: `Withdrew item #${found.id}; it is gone from the user's Open items pane.` }
   })
 
   on('turn.start', async ($, e, next) => {
@@ -575,7 +575,7 @@ export const register: Register = on => {
         // A Send now that joined the turn during its final reply sits in the
         // conversation with no step left to read it: wake Claude up for it.
         live.isUnread = false
-        void $.prompt.submit({ text: 'I answered a task while you were finishing your reply; my answer is above.', asUser: true })
+        void $.prompt.submit({ text: 'I answered an item while you were finishing your reply; my answer is above.', asUser: true })
       }
     }
 
@@ -628,7 +628,7 @@ export const register: Register = on => {
         const when = (await read($, tasks)).some(isActive) ? 'with your other answers' : 'when this turn ends'
 
         return {
-          drop: `Saved as your answer to #${task.id}. Claude gets it ${when}, or press Send now in /my-tasks.`,
+          drop: `Saved as your answer to #${task.id}. Claude gets it ${when}, or press Send now in /open-items.`,
         }
       }
     }
@@ -660,13 +660,13 @@ export const register: Register = on => {
   // tool can be reached: offered outright, or found through ToolSearch.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    const isReachable = e.tools.some(tool => tool === ASSIGN || tool === 'ToolSearch')
+    const isReachable = e.tools.some(tool => tool === ADD || tool === 'ToolSearch')
 
     if (!isReachable || e.traits.includes('print') || e.traits.includes('bare')) {
       return composed
     }
 
-    return { sections: [...composed.sections, { id: 'human-in-the-loop:tasks', text: STEERING, scope: 'session' }] }
+    return { sections: [...composed.sections, { id: 'open-items:tasks', text: STEERING, scope: 'session' }] }
   })
 
   on('prompt.context', async ($, e, next) => {
@@ -677,10 +677,10 @@ export const register: Register = on => {
       return result
     }
 
-    return { ...result, blocks: [...result.blocks, { name: 'humanInTheLoop', text: contextOf(shown, await $.session.id()) }] }
+    return { ...result, blocks: [...result.blocks, { name: 'openItems', text: contextOf(shown, await $.session.id()) }] }
   })
 
-  on('ui.render', { component: 'ToolUse', props: { tool: ASSIGN } }, ($, e, next) => {
+  on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {
     const input = e.props.input as Record<string, unknown> | null | undefined
     const title = typeof input?.['title'] === 'string' ? input['title'] : ''
 
@@ -694,7 +694,7 @@ export const register: Register = on => {
       // One text, so the label keeps its words whole and the title wraps after it.
       <Text wrap="wrap">
         <Text color="yellow">{'☐ '}</Text>
-        <Text bold>{'Assigned you a task: '}</Text>
+        <Text bold>{'Added an item for you: '}</Text>
         {printable(title, MAX_SHOWN_TITLE)}
       </Text>
     )
@@ -777,7 +777,7 @@ export const register: Register = on => {
 
     // The pane is closing: it asks for no rows, which would open it again.
     if (shown.length === 0) {
-      return <Text dimColor>No tasks for you right now.</Text>
+      return <Text dimColor>No items for you right now.</Text>
     }
 
     if (seat.isInline || wasInline) {
@@ -1219,7 +1219,7 @@ async function isLoaded($: EngineInterface): Promise<boolean> {
  * session's beside the tasks the store holds for it, ended, unless it is this
  * one or the store doesn't show it ended. One alive or quiet there has been
  * resumed by another process since, or may have been: it keeps its slot, and
- * what it assigned here goes on in this one's.
+ * what it added here goes on in this one's.
  */
 function withHeld(project: Project, holder: string | null, slot: Slot, nowMs: number): Project {
   if (holder !== null) {
@@ -1348,7 +1348,7 @@ async function letGo($: EngineInterface, project: Project): Promise<boolean> {
 
   if (lost.length > 0) {
     const which = numbersOf(lost.map(task => task.id))
-    const [noun, them] = lost.length === 1 ? ['task', 'it'] : ['tasks', 'them']
+    const [noun, them] = lost.length === 1 ? ['item', 'it'] : ['items', 'them']
 
     $.ui.toast(`Another session in this project took on ${noun} ${which} while this one was away. Answer ${them} there.`, {
       timeoutMs: 8000,
@@ -1599,7 +1599,7 @@ async function refresh($: EngineInterface): Promise<boolean> {
   return shown.length > 0
 }
 
-/** Closes the My tasks pane, and has a re-size under way leave it closed. */
+/** Closes the Open items pane, and has a re-size under way leave it closed. */
 function closePane($: EngineInterface): Promise<void> {
   live.closes += 1
 
@@ -1607,8 +1607,8 @@ function closePane($: EngineInterface): Promise<void> {
 }
 
 /**
- * Opens the My tasks pane sized to what it holds; `isAsked` when the person
- * asked for it (/my-tasks), so it takes the keyboard. Resolves whether the
+ * Opens the Open items pane sized to what it holds; `isAsked` when the person
+ * asked for it (/open-items), so it takes the keyboard. Resolves whether the
  * surface seated it: one opened unasked waits on a narrow terminal.
  */
 async function show($: EngineInterface, isAsked: boolean): Promise<boolean> {
@@ -1630,11 +1630,11 @@ async function show($: EngineInterface, isAsked: boolean): Promise<boolean> {
   return openAt($, await rowsWanted($), isAsked)
 }
 
-/** Opens the My tasks pane `rows` tall, or re-sizes it; resolves whether the surface seated it. */
+/** Opens the Open items pane `rows` tall, or re-sizes it; resolves whether the surface seated it. */
 async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promise<boolean> {
   live.rows = rows
   // The pane is a view of the tasks: one that can't open costs the user a
-  // click on /my-tasks, never the task itself.
+  // click on /open-items, never the task itself.
   const opened = await $.ui
     .open({ id: PANE, title: PANE_TITLE, rows, ...(isAsked ? { focus: true as const } : {}) })
     .catch(() => ({ isPlaced: false as const }))
@@ -1855,7 +1855,7 @@ async function giveBack($: EngineInterface, ids: readonly number[], note: DropNo
   const which = numbersOf(ids)
   const why = note === 'why' && reason !== undefined ? `: ${printable(reason, 200).replace(/[.!]+$/, '')}` : ''
 
-  $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved; press Send now in /my-tasks.`, {
+  $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved; press Send now in /open-items.`, {
     timeoutMs: 8000,
   })
 }
@@ -1942,7 +1942,7 @@ async function respond($: EngineInterface, id: number, patch: Pick<Task, 'state'
   if (was === undefined || (!isActive(was) && !isRepeatOf(was, patch))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
 
-    $.ui.toast(`Task #${id} isn't open any more, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
+    $.ui.toast(`Item #${id} isn't open any more, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
   }
 }
 

@@ -1,8 +1,8 @@
-"""The My tasks pane as a real Claude Code draws it, at narrow and wide widths.
+"""The Open items pane as a real Claude Code draws it, at narrow and wide widths.
 
 Run with `python3 tests/live/test_pane.py` from the repository's root, with
 `claude` and `tmux` on the PATH. Each case seeds tasks an ended session left,
-opens /my-tasks in a terminal of the given size and reads the screen back:
+opens /open-items in a terminal of the given size and reads the screen back:
 every title shows whole, nothing is cut off at the pane's bottom, and the
 pane asks for no rows it leaves empty. Below 110 columns the pane is framed
 above the prompt; from 110 it docks beside the transcript, about 88 columns
@@ -37,7 +37,7 @@ TASKS = [
     {'id': 1, 'title': INSTRUMENTS, 'why': 'I need a trace of the launch to see where the 4 seconds go.', 'doneWhen': 'The .trace file is in ~/traces.'},
     {'id': 2, 'title': XCODE, 'why': "I can't run Xcode here.", 'kind': 'answer'},
     {'id': 3, 'title': GERMAN, 'why': 'Die Prüfung braucht es.'},
-    {'id': 4, 'title': JAPANESE, 'why': 'The migration drops a column.', 'kind': 'choose', 'options': ['Approve', 'Wait for Monday']},
+    {'id': 4, 'title': JAPANESE, 'why': 'The migration drops a column.', 'kind': 'choose', 'options': ['Approve', 'Wait for the freeze to end']},
 ]
 
 DAY_MS = 86_400_000
@@ -194,8 +194,8 @@ class Pane(unittest.TestCase):
 
     def test_closed_and_opened_again_the_field_holds_what_was_typed_in_it(self):
         # ctrl+x x closes the pane as the person's close key does, and the
-        # terminal forgets the field's text; /my-tasks opens it again.
-        body, context = self.draw(TASKS[1:2], 64, keys=('r', DRAFT, 'C-x', 'x', '/my-tasks', 'Enter'))
+        # terminal forgets the field's text; /open-items opens it again.
+        body, context = self.draw(TASKS[1:2], 64, keys=('r', DRAFT, 'C-x', 'x', '/open-items', 'Enter'))
 
         self.assertIn(DRAFT.replace(' ', ''), joined(body).replace('⏎ send', '').replace(' ', ''), context)
 
@@ -223,8 +223,8 @@ class TranscriptRow(unittest.TestCase):
                 start = next(i for i, line in enumerate(lines) if '☐' in line)
                 row = flat(' '.join(lines[start : start + 4]).split('───')[0])
 
-                self.assertIn('☐ Assigned you a task: ', lines[start], screen)
-                self.assertIn(f'☐ Assigned you a task: {XCODE}', row, screen)
+                self.assertIn('☐ Added an item for you: ', lines[start], screen)
+                self.assertIn(f'☐ Added an item for you: {XCODE}', row, screen)
 
 
 if __name__ == '__main__':

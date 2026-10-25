@@ -17,7 +17,7 @@ export function isActive(task: Task): boolean {
   return task.state === 'open'
 }
 
-/** In the My tasks pane: the user's to act on, or acted on and not yet told to Claude. */
+/** In the Open items pane: the user's to act on, or acted on and not yet told to Claude. */
 export function isShown(task: Task): boolean {
   return isActive(task) || task.update === 'pending'
 }
@@ -31,7 +31,7 @@ export function sameAsk(a: string, b: string): boolean {
 
 export type Ask = Pick<Task, 'title' | 'why' | 'doneWhen' | 'kind' | 'options'>
 
-/** Reads `assign_task`'s arguments, or says what is wrong with them. */
+/** Reads `add_item`'s arguments, or says what is wrong with them. */
 export function parseAsk(args: Record<string, unknown>): Ask | { error: string } {
   const text = (key: string) => (typeof args[key] === 'string' ? oneLine(args[key] as string) : '')
   const title = text('title')
@@ -59,7 +59,7 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
   const options = raw.filter((o): o is string => typeof o === 'string').map(oneLine).filter(o => o !== '')
 
   if (kind === 'choose' && (options.length < 2 || options.length > 4)) {
-    return { error: 'a choose task needs 2 to 4 options.' }
+    return { error: 'a choose item needs 2 to 4 options.' }
   }
 
   if (options.some(o => o.length > MAX_OPTION)) {
@@ -78,7 +78,7 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
 /**
  * What the user did with a task, after its head: their answer, choice or
  * reason; '' when there is nothing more to say. `isFull` quotes a long
- * answer whole; a digest names it instead and points at `list_tasks`.
+ * answer whole; a digest names it instead and points at `list_items`.
  */
 function bodyOf(task: Task, isFull: boolean): string {
   switch (task.state) {
@@ -96,7 +96,7 @@ function bodyOf(task: Task, isFull: boolean): string {
       }
 
       if (!isFull && task.answer.length > MAX_INLINE_ANSWER) {
-        return `The user's answer (${sizeOf(task.answer.length)}) is saved: call list_tasks with id ${task.id} to read it.`
+        return `The user's answer (${sizeOf(task.answer.length)}) is saved: call list_items with id ${task.id} to read it.`
       }
 
       return `The user's answer:\n${task.answer}`
@@ -151,14 +151,14 @@ function ownWordsOf(task: Task): string {
 export function messageOf(due: readonly Task[]): string {
   const lines = due.map(ownWordsOf)
 
-  return `${due.length === 1 ? 'My response to a task' : 'My responses to tasks'} you gave me (Human in the loop):\n\n${lines.join('\n\n')}`
+  return `${due.length === 1 ? 'My response to an item' : 'My responses to items'} you gave me (Open items):\n\n${lines.join('\n\n')}`
 }
 
 /** What rides along with the user's next prompt: the updates, long answers named. */
 export function digestOf(due: readonly Task[]): string {
   const lines = due.map(task => newsOf(task, false))
 
-  return `Task updates since you last checked (Human in the loop):\n${lines.join('\n')}`
+  return `Item updates since you last checked (Open items):\n${lines.join('\n')}`
 }
 
 /** Read after a compaction or at a session's start: what is still with the user. */
@@ -169,16 +169,16 @@ export function contextOf(shown: readonly Task[], sessionId: string): string {
   })
 
   return [
-    'Tasks you gave the user, through the Human in the loop tools (assign_task, list_tasks, withdraw_task):',
+    'Items you gave the user, through the Open items tools (add_item, list_items, withdraw_item):',
     ...lines,
-    'The user sees them in their My tasks pane, or with /my-tasks. Withdraw any you no longer need.',
+    'The user sees them in their Open items pane, or with /open-items. Withdraw any you no longer need.',
   ].join('\n')
 }
 
-/** `list_tasks`'s answer. */
+/** `list_items`'s answer. */
 export function listOf(tasks: readonly Task[], nowMs: number): string {
   if (tasks.length === 0) {
-    return 'No tasks match.'
+    return 'No items match.'
   }
 
   return tasks
@@ -188,20 +188,20 @@ export function listOf(tasks: readonly Task[], nowMs: number): string {
         ? [`Why: ${task.why}`, task.doneWhen ? `Done when: ${task.doneWhen}` : '', task.options ? `Options: ${task.options.join(' | ')}` : '']
         : bodyOf(task, true).split('\n')
 
-      return [`#${task.id} ${task.state} · assigned ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail]
+      return [`#${task.id} ${task.state} · added ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail]
         .filter(line => line.trim() !== '')
         .join('\n  ')
     })
     .join('\n\n')
 }
 
-/** `assign_task`'s answer. */
-export function assignedOf(task: Task, open: number): string {
+/** `add_item`'s answer. */
+export function addedOf(task: Task, open: number): string {
   return [
-    `Assigned task #${task.id}: "${task.title}".`,
-    'The user sees it in their My tasks pane, or with /my-tasks, until they act on it. Their response reaches you as a message, or through list_tasks.',
+    `Added item #${task.id}: "${task.title}".`,
+    'The user sees it in their Open items pane, or with /open-items, until they act on it. Their response reaches you as a message, or through list_items.',
     'You can carry on with work that does not depend on it.',
-    `Open tasks: ${open} of ${MAX_OPEN}.`,
+    `Open items: ${open} of ${MAX_OPEN}.`,
   ].join(' ')
 }
 
@@ -211,7 +211,7 @@ export function assignedOf(task: Task, open: number): string {
  * which this session neither shows nor answers.
  */
 export function statusOf(shown: readonly Task[], elsewhere = 0): string | undefined {
-  const others = elsewhere > 0 ? `${plural(elsewhere, 'task')} in another session` : ''
+  const others = elsewhere > 0 ? `${plural(elsewhere, 'item')} in another session` : ''
 
   if (shown.length === 0) {
     return others === '' ? undefined : others
@@ -219,12 +219,12 @@ export function statusOf(shown: readonly Task[], elsewhere = 0): string | undefi
 
   const { glyph, headline, note } = waitingOf(shown)
 
-  return [`${glyph}${headline}${note}`, '/my-tasks', others].filter(part => part !== '').join(' · ')
+  return [`${glyph}${headline}${note}`, '/open-items', others].filter(part => part !== '').join(' · ')
 }
 
 /**
  * What waits on the user among `shown`, as the status line and the pane's
- * head lead with it: `☐ 2 tasks for you · 1 not sent yet`, or `✓ 1 not sent
+ * head lead with it: `☐ 2 items for you · 1 not sent yet`, or `✓ 1 not sent
  * yet` with no task open, the responses named `noun` where there's room.
  */
 export function waitingOf(shown: readonly Task[], noun?: string): { glyph: string; headline: string; note: string } {
@@ -233,7 +233,7 @@ export function waitingOf(shown: readonly Task[], noun?: string): { glyph: strin
 
   return {
     glyph: open > 0 ? '☐ ' : '✓ ',
-    headline: open > 0 ? `${plural(open, 'task')} for you` : `${noun === undefined ? saved : plural(saved, noun)} not sent yet`,
+    headline: open > 0 ? `${plural(open, 'item')} for you` : `${noun === undefined ? saved : plural(saved, noun)} not sent yet`,
     note: open > 0 && saved > 0 ? ` · ${saved} not sent yet` : '',
   }
 }
