@@ -52,10 +52,10 @@ Upstream baseline: `claude plugin validate` passes; `claude plugin test` 192 pas
 4. **Grouped pane:** sections DECISIONS, QUESTIONS, ACTIONS, INFO, in that order; an empty section is not drawn. Within a section, oldest first. The selected-item action row and hotkeys work as upstream.
 5. **Status line by kind:** `☐ 1 decision · 1 question · 1 info · /open-items` (plus upstream's "N not sent yet" when it applies). This is the collapsed summary. It needs no band, works at any width, and no other mod can cover it.
 6. **Recommended option:** a decision's recommended option shows `(recommended)` after its label.
-7. **Alert:** when Claude adds a `decision`, `question` or `action`, the mod calls `$.ui.notify(text, { title: 'Open items' })`. One call per turn at most: the alert names the first new item and counts the rest. No alert for `info`. No alert if the person typed a prompt or pressed a pane button in the last 2 minutes, because they are present. The mod runs no host command.
+7. **Alert:** when Claude adds a `decision`, `question` or `action`, the mod calls `$.ui.notify(text, { title: 'Open items' })`. One call per turn at most: it fires when the turn's first such item is added (not at the turn's end, which can be an hour later) and names that item. No alert for `info`. No alert if the person typed a prompt or pressed a pane button in the last 2 minutes, because they are present. The mod runs no host command.
 8. **Steering text** (the `prompt.compose` section and the tool descriptions), short:
    - Add an item for a decision that is the user's, a question only they can answer, an action only they can do, or info they must see.
-   - Add it even when you also ask in your reply.
+   - Add it even when you also ask in your reply. When the user answers in chat instead, withdraw the item with reason "answered in chat".
    - While background agents run, add the item and write no chat text about it until the batch ends.
    - If `add_item` fails, ask in chat.
 9. **Hooks-list test:** a test asserts that every `tool.call` hook matches one of the mod's own three tools, so the mod can never approve another tool's call.
