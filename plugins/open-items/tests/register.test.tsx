@@ -2710,6 +2710,63 @@ describe('saving', () => {
     })
   })
 
+  for (const reason of ['clear', 'resume'] as const) {
+    test(`after a ${reason} end the engine never names a new session for, nothing writes over the ended session's key`, async ($, on) => {
+      const { world, clock } = seat(on)
+      await start($)
+
+      await $.tool.call(KEY_TASK)
+      await $.session.end({ reason, sessionId: 'session-1', resume: { id: 'session-1' } })
+      await clock.advance(5000)
+      const saved = { tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title })], nextId: 2, savedMs: NOW }
+
+      expect(world.status).toBeUndefined()
+
+      const added = await $.tool.call(XCODE_TASK)
+      await clock.advance(5000)
+
+      expect(String((added as { result?: unknown }).result)).toContain('Added item #1')
+      expect(world.status).toBe('☐ 1 item for you · /open-items')
+      expect(world.store).toEqual({ 'session:session-1': saved })
+    })
+  }
+
+  test('the session /clear starts takes the id the engine names a moment after the end', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    await clock.advance(50)
+    world.sessionId = 'session-2'
+    await clock.advance(1000)
+    await $.tool.call(XCODE_TASK)
+
+    expect(savedIdsOf(world)).toEqual([1])
+    expect((world.store['session:session-1'] as { tasks: { title: string }[] }).tasks[0]?.title).toBe(KEY_TASK.title)
+    expect(savedIdsOf(world, 'session-2')).toEqual([1])
+  })
+
+  test('a pane slow to open as the session starts holds the start up 5 s at most, and the store not at all', async ($, on) => {
+    const { world, clock } = seat(on, { 'session:session-1': { tasks: [MINE], nextId: 8, savedMs: NOW } })
+    world.openMs = 30_000
+    let isStarted = false
+    void start($).then(() => {
+      isStarted = true
+    })
+    await clock.advance(4000)
+    expect(isStarted).toBe(false)
+    await clock.advance(1000)
+    expect(isStarted).toBe(true)
+
+    // Nothing waits for the pane: the clock stands still here.
+    world.openMs = 0
+    const added = await $.tool.call(KEY_TASK)
+
+    expect(String((added as { result?: unknown }).result)).toContain('Added item #8')
+    expect(savedIdsOf(world)).toEqual([7, 8])
+  })
+
   test('a resume into a session with no saved key shows nothing', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)

@@ -77,6 +77,13 @@ const BATCH_MS = 800
 /** The longest a person, or Claude, waits on the store: what it doesn't answer by then finishes on its own. */
 const STORE_WAIT_MS = 5000
 
+/**
+ * After /clear or a resume, how many times, this far apart, the new
+ * session's id is read while the engine still names the one that ended.
+ */
+const NEW_ID_READS = 3
+const NEW_ID_GAP_MS = 100
+
 /** What a tool answers while the session's saved items are still being read at its start. */
 const LOADING = "Open items is still loading this session's items. Try again in a moment."
 
@@ -309,9 +316,9 @@ export const register: Register = on => {
     // After /clear or a resume the process goes on as another session, with
     // no session.start; the engine names it only once this hook is done.
     if (e.reason === 'clear') {
-      $.clock.after(0, () => void startCleared($))
+      $.clock.after(0, () => void startCleared($, e.sessionId))
     } else if (e.reason === 'resume') {
-      $.clock.after(0, () => void startResumed($))
+      $.clock.after(0, () => void startResumed($, e.sessionId))
     }
 
     return ended
@@ -927,18 +934,47 @@ async function syncWorking($: EngineInterface) {
   await update($, isWorking, () => now)
 }
 
-/** Goes on as the session /clear started: it has no saved items to read. */
-async function startCleared($: EngineInterface) {
-  const sessionId = await $.session.id()
+/**
+ * Goes on as the session /clear started after `endingId`: it has no saved
+ * items to read. One the engine never names starts empty and saves nothing:
+ * its writes would go over the ended session's key.
+ */
+async function startCleared($: EngineInterface, endingId: string) {
+  const sessionId = await newIdAfter($, endingId)
 
-  await switchTo($, sessionId)
-  await update($, restoredFor, () => sessionId)
+  await switchTo($, sessionId ?? endingId)
+
+  if (sessionId !== undefined) {
+    await update($, restoredFor, () => sessionId)
+  }
 }
 
-/** Goes on as the session a resume took up, with the items it saved. */
-async function startResumed($: EngineInterface) {
-  await switchTo($, await $.session.id())
-  await restore($)
+/** Goes on as the session a resume took up after `endingId`, with the items it saved; as `startCleared` when the engine never names it. */
+async function startResumed($: EngineInterface, endingId: string) {
+  const sessionId = await newIdAfter($, endingId)
+
+  await switchTo($, sessionId ?? endingId)
+
+  if (sessionId !== undefined) {
+    await restore($)
+  }
+}
+
+/** The id the engine names once session `endingId` has ended, read again a moment later while it names that one; undefined if it never changes. */
+async function newIdAfter($: EngineInterface, endingId: string): Promise<string | undefined> {
+  for (let reads = 1; reads <= NEW_ID_READS; reads += 1) {
+    const sessionId = await $.session.id()
+
+    if (sessionId !== endingId) {
+      return sessionId
+    }
+
+    if (reads < NEW_ID_READS) {
+      await $.clock.sleep(NEW_ID_GAP_MS)
+    }
+  }
+
+  return undefined
 }
 
 /**
@@ -960,6 +996,7 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.batch = null
   live.isSendingAtEnd = false
   live.isUnread = false
+  await update($, restoredFor, () => null)
   await update($, tasks, () => [])
   await update($, nextId, () => 1)
   await update($, selectedId, () => null)
