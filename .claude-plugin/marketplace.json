@@ -15,6 +15,11 @@
       "name": "coo",
       "source": "./plugins/coo",
       "description": "Chief-of-Staff orchestrator mode (user-level opt-in)"
+    },
+    {
+      "name": "open-items",
+      "source": "./plugins/open-items",
+      "description": "Pane for the decisions, questions, actions and info Claude needs you to see (opt-in mod)"
     }
   ]
 }

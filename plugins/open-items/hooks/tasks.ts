@@ -1,0 +1,304 @@
+import type { Task, TaskKind } from '../types'
+import { ago, oneLine, plural, sizeOf } from './text'
+
+/** Open decisions, questions and actions at once; the next is refused. */
+export const MAX_OPEN = 5
+/** Open info items at once; the next drops the oldest, since an info item asks nothing. */
+export const MAX_INFO = 5
+export const MAX_TITLE = 80
+/** The longest why or done-when an item keeps, and the pane draws. */
+export const MAX_WHY = 300
+export const MAX_OPTION = 60
+/** Answers longer than this are named in a digest, not quoted. */
+const MAX_INLINE_ANSWER = 2000
+
+export const KINDS: readonly TaskKind[] = ['decision', 'question', 'action', 'info']
+
+/** Still open for the user: any kind, `info` included. */
+export function isActive(task: Task): boolean {
+  return task.state === 'open'
+}
+
+/** Open and asks something of the user: every kind but `info`. */
+export function isAsk(task: Task): boolean {
+  return isActive(task) && task.kind !== 'info'
+}
+
+/** In the Open items pane: open for the user, or acted on and not yet told to Claude. */
+export function isShown(task: Task): boolean {
+  return isActive(task) || task.update === 'pending'
+}
+
+/** A title as two near-identical asks compare equal. */
+export function sameAsk(a: string, b: string): boolean {
+  const norm = (s: string) => oneLine(s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' '))
+
+  return norm(a) === norm(b)
+}
+
+export type Ask = Pick<Task, 'title' | 'why' | 'doneWhen' | 'kind' | 'options' | 'recommended'>
+
+/** Reads `add_item`'s arguments, or says what is wrong with them. */
+export function parseAsk(args: Record<string, unknown>): Ask | { error: string } {
+  const text = (key: string) => (typeof args[key] === 'string' ? oneLine(args[key] as string) : '')
+  const title = text('title')
+  const why = text('why')
+  const doneWhen = text('done_when')
+  const recommended = text('recommended')
+  const kind = args['kind'] ?? 'action'
+
+  if (title === '') {
+    return { error: 'title is required: what the user should do, as an imperative.' }
+  }
+
+  if (title.length > MAX_TITLE) {
+    return { error: `title is ${title.length} characters; keep it under ${MAX_TITLE} and put the rest in why.` }
+  }
+
+  if (why === '') {
+    return { error: 'why is required: one sentence on what it unblocks.' }
+  }
+
+  if (!KINDS.includes(kind as TaskKind)) {
+    return { error: 'kind must be "decision", "question", "action" or "info".' }
+  }
+
+  const raw = Array.isArray(args['options']) ? args['options'] : []
+  const options = raw.filter((o): o is string => typeof o === 'string').map(oneLine).filter(o => o !== '')
+
+  if (kind === 'decision' && (options.length < 2 || options.length > 4)) {
+    return { error: 'a decision needs 2 to 4 options.' }
+  }
+
+  if (options.some(o => o.length > MAX_OPTION)) {
+    return { error: `keep each option under ${MAX_OPTION} characters.` }
+  }
+
+  if (kind === 'decision' && recommended !== '' && !options.includes(recommended)) {
+    return { error: 'recommended must be one of the options, spelled the same.' }
+  }
+
+  return {
+    title,
+    why: why.slice(0, MAX_WHY),
+    ...(doneWhen === '' ? {} : { doneWhen: doneWhen.slice(0, MAX_WHY) }),
+    kind: kind as TaskKind,
+    ...(kind === 'decision' ? { options } : {}),
+    ...(kind === 'decision' && recommended !== '' ? { recommended } : {}),
+  }
+}
+
+/**
+ * What the user did with an item, after its head: their answer, choice or
+ * reason; '' when there is nothing more to say. `isFull` quotes a long
+ * answer whole; a digest names it instead and points at `list_items`.
+ */
+function bodyOf(task: Task, isFull: boolean): string {
+  switch (task.state) {
+    case 'rejected':
+      return task.reason ? `The user's reason: "${task.reason}"` : 'No reason given.'
+    case 'withdrawn':
+      return task.reason ? `You withdrew it: ${task.reason}` : 'You withdrew it.'
+    case 'done':
+      if (task.answer === undefined || task.answer === '') {
+        return ''
+      }
+
+      if (task.kind === 'decision' && task.options?.includes(task.answer)) {
+        return `The user chose: ${task.answer}`
+      }
+
+      if (!isFull && task.answer.length > MAX_INLINE_ANSWER) {
+        return `The user's answer (${sizeOf(task.answer.length)}) is saved: call list_items with id ${task.id} to read it.`
+      }
+
+      return `The user's answer:\n${task.answer}`
+    default:
+      return ''
+  }
+}
+
+/** How a task's news opens: `#5 done: <title>.` */
+export function newsHeadOf(task: Task): string {
+  return `#${task.id} ${task.state}: ${task.title}.`
+}
+
+/** One task's news for Claude: `#5 done: <title>.` and what the user said. */
+export function newsOf(task: Task, isFull: boolean): string {
+  const body = bodyOf(task, isFull)
+
+  return `${newsHeadOf(task)}${body === '' ? '' : ` ${body}`}`
+}
+
+/** How what the user did with a task opens, in their own words: `#5 <title>:` */
+export function ownHeadOf(task: Task): string {
+  return `#${task.id} ${task.title}:`
+}
+
+/** What the user did with an item, in their own words. */
+function ownWordsOf(task: Task): string {
+  const head = ownHeadOf(task)
+
+  switch (task.state) {
+    case 'rejected':
+      return task.reason ? `${head} I won't do this. ${task.reason}` : `${head} I won't do this.`
+    case 'done':
+      if (task.answer === undefined || task.answer === '') {
+        return `${head} Done.`
+      }
+
+      if (task.kind === 'decision' && task.options?.includes(task.answer)) {
+        return `${head} I chose "${task.answer}".`
+      }
+
+      return `${head}\n${task.answer}`
+    default:
+      return head
+  }
+}
+
+/**
+ * What reaches Claude as a message: every response it has not heard,
+ * whole, in the user's own words, since they are the user's.
+ */
+export function messageOf(due: readonly Task[]): string {
+  const lines = due.map(ownWordsOf)
+
+  return `${due.length === 1 ? 'My response to an item' : 'My responses to items'} you gave me (Open items):\n\n${lines.join('\n\n')}`
+}
+
+/** What rides along with the user's next prompt: the updates, long answers named. */
+export function digestOf(due: readonly Task[]): string {
+  const lines = due.map(task => newsOf(task, false))
+
+  return `Item updates since you last checked (Open items):\n${lines.join('\n')}`
+}
+
+/** Read after a compaction or at a session's start: what is still with the user. */
+export function contextOf(shown: readonly Task[]): string {
+  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${task.why}` : newsOf(task, false)))
+
+  return [
+    'Items you gave the user, through the Open items tools (add_item, list_items, withdraw_item):',
+    ...lines,
+    'The user sees them in their Open items pane, or with /open-items. Withdraw any you no longer need.',
+  ].join('\n')
+}
+
+/** `list_items`'s answer. */
+export function listOf(tasks: readonly Task[], nowMs: number): string {
+  if (tasks.length === 0) {
+    return 'No items match.'
+  }
+
+  return tasks
+    .map(task => {
+      const age = ago(nowMs - task.createdMs)
+      const detail = isActive(task)
+        ? [
+            `Why: ${task.why}`,
+            task.doneWhen ? `Done when: ${task.doneWhen}` : '',
+            task.options ? `Options: ${task.options.join(' | ')}` : '',
+            task.recommended ? `Recommended: ${task.recommended}` : '',
+          ]
+        : bodyOf(task, true).split('\n')
+
+      return [`#${task.id} ${task.state} · added ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail]
+        .filter(line => line.trim() !== '')
+        .join('\n  ')
+    })
+    .join('\n\n')
+}
+
+/** `add_item`'s answer; `count` is the open items of the new item's group (info, or the rest). */
+export function addedOf(task: Task, count: number): string {
+  if (task.kind === 'info') {
+    return [
+      `Added item #${task.id}: "${task.title}".`,
+      'The user sees it in their Open items pane, or with /open-items, until they mark it seen. It asks nothing, so no response reaches you.',
+      `Info items: ${count} of ${MAX_INFO}; a sixth drops the oldest.`,
+    ].join(' ')
+  }
+
+  return [
+    `Added item #${task.id}: "${task.title}".`,
+    'The user sees it in their Open items pane, or with /open-items, until they act on it. Their response reaches you as a message, or through list_items.',
+    'You can carry on with work that does not depend on it.',
+    `Open items: ${count} of ${MAX_OPEN}.`,
+  ].join(' ')
+}
+
+/** The status line under the prompt: the open items by kind, and responses not sent yet. */
+export function statusOf(shown: readonly Task[]): string | undefined {
+  if (shown.length === 0) {
+    return undefined
+  }
+
+  const { glyph, headline, note } = waitingOf(shown)
+
+  return `${glyph}${headline}${note} · /open-items`
+}
+
+/**
+ * What waits on the user among `shown`, as the pane's head and the status line
+ * lead with it: `☐ 1 decision · 2 questions · 1 not sent yet` (the open items by
+ * kind), or `✓ 1 not sent yet` with nothing open, the responses named `noun`
+ * where there's room.
+ */
+export function waitingOf(shown: readonly Task[], noun?: string): { glyph: string; headline: string; note: string } {
+  const open = shown.filter(isActive)
+  const saved = shown.length - open.length
+  // "info" keeps its form for any count.
+  const kinds = KINDS.map(kind => ({ kind, count: open.filter(task => task.kind === kind).length }))
+    .filter(({ count }) => count > 0)
+    .map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind)))
+    .join(' · ')
+
+  return {
+    glyph: open.length > 0 ? '☐ ' : '✓ ',
+    headline: open.length > 0 ? kinds : `${noun === undefined ? saved : plural(saved, noun)} not sent yet`,
+    note: open.length > 0 && saved > 0 ? ` · ${saved} not sent yet` : '',
+  }
+}
+
+const BRIDGE = /^\s*↳?\s*Answer to #(\d+):[ \t]*\n?/i
+
+/** What a long answer written in the prompt box starts with. */
+export function bridgeOf(id: number): string {
+  return `↳ Answer to #${id}: `
+}
+
+/** A prompt that answers a task: the task's id and the answer, or null. */
+export function answerIn(text: string): { id: number; answer: string } | null {
+  const match = BRIDGE.exec(text)
+
+  return match ? { id: Number(match[1]), answer: text.slice(match[0].length).trim() } : null
+}
+
+const SECRET_SHAPES: readonly RegExp[] = [
+  /\bsk_(live|test)_[0-9A-Za-z]{10,}/,
+  /\bsk-ant-[\w-]{10,}/,
+  /\bsk-[A-Za-z0-9_-]{20,}/,
+  /\bA(KIA|SIA)[0-9A-Z]{16}\b/,
+  /\bgh[pousr]_[A-Za-z0-9]{30,}/,
+  /\bgithub_pat_[A-Za-z0-9_]{30,}/,
+  /\bxox[abprs]-[\w-]{10,}/,
+  /\bAIza[\w-]{30,}/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /\beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/,
+]
+
+/**
+ * Whether an answer looks like it carries a secret: a known key shape, or a
+ * long token mixing upper case, lower case and digits (a git hash, all lower
+ * case hex, is not one).
+ */
+export function looksSecret(text: string): boolean {
+  if (SECRET_SHAPES.some(shape => shape.test(text))) {
+    return true
+  }
+
+  return (text.match(/[A-Za-z0-9+/_=-]{32,}/g) ?? []).some(
+    token => /[a-z]/.test(token) && /[A-Z]/.test(token) && /[0-9]/.test(token),
+  )
+}

@@ -1,0 +1,7 @@
+{
+  "name": "open-items",
+  "version": "0.1.0",
+  "description": "Claude adds the decisions, questions, actions and findings that need you to an Open items pane, so they stay visible and answerable until you resolve them.",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

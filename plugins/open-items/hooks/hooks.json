@@ -1,0 +1,4 @@
+{
+  "description": "Open items: tools Claude adds items with, the pane and status line where they wait for you, and the delivery of your answers to Claude",
+  "modules": ["./register.tsx"]
+}

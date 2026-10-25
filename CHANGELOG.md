@@ -1,5 +1,13 @@
 # Changelog
 
+## open-items 0.1.0 — new opt-in mod
+
+- Fork of human-in-the-loop (Tzafrir Rehan, MIT), renamed to Open items.
+- Removed: the per-project store and the project-wide task list.
+- Added: a per-session store, four kinds (decision, question, action, info), a
+  pane grouped by kind, an alert through `$.ui.notify`, and four steering lines.
+- The mod runs no host command; every `tool.call` hook matches its own tools.
+
 ## coo 1.0.4 — batched reporting holds questions until the recap
 
 - `coo` orchestration.md: the batched-reporting rule allowed a mid-batch
