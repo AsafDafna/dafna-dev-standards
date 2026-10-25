@@ -42,17 +42,17 @@ Upstream baseline: `claude plugin validate` passes; `claude plugin test` 192 pas
 - The multi-session machinery: project-wide slots, joining a project, the heartbeat, quiet-session detection, taking on another session's tasks, the `took` notes, project-wide numbering, the "N tasks in another session" status, and the "across sessions" tests. Asaf's rule already gives parallel sessions their own worktrees, so the case this serves is rare, and it is most of the complexity.
 - Upstream's website files, icon, marketing README and `docs/DESIGN.md` from the plugin folder.
 
-**Replacement persistence (Claude's call):** one `$.store` key per session id. The session writes it on every change and reads it at `session.start`, so `--resume` brings the items back. On `/clear` (`session.end` reason `clear`), the items are dropped, because they refer to a conversation the model no longer has. At start, keys older than 30 days are deleted. Numbering is per session (`#1, #2, …`).
+**Replacement persistence (Claude's call):** one `$.store` key per session id. The session writes it on every change and reads it at `session.start`, so `--resume` brings the items back. On `/clear` (`session.end` reason `clear`), the new session starts empty, because the items refer to a conversation the model no longer has. The old key stays, so `claude --resume <old id>` brings them back, until the 30-day cleanup. At start, keys older than 30 days are deleted. Numbering is per session (`#1, #2, …`).
 
 ## Add
 
-1. **Rename to `open-items` everywhere:** plugin name, state keys, tools, command, prompts, toasts, the long-answer prefix, tests. Model-facing tool names: `mcp__open-items__add_item`, `list_items`, `withdraw_item`. Command: `/open-items`. Pane title: "Open items".
+1. **Rename to `open-items` everywhere:** plugin name, state keys, tools, command, prompts, toasts, tests. The long-answer prefix `↳ Answer to #N:` stays (it has no upstream name). Model-facing tool names: `mcp__open-items__add_item`, `list_items`, `withdraw_item`. Command: `/open-items`. Pane title: "Open items".
 2. **Four kinds, model-facing:** `decision` (upstream `choose`: 2–4 options, one may be marked recommended, plus "Other…" free text), `question` (upstream `answer`), `action` (upstream `do`: something only the person can do; Done), and the new `info`.
 3. **The `info` kind:** a finding the person must see (a CI failure, a result that changes their plan). It has one button, **Seen**, which dismisses it locally and sends nothing to Claude. Info items do not count toward the cap of 5 open asks; at most 5 info items stay, and a sixth drops the oldest.
 4. **Grouped pane:** sections DECISIONS, QUESTIONS, ACTIONS, INFO, in that order; an empty section is not drawn. Within a section, oldest first. The selected-item action row and hotkeys work as upstream.
 5. **Status line by kind:** `☐ 1 decision · 1 question · 1 info · /open-items` (plus upstream's "N not sent yet" when it applies). This is the collapsed summary. It needs no band, works at any width, and no other mod can cover it.
 6. **Recommended option:** a decision's recommended option shows `(recommended)` after its label.
-7. **Alert:** when Claude adds a `decision`, `question` or `action`, the mod calls `$.ui.notify(text, { title: 'Open items' })`. One call per turn at most: it fires when the turn's first such item is added (not at the turn's end, which can be an hour later) and names that item. No alert for `info`. No alert if the person typed a prompt or pressed a pane button in the last 2 minutes, because they are present. The mod runs no host command.
+7. **Alert:** when Claude adds a `decision`, `question` or `action`, the mod calls `$.ui.notify(text, { title: 'Open items' })`. One call per turn at most: it fires when the turn's first such item is added (not at the turn's end, which can be an hour later) and names that item. No alert for `info`. No alert if the person typed a prompt (origin `composer` or `bridge`) or pressed a pane button in the last 2 minutes, because they are present. The mod runs no host command.
 8. **Steering text** (the `prompt.compose` section and the tool descriptions), short:
    - Add an item for a decision that is the user's, a question only they can answer, an action only they can do, or info they must see.
    - Add it even when you also ask in your reply. When the user answers in chat instead, withdraw the item with reason "answered in chat".
@@ -73,7 +73,7 @@ So the public mod only calls `$.ui.notify`. On Asaf's machine, a private hook (o
 - A pane Claude opens is seated only from 144 columns (110 once the person opened it before); below that the status line still shows the count and a toast names the item. `/open-items` opens it at any width.
 - `Input` is drawn on terminal, desktop and VS Code, not on mobile.
 - Upstream saw `isDeferred: false` ignored when the mod loaded mid-session; the smoke test uses a session started with the plugin installed.
-- CI here runs only jq, shellcheck and the leak gate. `claude plugin validate`, `claude plugin test` and `tsc -p` also run locally before the PR. The leak gate scans `plugins/`, so plugin files never name people or Asaf's tools.
+- The repo's required CI runs only jq, shellcheck and the leak gate; the new open-items workflow (Add 11) adds validate and test. `tsc -p` and the live harness run locally before the PR. The leak gate scans `plugins/`, so plugin files never name people or Asaf's tools.
 - Repo rules: CHANGELOG line, `open-items` version `0.1.0`, a marketplace entry, PR merged by Asaf.
 
 ## Rollout
