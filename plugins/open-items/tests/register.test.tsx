@@ -2611,6 +2611,26 @@ describe('saving', () => {
     const added = await $.tool.call(XCODE_TASK)
     expect(String((added as { result?: unknown }).result)).toContain('Added item #8')
   })
+
+  test("a store stuck at start holds the tools back until the session's items are read", async ($, on) => {
+    const { world, clock } = seat(on, { 'session:session-1': { tasks: [MINE], nextId: 8, savedMs: NOW } })
+    world.isStuck = true
+    const started = start($)
+    await clock.advance(5000)
+    await started
+
+    for (const call of [KEY_TASK, { tool: LIST }, { tool: WITHDRAW, id: 7 }] as const) {
+      const refused = await $.tool.call(call)
+      expect((refused as { deny?: string }).deny).toBe("Open items is still loading this session's items. Try again in a moment.")
+    }
+
+    world.unstick?.()
+    await clock.settle()
+    const added = await $.tool.call(KEY_TASK)
+
+    expect(String((added as { result?: unknown }).result)).toContain('Added item #8')
+    expect(savedIdsOf(world)).toEqual([7, 8])
+  })
 })
 
 describe('across sessions', () => {

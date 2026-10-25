@@ -98,6 +98,9 @@ const STORE_WAIT_MS = 5000
 /** What a tool answers while the session moves to another folder, before it has read that folder's items. */
 const MOVING = 'This session is still joining its project: the item store is slow to answer. Try again in a moment.'
 
+/** What a tool answers while the session's saved items are still being read at its start. */
+const LOADING = "Open items is still loading this session's items. Try again in a moment."
+
 /** The pane the items wait in, and the command that opens it. */
 const PANE = 'open-items'
 const PANE_TITLE = 'Open items'
@@ -287,6 +290,8 @@ const live = {
   held: new Set<string>(),
   /** Joins into another folder not done yet: until then the tasks the process holds are the folder's it leaves. */
   moving: 0,
+  /** Start reads of the session's saved items not settled yet: until then the tools refuse, as the read replaces the items. */
+  restoring: 0,
   /** The store work asked for and not yet done: each piece waits for the one before. */
   queue: Promise.resolve() as Promise<unknown>,
   /** Store work a wait gave up on, not settled yet: while there is any, nothing waits on the store. */
@@ -409,6 +414,10 @@ export const register: Register = on => {
       return { deny: MOVING }
     }
 
+    if (live.restoring > 0) {
+      return { deny: LOADING }
+    }
+
     // Task numbers count per project, across its sessions: the next is past
     // every number a session there drew, which each slot carries, so this
     // reads the project first (and lets go of tasks taken on while the
@@ -464,6 +473,10 @@ export const register: Register = on => {
       return { deny: MOVING }
     }
 
+    if (live.restoring > 0) {
+      return { deny: LOADING }
+    }
+
     await wake($)
     const args = e as unknown as Record<string, unknown>
     const id = typeof args['id'] === 'number' ? args['id'] : undefined
@@ -499,6 +512,10 @@ export const register: Register = on => {
 
     if (live.moving > 0) {
       return { deny: MOVING }
+    }
+
+    if (live.restoring > 0) {
+      return { deny: LOADING }
     }
 
     await wake($)
@@ -1109,35 +1126,19 @@ async function switchTo($: EngineInterface, sessionId: string) {
 /**
  * Takes up the items this session saved, when its key has them (a resumed
  * session), and deletes the keys of sessions saved more than `KEEP_MS` ago.
- * A reload of the code starts the session again with its state kept, which
- * is newer than its key: it reads nothing. Like joining, a store slow to
- * answer holds up the start 5 seconds at most.
+ * Until the read settles, the tools refuse: an item Claude added meanwhile
+ * would go under the items read. Like joining, a store slow to answer holds
+ * up the start 5 seconds at most.
  */
 async function restore($: EngineInterface) {
   const sessionId = await $.session.id()
-  const restored = queued(async () => {
-    // A reload of the code starts `live` over and keeps the state.
-    live.sessionId = sessionId
 
-    if ((await read($, restoredFor)) === sessionId) {
-      return false
-    }
-
-    const nowMs = await $.clock.now()
-    const saved = savedIn(await $.store.get(keyOf(sessionId)))
-    const isKept = saved !== undefined && !isExpired(saved, nowMs)
-
-    if (isKept) {
-      await update($, tasks, () => saved.tasks)
-      await update($, nextId, () => saved.nextId)
-      await reselect($)
-    }
-
-    await update($, restoredFor, () => sessionId)
-    await dropExpired($, nowMs).catch(() => undefined)
-
-    return isKept
-  }).catch(() => false)
+  live.restoring += 1
+  const restored = queued(() => takeUp($, sessionId)).catch(() => false)
+  void restored.then(() => {
+    live.restoring -= 1
+  })
+  const cleaned = queued(() => dropExpired($)).catch(() => undefined)
 
   const shown = restored
     .then(async isKept => {
@@ -1147,12 +1148,40 @@ async function restore($: EngineInterface) {
     })
     .catch(() => undefined)
 
-  await awaited($, restored)
+  await awaited($, Promise.allSettled([restored, cleaned]))
   await redrawn($, shown)
 }
 
+/**
+ * Sets the items and the count from session `sessionId`'s key, unless it has
+ * expired; resolves whether it did. A reload of the code starts the session
+ * again with its state kept, which is newer than its key: it reads nothing.
+ */
+async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
+  // A reload starts `live` over.
+  live.sessionId = sessionId
+
+  if ((await read($, restoredFor)) === sessionId) {
+    return false
+  }
+
+  const saved = savedIn(await $.store.get(keyOf(sessionId)))
+  const isKept = saved !== undefined && !isExpired(saved, await $.clock.now())
+
+  if (isKept) {
+    await update($, tasks, () => saved.tasks)
+    await update($, nextId, () => saved.nextId)
+    await reselect($)
+  }
+
+  await update($, restoredFor, () => sessionId)
+
+  return isKept
+}
+
 /** Deletes every session's saved key that has expired: all of them share the store's one file. */
-async function dropExpired($: EngineInterface, nowMs: number) {
+async function dropExpired($: EngineInterface) {
+  const nowMs = await $.clock.now()
   const keys = (await $.store.keys()).filter(isSavedKey)
   const values = await Promise.all(keys.map(key => $.store.get(key)))
 
