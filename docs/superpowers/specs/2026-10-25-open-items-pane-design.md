@@ -1,103 +1,96 @@
-# open-items: a pane for decisions, questions and info
+# open-items: a pane for decisions, questions, actions and info
 
-**Date:** 2026-10-25 · **Status:** design, awaiting approval
-**Users:** Asaf first (Mac, Ghostty + herdr, fullscreen TUI); Nir may install it (opt-in plugin).
+**Date:** 2026-10-25 · **Status:** approved direction (Asaf: "fork it, use it as a starting point, take the good stuff, remove the bad stuff, add what is needed")
+**Users:** Asaf first (Mac, Ghostty + herdr, fullscreen TUI, personal + org seats); Nir may install it (opt-in plugin).
 
 ## Intent
 
-Sessions that run background subagents post questions and findings into the chat while the work goes on. The person does not watch the session while it works, so later hand-backs push those questions out of view, and they get lost. A CLAUDE.md rule against this has failed several times. This mod moves every question, decision and important finding out of the chat stream into a pane that keeps them visible and answerable until they are resolved.
+Sessions that run background subagents post questions and findings into the chat while the work goes on. Asaf does not watch the session while it works, so later hand-backs push those questions out of view and they get lost. A CLAUDE.md rule against this has failed several times. This mod keeps every decision, question, action and important finding for the person in a pane, visible and answerable until it is resolved.
 
-## Goals
+## Starting point
 
-- Every open decision, question and info item for the person is visible in one place in the session, regardless of how much chat came after it.
-- The person answers a decision with one click, or with free text, from the pane.
-- A new decision or question alerts the person when they are away from the session.
-- The pane can be collapsed and leaves a one-line summary.
+`plugins/open-items/` starts as a verbatim copy of `tzafrir/human-in-the-loop` 0.1.8 at `bf8233cd` (MIT; its LICENSE and copyright line stay). Commit `1c1f545` is that import, so `git diff 1c1f545 -- plugins/open-items` shows every change we made. This is a one-time copy, not a tracked fork: upstream changes are not merged.
 
-## Non-goals
+Upstream baseline: `claude plugin validate` passes; `claude plugin test` 192 pass. Upstream's own design doc (kept out of the plugin) is at `docs/DESIGN.md` in the upstream repo and explains the delivery and persistence logic.
 
-- One inbox across sessions. Each session has its own pane (Asaf's choice). Skipped: a shared inbox; add it when per-session panes prove too scattered across herdr workspaces.
-- Moshi (iPhone) push or a mobile layout. Asaf reads sessions on the Mac terminal. Skipped: add Moshi push when he reads sessions on the iPhone often.
-- Subagents asking the person directly. Their questions go through the main session.
+## Decided by Asaf (2026-10-24/25)
 
-## Anti-goals (a failure even if it works)
+1. One pane per session, showing only that session's items.
+2. Layout A: grouped by kind, decisions first.
+3. A decision offers its options and a free-text answer.
+4. The pane is collapsible and leaves a one-line summary.
+5. A new item alerts him with a macOS notification and a sound.
+6. Home: a new opt-in plugin `open-items` in this marketplace.
+7. Fork upstream as a starting point and modify it.
 
-- An item that exists only as chat text. If the model asks without the tool, the mod failed its purpose.
-- More questions because asking became cheap. The bar stays the same: ask only about design, direction and trade-offs.
-- Alert noise. Info items never alert; one alert per new decision or question.
-- A mod that can approve tool calls. The mod's `tool.call` hooks match only its own tool names, so it can never approve a call that a deny rule or a security hook refused.
+## Keep from upstream
 
-## Decided by Asaf (brainstorming, 2026-10-24/25)
+- The tool-based mechanism: Claude calls a tool instead of writing the ask in prose; the tool is not deferred (`tool.describe` → `isDeferred: false`).
+- Refusing the tools from subagents (`e.agentId` set).
+- No steering section and no tools' prompt section in `print` or `bare` sessions.
+- Delivery: Send now while idle (`$.prompt.submit`, `asUser`), Save for later while Claude works, the mid-turn append, the final-reply wake-up, the next-prompt digest, `prompt.context` after compaction.
+- A response that does not reach Claude stays saved (drop handling).
+- The inline answer field, the composer bridge for long answers, the secret guard.
+- The cap of 5 open asks, duplicate merge, withdraw with a reason.
+- The status line under the prompt and the command that opens the pane. The pane closes itself when empty.
+- The `ToolUse` transcript row, the system notice rows, the mobile and desktop handling.
+- The test kit (`tests/register.test.tsx`) and the live render harness (`tests/live/`).
 
-1. **Scope:** one pane per session, showing only that session's items.
-2. **Layout A, grouped by kind:** sections DECISIONS, QUESTIONS, INFO, in that order. Mockup: see "Layout" below.
-3. **Decisions take free text:** each decision shows its option buttons and a text field under them ("or type your own answer…").
-4. **Collapsible:** collapsing closes the pane and leaves a one-line band above the prompt (counts per kind + an Open button).
-5. **Alert:** a new decision or question raises a macOS notification with a sound.
-6. **Home:** a new opt-in plugin `open-items` in this marketplace (`plugins/open-items`), installed per person at user scope.
+## Remove from upstream
 
-## Builder's calls made during design (Claude's, not Asaf's; check while reading)
+- All 0.1.4 legacy handling (`editLegacy`, the legacy project value, legacy notes) and its tests.
+- The multi-session machinery: project-wide slots, joining a project, the heartbeat, quiet-session detection, taking on another session's tasks, the `took` notes, project-wide numbering, the "N tasks in another session" status, and the "across sessions" tests. Asaf's rule already gives parallel sessions their own worktrees, so the case this serves is rare, and it is most of the complexity.
+- Upstream's website files, icon, marketing README and `docs/DESIGN.md` from the plugin folder.
 
-1. **Items come in through a tool, not text.** The mod registers tools the model calls (`add` an item, `resolve` an item). A `prompt.compose` section (scope `session`) tells the model: every decision, question or info item for the person goes through `add`; never only as chat text; when the person answers in chat instead of the pane, call `resolve`.
-2. **Item fields:** kind (`decision` | `question` | `info`), short text, for a decision 2–4 options with at most one marked recommended. The mod assigns ids per session: `D1, D2…`, `Q1…`, `I1…`.
-3. **Answering from the pane:** a button or a submitted text field calls `$.prompt.submit({ text, asUser: true })` with the id, the question and the answer (example: `D1 (Merge PR #18?): 1 Yes`). The mod marks the item answered at once. A plugin prompt runs once the session is idle, so an answer given mid-turn waits for that turn to end.
-4. **Answered items** move to a folded "Answered" list at the bottom of the pane for the rest of the session.
-5. **Info items** have a "Seen" button that dismisses them locally. "Seen" sends nothing to the model.
-6. **Subagent progress line** at the bottom of INFO ("Subagents: 2 of 3 back"), from engine state (`$.agent.list()` and agent events), never from model text. Hidden when no background subagent runs.
-7. **Opening:** the pane opens unasked when the first open item arrives, unless the person collapsed it in this session. Once collapsed, it stays collapsed; the band and the alert still show new items. A `/open-items` command opens it.
-8. **Band:** shows only while the pane is closed and open items exist. Text: `Open items: 1 decision · 1 question · 1 info`, with an `o Open` button. The engine draws its `[-]`.
-9. **Alert path:** do NOT rely on `$.ui.notify`. It writes through the person's `preferredNotifChannel`, which is `notifications_disabled` on both of Asaf's seats, and turning that on would enable every Claude Code notification. On macOS, run `osascript` through `$.process.run` (`display notification … sound name …`). On other platforms, fall back to `$.ui.notify`.
-10. **The chat rule still holds.** The batch recap still ends with a "Decisions needed:" block in chat. The pane adds visibility; it does not replace the recap.
-11. **State:** session items live in `$.state`, declared in `types/index.d.ts`. Nothing persists across sessions (`$.store` unused).
-12. **No mod guard needed:** the managed-settings mod guard (Asaf's prerequisite for third-party mods) protects against mods that approve tool calls. This mod approves none (see Anti-goals), and it lives in a repo Asaf controls.
+**Replacement persistence (Claude's call):** one `$.store` key per session id. The session writes it on every change and reads it at `session.start`, so `--resume` brings the items back. On `/clear` (`session.end` reason `clear`), the items are dropped, because they refer to a conversation the model no longer has. At start, keys older than 30 days are deleted. Numbering is per session (`#1, #2, …`).
 
-## Layout
+## Add
 
-Open, docked beside the transcript (fullscreen TUI, window ≥ 110 columns):
+1. **Rename to `open-items` everywhere:** plugin name, state keys, tools, command, prompts, toasts, the long-answer prefix, tests. Model-facing tool names: `mcp__open-items__add_item`, `list_items`, `withdraw_item`. Command: `/open-items`. Pane title: "Open items".
+2. **Four kinds, model-facing:** `decision` (upstream `choose`: 2–4 options, one may be marked recommended, plus "Other…" free text), `question` (upstream `answer`), `action` (upstream `do`: something only the person can do; Done), and the new `info`.
+3. **The `info` kind:** a finding the person must see (a CI failure, a result that changes their plan). It has one button, **Seen**, which dismisses it locally and sends nothing to Claude. Info items do not count toward the cap of 5 open asks; at most 5 info items stay, and a sixth drops the oldest.
+4. **Grouped pane:** sections DECISIONS, QUESTIONS, ACTIONS, INFO, in that order; an empty section is not drawn. Within a section, oldest first. The selected-item action row and hotkeys work as upstream.
+5. **Status line by kind:** `☐ 1 decision · 1 question · 1 info · /open-items` (plus upstream's "N not sent yet" when it applies). This is the collapsed summary. It needs no band, works at any width, and no other mod can cover it.
+6. **Recommended option:** a decision's recommended option shows `(recommended)` after its label.
+7. **Alert:** when Claude adds a `decision`, `question` or `action`, the mod calls `$.ui.notify(text, { title: 'Open items' })`. One call per turn at most: the alert names the first new item and counts the rest. No alert for `info`. No alert if the person typed a prompt or pressed a pane button in the last 2 minutes, because they are present. The mod runs no host command.
+8. **Steering text** (the `prompt.compose` section and the tool descriptions), short:
+   - Add an item for a decision that is the user's, a question only they can answer, an action only they can do, or info they must see.
+   - Add it even when you also ask in your reply.
+   - While background agents run, add the item and write no chat text about it until the batch ends.
+   - If `add_item` fails, ask in chat.
+9. **Hooks-list test:** a test asserts that every `tool.call` hook matches one of the mod's own three tools, so the mod can never approve another tool's call.
+10. **README:** short. What the mod does, what it puts in the prompts it submits, the alert path, and the credit to upstream.
+11. **CI:** a workflow on `paths: [plugins/open-items/**]` installs a pinned `@anthropic-ai/claude-code` and runs `claude plugin validate` and `claude plugin test` for the plugin. It is not a required check.
 
-```
-Open items · 4                    [collapse]
-DECISIONS
-D1 Merge PR #18 (coo 1.0.4)?  new
-   [1 Yes (recommended)] [2 Not yet]
-   [or type your own answer…        ]
-QUESTIONS
-Q1 What should the pane be called?
-   [type an answer…                 ]
-INFO
-CI is red on rhizon #212: 2 tests fail [Seen]
-Subagents: 2 of 3 back
-▸ Answered (3)
-```
+## The alert path (verified 2026-10-25, Claude Code 2.1.310)
 
-Collapsed (one line above the prompt):
+A probe mod showed on both seats: `$.ui.notify` returns `{ isSent: false, reason: 'disabled' }` because `preferredNotifChannel` is `notifications_disabled`, but a settings `Notification` hook with matcher `plugin_notification` still receives the call (`message`, `title`). The org seat's `sec-default` guard admitted a module that calls `$.process.run`, so either path would load there; the mod still runs no host command.
 
-```
-Open items: 1 decision · 1 question · 1 info        [o Open] [-]
-```
+So the public mod only calls `$.ui.notify`. On Asaf's machine, a private hook (outside this repo) turns it into a macOS notification with a sound: `~/.claude/hooks/open-items-alert.sh`, wired as a `Notification` hook with matcher `plugin_notification` in both seats' `settings.json`. The hook passes the text to `osascript` as an argument (`on run argv`), never inside the script source, so a quote in the text cannot run code. Another user gets the alert through their own notification channel.
 
-Under 110 columns, the engine seats the pane inline above the prompt instead of docked; the same tree draws there.
+## Constraints (Claude Code 2.1.310 mod API)
 
-## Constraints (checked against the Claude Code 2.1.310 mod API)
-
-- `Pane` docks beside the transcript only in the fullscreen TUI from 110 columns; otherwise it is inline above the prompt. A pane opened unasked seats from 144 columns (110 per `$.ui.open`'s doc) and waits below that. Size trees to `e.props.bodyColumns`.
-- `AbovePrompt` (the band) is drawn on terminal and desktop only; the engine adds `[-]` collapse itself.
-- `Input` exists on terminal, desktop and VS Code, not on mobile.
-- `$.tool.register` declares `mcp__open-items__<name>`; a `tool.call` hook on that exact name serves it; registration works from `session.start` on.
-- `$.prompt.submit` from a plugin runs once idle; `asUser: true` makes the model read it as the person's words.
-- Repo rules: a CHANGELOG line, a version in the plugin's `plugin.json`, a marketplace entry, PR merged by Asaf.
-
-## Left to the builder
-
-- Exact tool names, input schemas and the wording of the `prompt.compose` section (keep it short; it is in every turn).
-- How "2 of 3 back" counts a batch (for example, background agents started since the last person prompt).
-- Whether `$.process.run` of `osascript` needs a permission rule, and which macOS sound to use.
-- Whether `$.state` survives `--resume`; if not, the pane starts empty on resume, and that is acceptable.
-- Tests (`claude plugin test`): add an item → pane shows it; press an option → `prompt.submit` called with the expected text and the item moves to Answered; free text → same; collapse → band shows counts; "Seen" → no prompt; a new decision → one alert, an info item → none.
+- A pane Claude opens is seated only from 144 columns (110 once the person opened it before); below that the status line still shows the count and a toast names the item. `/open-items` opens it at any width.
+- `Input` is drawn on terminal, desktop and VS Code, not on mobile.
+- Upstream saw `isDeferred: false` ignored when the mod loaded mid-session; the smoke test uses a session started with the plugin installed.
+- CI here runs only jq, shellcheck and the leak gate. `claude plugin validate`, `claude plugin test` and `tsc -p` also run locally before the PR. The leak gate scans `plugins/`, so plugin files never name people or Asaf's tools.
+- Repo rules: CHANGELOG line, `open-items` version `0.1.0`, a marketplace entry, PR merged by Asaf.
 
 ## Rollout
 
-1. PR to this repo: `plugins/open-items`, marketplace entry, CHANGELOG, README line.
-2. Install on both of Asaf's seats: `/plugin install open-items@dafna-dev-standards`.
-3. Amend the batch rule in Asaf's `~/.claude/CLAUDE.md` and in coo's `orchestration.md`: with open-items installed, put a held item into the pane at once (still no chat text mid-batch).
-4. Smoke test in a real session: a background subagent batch that raises one decision and one question mid-batch; answer one from the pane and one in chat.
+1. PR to this repo with the plugin, the CI workflow, the marketplace entry and CHANGELOG.
+2. Personal config (claude-config): `open-items-alert.sh`, the `Notification` hook on both seats, and the batch rule in `~/.claude/CLAUDE.md` amended: with open-items installed, a held item goes into the pane at once, still with no chat text mid-batch.
+3. coo `orchestration.md`: the same amendment, with a coo version bump and a CHANGELOG line (after PR #18).
+4. Install on both seats after the PR merges: `/plugin install open-items@dafna-dev-standards`.
+5. Smoke test in a fresh session (Asaf): a background batch that adds a decision and a question; the alert is seen and heard; one answer from the pane, one in chat.
+
+## Success criterion
+
+In the first 10 background batches after install, no question reaches the chat without an item, counted from the transcripts. If one does, add a deterministic `turn.complete` check (a question line or numbered options in the final text with no `add_item` call that turn → remind Claude next turn). Skipped until then.
+
+## Skipped
+
+- Moshi push for items: add when Asaf reads sessions on the iPhone often. (The existing presence gate already pushes on Stop when he is away from the Mac.)
+- A subagent progress line: add when Asaf asks for live progress on long fan-outs.
+- Items that outlive the session or move between sessions: add if per-session items prove too short-lived.
+- The `turn.complete` detector: see the success criterion.
