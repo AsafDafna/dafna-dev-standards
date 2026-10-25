@@ -71,6 +71,8 @@ declare module 'claude-code' {
       selectedId: number | null
       editing: Editing | null
       loadedFor: string | null
+      /** The session whose saved key the state was read from: a reload of the code finds it read. */
+      restoredFor: string | null
       isWorking: boolean
       /** The remote clients attached, by surface: two phones are two clients on one. */
       clients: Readonly<Partial<Record<RenderSurface, readonly string[]>>>

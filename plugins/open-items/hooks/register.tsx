@@ -66,6 +66,8 @@ import {
   withSlots,
 } from './project'
 import type { Adoption, LegacyEdit, Project, Slot } from './project'
+import { isExpired, isSavedKey, keyOf, savedIn } from './saved'
+import type { Saved } from './saved'
 import { numbersOf, oneLine, printable } from './text'
 
 const PLUGIN = 'open-items'
@@ -205,6 +207,7 @@ const took = atom({ plugin: 'open-items', key: 'took' } as const, {} as Readonly
 const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, null as number | null)
 const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
 const loadedFor = atom({ plugin: 'open-items', key: 'loadedFor' } as const, null as string | null)
+const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
 const isWorking = atom({ plugin: 'open-items', key: 'isWorking' } as const, false)
 /** The remote clients attached, by surface, as the state's contract declares them. */
 type Roster = StateValue<'open-items', 'clients'>
@@ -331,6 +334,7 @@ export const register: Register = on => {
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
     await join($)
+    await restore($)
 
     return next(e)
   })
@@ -345,13 +349,13 @@ export const register: Register = on => {
     live.ends += 1
     const ends = live.ends
 
-    // The slot marked ended, in one write and no read, once the store work in
-    // flight is done; a session that never read the project reads it first.
-    // The exit's budget is short, and the end waits for the write only
-    // through half of what is left: a slot not written by then goes stale,
-    // and the next session takes it on then. A process that goes on makes
-    // the write all the same, before it joins again.
-    const written = queued(async () => ((await isLoaded($)) ? writeOwn($) : load($))).catch(() => undefined)
+    // The slot marked ended and the session's key, a write each and no read,
+    // once the store work in flight is done; a session that never read the
+    // project reads it first. The exit's budget is short, and the end waits
+    // for the writes only through half of what is left: a slot not written
+    // by then goes stale, and the next session takes it on then. A process
+    // that goes on makes the writes all the same, before it joins again.
+    const written = Promise.allSettled([queued(async () => ((await isLoaded($)) ? writeOwn($) : load($))), persist($)])
     const leftMs = next.budget.remainingMs
 
     await (Number.isFinite(leftMs) ? Promise.race([written, $.clock.sleep(leftMs / 2)]) : written)
@@ -1027,19 +1031,9 @@ async function join($: EngineInterface, ends = live.ends) {
   // project, which the heartbeat tries again.
   const joined = queued(async () => {
     if (live.root !== '' && live.root !== root) {
-      await update($, tasks, () => [])
-      await update($, nextId, () => 1)
+      await switchTo($, sessionId)
       await update($, took, () => ({}))
-      await update($, selectedId, () => null)
-      await update($, editing, () => null)
       await update($, loadedFor, () => null)
-      live.drafts.clear()
-      live.closed.clear()
-      live.drawn.clear()
-      live.held.clear()
-      live.batch?.cancel()
-      live.batch = null
-      live.isSendingAtEnd = false
       live.elsewhere = 0
       live.floor = 1
       live.hasLegacyPeer = false
@@ -1089,6 +1083,109 @@ async function join($: EngineInterface, ends = live.ends) {
   // session takes on shows once it answers.
   await awaited($, joined)
   await redrawn($, shown)
+}
+
+/**
+ * Starts the process over as session `sessionId`: no items, numbered from #1,
+ * and nothing kept of the last session's fields, answers or sends. Every
+ * write after this goes to its key.
+ */
+async function switchTo($: EngineInterface, sessionId: string) {
+  await update($, tasks, () => [])
+  await update($, nextId, () => 1)
+  await update($, selectedId, () => null)
+  await update($, editing, () => null)
+  live.drafts.clear()
+  live.closed.clear()
+  live.drawn.clear()
+  live.held.clear()
+  live.batch?.cancel()
+  live.batch = null
+  live.isSendingAtEnd = false
+  live.isUnread = false
+  live.sessionId = sessionId
+}
+
+/**
+ * Takes up the items this session saved, when its key has them (a resumed
+ * session), and deletes the keys of sessions saved more than `KEEP_MS` ago.
+ * A reload of the code starts the session again with its state kept, which
+ * is newer than its key: it reads nothing. Like joining, a store slow to
+ * answer holds up the start 5 seconds at most.
+ */
+async function restore($: EngineInterface) {
+  const sessionId = await $.session.id()
+  const restored = queued(async () => {
+    // A reload of the code starts `live` over and keeps the state.
+    live.sessionId = sessionId
+
+    if ((await read($, restoredFor)) === sessionId) {
+      return false
+    }
+
+    const nowMs = await $.clock.now()
+    const saved = savedIn(await $.store.get(keyOf(sessionId)))
+    const isKept = saved !== undefined && !isExpired(saved, nowMs)
+
+    if (isKept) {
+      await update($, tasks, () => saved.tasks)
+      await update($, nextId, () => saved.nextId)
+      await reselect($)
+    }
+
+    await update($, restoredFor, () => sessionId)
+    await dropExpired($, nowMs).catch(() => undefined)
+
+    return isKept
+  }).catch(() => false)
+
+  const shown = restored
+    .then(async isKept => {
+      if (isKept && (await refresh($))) {
+        await show($, false)
+      }
+    })
+    .catch(() => undefined)
+
+  await awaited($, restored)
+  await redrawn($, shown)
+}
+
+/** Deletes every session's saved key that has expired: all of them share the store's one file. */
+async function dropExpired($: EngineInterface, nowMs: number) {
+  const keys = (await $.store.keys()).filter(isSavedKey)
+  const values = await Promise.all(keys.map(key => $.store.get(key)))
+
+  for (const [i, key] of keys.entries()) {
+    const saved = savedIn(values[i])
+
+    if (saved !== undefined && isExpired(saved, nowMs)) {
+      await $.store.delete(key)
+    }
+  }
+}
+
+/** `writeSaved` once the store work asked for before is done, from the state as it stands then. */
+function persist($: EngineInterface): Promise<void> {
+  return queued(() => writeSaved($))
+}
+
+/**
+ * Writes the session's shown items and its count under its key. Nothing
+ * before the session has read its key, which the write would go over, nor
+ * before its first item: most sessions never hold one.
+ */
+async function writeSaved($: EngineInterface) {
+  const sessionId = live.sessionId
+  const shown = (await read($, tasks)).filter(isShown)
+  const count = await read($, nextId)
+
+  if ((await read($, restoredFor)) !== sessionId || (shown.length === 0 && count === 1)) {
+    return
+  }
+
+  const saved: Saved = { tasks: shown, nextId: count, savedMs: await $.clock.now() }
+  await $.store.set(keyOf(sessionId), saved)
 }
 
 /**
@@ -1541,8 +1638,9 @@ async function wake($: EngineInterface) {
 
 /**
  * Changes the task list and, when that changes it (`fn` hands back a new
- * list), writes the slot, reading nothing (see `wake`). The session's own
- * state is what counts: a write that fails now, the heartbeat makes.
+ * list), writes the slot and the session's key, reading nothing (see
+ * `wake`). The session's own state is what counts: a write that fails now,
+ * the heartbeat makes for the slot, and the next change or the end for the key.
  */
 async function change($: EngineInterface, fn: (list: readonly Task[]) => readonly Task[]) {
   await wake($)
@@ -1556,7 +1654,8 @@ async function change($: EngineInterface, fn: (list: readonly Task[]) => readonl
   })
 
   if (isChanged) {
-    await awaited($, queued(() => writeOwn($)))
+    // At once, so a change waits on one write's time.
+    await awaited($, queued(() => Promise.allSettled([writeOwn($), writeSaved($)])))
     await refresh($)
   }
 }

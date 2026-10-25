@@ -451,13 +451,14 @@ describe('assigning', () => {
 })
 
 /**
- * Two tasks with titles near the 80 characters a title may have, as an
- * earlier session left them. The live check (tests/live/test_pane.py) draws
- * them in a real Claude Code; the row counts here are what it drew.
+ * Two tasks with titles near the 80 characters a title may have, as the
+ * session saved them. The live check (tests/live/test_pane.py) draws them in
+ * a real Claude Code; the row counts here are what it drew.
  */
 const INSTRUMENTS = {
   ...ROTATE,
   id: 1,
+  sessionId: 'session-1',
   title: 'Open Instruments from Xcode and record with the Activity Monitor template',
   why: 'I need a trace of the launch to see where the 4 seconds go.',
   doneWhen: 'The .trace file is in ~/traces.',
@@ -467,6 +468,7 @@ const INSTRUMENTS = {
 const XCODE_LONG = {
   ...ROTATE,
   id: 2,
+  sessionId: 'session-1',
   title: 'Run xcodebuild test on your Mac and paste every failure you see here please',
   why: "I can't run Xcode here.",
   kind: 'answer',
@@ -478,8 +480,9 @@ function inline(bodyColumns: number) {
   return { ...PANE, props: { ...PANE.props, placement: 'inline', bodyColumns } } as const
 }
 
+/** The store as session 1 saved `tasks` before: started again, it shows them. */
 function earlier(tasks: readonly unknown[]) {
-  return { 'tasks:/repo': { nextId: 3, sessions: { 'session-0': { tasks, seenMs: 0, endedMs: 0 } } } }
+  return { 'session:session-1': { tasks, nextId: 3, savedMs: NOW } }
 }
 
 describe('long titles', () => {
@@ -549,11 +552,11 @@ describe('long titles', () => {
 
     // A title on one row would ask for 10 rows wherever it is drawn: the
     // rows Claude Code 2.1.296 drew at 36 and 64 columns, as the live check reads them.
-    expect(rowsFor(view, 32, 99)).toBe(18)
+    expect(rowsFor(view, 32, 99)).toBe(16)
     expect(rowsFor(view, 60, 99)).toBe(12)
-    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 32, 99)).toBe(14)
+    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 32, 99)).toBe(13)
     expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 60, 99)).toBe(10)
-    expect(rowsFor(view, 32, 18)).toBe(18)
+    expect(rowsFor(view, 32, 12)).toBe(12)
   })
 
   test('drawn narrow, the pane opens again as tall as its wrapped titles', async ($, on) => {
@@ -566,7 +569,7 @@ describe('long titles', () => {
 
     // The terminal narrows: the titles take more rows, and the pane asks for them.
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(18)
+    expect(world.opens.at(-1)?.rows).toBe(16)
   })
 
   test('drawn on two surfaces at once, the pane asks for the rows the narrower takes, and keeps them', async ($, on) => {
@@ -577,7 +580,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(60))
     const phone = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // Each draws again: the pane asks for nothing new.
     const opens = world.opens.length
@@ -600,7 +603,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(32))
     await $.ui.mount({ ...inline(60), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(18)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The terminal widens and docks the pane: the phone's rows are the pane's.
     await terminal.redraw(PANE.props)
@@ -617,7 +620,7 @@ describe('long titles', () => {
     await runTasks($)
     const mobile = await $.ui.mount({ ...inline(60), surface: 'mobile' })
     await mobile.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // Each draws again: the pane asks for nothing new.
     const opens = world.opens.length
@@ -634,7 +637,7 @@ describe('long titles', () => {
 
     await mobile.redraw(inline(100).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(11)
+    expect(world.opens.at(-1)?.rows).toBe(9)
   })
 
   test("of two clients of one surface, one drawing it otherwise again and again keeps the other's rows", async ($, on) => {
@@ -650,7 +653,7 @@ describe('long titles', () => {
       await mobile.redraw({ ...inline(columns).props, isFocused })
     }
 
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
   })
 
   test('a client of two leaving, the pane asks for none of the rows it took', async ($, on) => {
@@ -664,7 +667,7 @@ describe('long titles', () => {
     const mobile = await $.ui.mount({ ...inline(60), surface: 'mobile' })
     await mobile.redraw(inline(32).props)
     await mobile.redraw(inline(60).props)
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The phone leaves, and the tablet draws the pane again: the pane fits it and the terminal.
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
@@ -684,13 +687,13 @@ describe('long titles', () => {
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
     await mobile.redraw(inline(60).props)
     await mobile.redraw(inline(50).props)
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The phone leaves. No surface seats the pane inline but theirs, and the
     // narrower of the two drew last.
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(14)
+    expect(world.opens.at(-1)?.rows).toBe(12)
   })
 
   test('two clients of one surface leaving at once, the pane fits the surfaces left', async ($, on) => {
@@ -702,7 +705,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // Both leave together, and the phone reads who is attached late: the tablet still is.
     await mobile.unmount()
@@ -740,7 +743,7 @@ describe('long titles', () => {
     await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
     await mobile.redraw(inline(50).props)
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The pane draws again before the write that wakes it answers: the two
     // left start their seats over, and once they leave too, the terminal's fit.
@@ -749,7 +752,7 @@ describe('long titles', () => {
     await clock.advance(100)
     await phoneLeaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(14)
+    expect(world.opens.at(-1)?.rows).toBe(12)
 
     await mobile.unmount()
 
@@ -782,7 +785,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The phone drops and comes back, drawing the pane, before the write of
     // its leaving answers: the seat it draws stays.
@@ -797,7 +800,7 @@ describe('long titles', () => {
 
     await terminal.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
   })
 
   test('a client leaving and attaching again stays counted, though the write of its leaving lands late', async ($, on) => {
@@ -818,7 +821,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The phone drops and attaches again, and the write of its leaving lands
     // after the engine has it back: it stays counted, so a tablet attaching
@@ -835,7 +838,7 @@ describe('long titles', () => {
     await $.session.attach({ surface: 'mobile', clientId: 'tablet' })
     await phone.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
   })
 
   test('the last client of a surface leaving as it draws the pane, the pane asks for none of the rows that drawing takes', async ($, on) => {
@@ -846,7 +849,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The phone draws the pane again and leaves before that drawing reads who is attached.
     world.slowRead = 'clients'
@@ -870,7 +873,7 @@ describe('long titles', () => {
 
     await runTasks($)
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     // The tablet draws as it attaches, before the engine is done attaching it.
     world.attachMs = 500
@@ -881,7 +884,7 @@ describe('long titles', () => {
     await attached
     await clock.settle()
 
-    expect(world.opens.at(-1)?.rows).toBe(17)
+    expect(world.opens.at(-1)?.rows).toBe(15)
   })
 
   test("the clients attached are kept in the session's state, which a reload of the code keeps", async ($, on) => {
@@ -909,7 +912,7 @@ describe('long titles', () => {
     const ui = await $.ui.mount(inline(60))
     world.tasksRead = 0
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(18)
+    expect(world.opens.at(-1)?.rows).toBe(16)
     expect(world.tasksRead).toBe(1)
 
     await ui.redraw(inline(100).props)
@@ -1032,9 +1035,9 @@ describe('long titles', () => {
     const other = await ui.find({ type: 'Text', text: /Run xcodebuild/ })
 
     expect(selected?.props.wrap).toBe('wrap')
-    expect(selected?.text).toBe(`#1 ${INSTRUMENTS.title}  3m · from an earlier session`)
+    expect(selected?.text).toBe(`#1 ${INSTRUMENTS.title}  3m`)
     expect(other?.props.wrap).toBe('wrap')
-    expect(other?.text).toBe(` ${XCODE_LONG.title}  3m · from an earlier session`)
+    expect(other?.text).toBe(` ${XCODE_LONG.title}  3m`)
     expect((await ui.find({ type: 'Button', key: 'select-2' }))?.props.label).toBe('#2')
   })
 
@@ -1083,19 +1086,19 @@ describe('long titles', () => {
     await start($)
 
     await runTasks($)
-    // At 28 columns Claude Code 2.1.296 squeezes `⏎ send` under the empty field: 13 rows in all.
+    // At 28 columns Claude Code 2.1.296 squeezes `⏎ send` under the empty field: 12 rows in all.
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'answer' })
-    expect(world.opens.at(-1)?.rows).toBe(13)
+    expect(world.opens.at(-1)?.rows).toBe(12)
 
     // A short answer leaves the hint room on its row.
     await ui.input({ key: 'answer-2', text: 'abc', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(11)
 
     await ui.input({ key: 'answer-2', text: 'abcdefghijk', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(13)
+    expect(world.opens.at(-1)?.rows).toBe(12)
   })
 
   test('an empty field in a narrow pane, hidden and opened again, takes the ring and asks for the row it squeezes onto', async ($, on) => {
@@ -1108,7 +1111,7 @@ describe('long titles', () => {
     // Out of the keys, the field draws no hint: one row.
     await $.ui.focus(ringTo('long'))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(11)
 
     // Hidden and opened again, the field's autoFocus takes the ring, and `⏎ send` squeezes under it.
     await ui.press({ key: 'hide' })
@@ -1116,7 +1119,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(24))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(13)
+    expect(world.opens.at(-1)?.rows).toBe(12)
   })
 
   test('the transcript row keeps its label whole and wraps the title after it', async ($, on) => {
@@ -2256,7 +2259,7 @@ describe('responding', () => {
     await pressed
 
     // The press that found it answered changed nothing, so wrote nothing.
-    expect(world.ops).toEqual([`set ${keysOf('/repo').session('session-1')}`])
+    expect(world.ops.filter(op => !op.startsWith('set tasks:'))).toEqual(['set session:session-1'])
 
     await clock.advance(300)
 
@@ -2495,6 +2498,121 @@ describe('the system prompt', () => {
   })
 })
 
+describe('saving', () => {
+  const DAY_MS = 24 * 60 * 60_000
+  const MINE = { ...ROTATE, sessionId: 'session-1' } as const
+
+  function savedIdsOf(world: ReturnType<typeof seat>['world']) {
+    return (world.store['session:session-1'] as { tasks: { id: number }[] } | undefined)?.tasks.map(task => task.id)
+  }
+
+  test('restores open items and unsent answers when the same session starts again', async ($, on) => {
+    const choose = { ...MINE, id: 1, title: PAGING_TASK.title, why: PAGING_TASK.why, kind: 'choose', options: PAGING_TASK.options }
+    const answered = { ...MINE, id: 2, state: 'done', update: 'pending' }
+    const { world } = seat(on, { 'session:session-1': { tasks: [choose, answered], nextId: 3, savedMs: NOW } })
+    await start($)
+
+    expect(world.status).toContain('1 not sent yet')
+    expect(world.opens).toHaveLength(1)
+  })
+
+  test("writes the session's key on every change", async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+
+    expect(world.store['session:session-1']).toEqual({
+      tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title, state: 'open', sessionId: 'session-1' })],
+      nextId: 2,
+      savedMs: NOW,
+    })
+
+    await $.tool.call({ tool: WITHDRAW, id: 1 })
+
+    expect(world.store['session:session-1']).toEqual({ tasks: [], nextId: 2, savedMs: NOW })
+  })
+
+  test('saves only shown items', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(KEY_TASK)
+    await (await $.ui.mount(PANE)).press({ key: 'option-1' })
+    expect(savedIdsOf(world)).toEqual([1, 2])
+
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toHaveLength(1)
+    expect(savedIdsOf(world)).toEqual([2])
+  })
+
+  test('deletes saved sessions older than 30 days at start', async ($, on) => {
+    const savedAt = (savedMs: number) => ({ tasks: [MINE], nextId: 8, savedMs })
+    const { world } = seat(on, { 'session:session-old': savedAt(NOW - 31 * DAY_MS), 'session:session-new': savedAt(NOW - DAY_MS) })
+    await start($)
+
+    expect(Object.keys(world.store)).toEqual(['session:session-new'])
+  })
+
+  test('a session that never held an item leaves no key', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.session.end({ reason: 'prompt_input_exit', sessionId: 'session-1', resume: { id: 'session-1' } })
+
+    expect(world.store).toEqual({})
+  })
+
+  test('a session that could not read its key writes nothing over it', async ($, on) => {
+    const saved = { tasks: [MINE], nextId: 8, savedMs: NOW }
+    const { world } = seat(on, { 'session:session-1': saved })
+    world.isStoreFailing = true
+    await start($)
+    world.isStoreFailing = false
+
+    await $.tool.call(KEY_TASK)
+
+    expect(world.store['session:session-1']).toEqual(saved)
+  })
+
+  test('a code reload keeps newer state', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    // The second item never reaches the store: the key holds only the first.
+    world.isWriteFailing = true
+    await $.tool.call(XCODE_TASK)
+    await start($)
+
+    expect(world.status).toBe('☐ 2 items for you · /open-items')
+  })
+
+  test('a stuck store holds a tool call 5 s at most', async ($, on) => {
+    const { world, clock } = seat(on, { 'session:session-1': { tasks: [MINE], nextId: 8, savedMs: NOW } })
+    await start($)
+
+    // Every write takes a minute.
+    world.setMs = 60_000
+    let isWithdrawn = false
+    const withdrawn = $.tool.call({ tool: WITHDRAW, id: 7 }).then(result => {
+      isWithdrawn = true
+      return result
+    })
+    await clock.advance(4000)
+    expect(isWithdrawn).toBe(false)
+    await clock.advance(1000)
+    expect(String(((await withdrawn) as { result?: unknown }).result)).toContain('Withdrew item #7')
+
+    // Nothing after it waits: the clock stands still here.
+    const added = await $.tool.call(XCODE_TASK)
+    expect(String((added as { result?: unknown }).result)).toContain('Added item #8')
+  })
+})
+
 describe('across sessions', () => {
   const KEYS = keysOf('/repo')
   const MINE = KEYS.session('session-1')
@@ -2502,6 +2620,11 @@ describe('across sessions', () => {
   /** This version's slots, by session id. */
   function slotsIn(store: Record<string, unknown>) {
     return projectOf('/repo', store).slots
+  }
+
+  /** Whether a store call is the project's: the session's own saved key is another path's. */
+  function ofProject(op: string) {
+    return !op.includes(' session:')
   }
 
   /** A task as a note of what was taken names it. */
@@ -3042,7 +3165,7 @@ describe('across sessions', () => {
     world.ops = []
     await $.tool.call(XCODE_TASK)
 
-    expect(world.ops).toEqual(['keys', `get ${MINE}`, `set ${MINE}`])
+    expect(world.ops.filter(ofProject)).toEqual(['keys', `get ${MINE}`, `set ${MINE}`])
   })
 
   test('a pane press waking the session after two heartbeats lets go of what was taken first', async ($, on) => {
@@ -3134,7 +3257,7 @@ describe('across sessions', () => {
     world.ops = []
     await $.tool.call(XCODE_TASK)
 
-    expect(world.ops).toEqual(['keys', `get ${MINE}`, `set ${MINE}`])
+    expect(world.ops.filter(ofProject)).toEqual(['keys', `get ${MINE}`, `set ${MINE}`])
   })
 
   test('a pane press or a prompt writes the slot and reads nothing', async ($, on) => {
@@ -3152,7 +3275,7 @@ describe('across sessions', () => {
     await clock.settle()
 
     expect(world.ops.length).toBeGreaterThan(0)
-    expect(world.ops.filter(op => op !== `set ${MINE}`)).toEqual([])
+    expect(world.ops.filter(op => op !== `set ${MINE}` && op !== 'set session:session-1')).toEqual([])
   })
 
   test('a session that never held a task leaves no slot, though it reads the project', async ($, on) => {
@@ -3163,7 +3286,8 @@ describe('across sessions', () => {
     await clock.settle()
     await $.session.end({ reason: 'prompt_input_exit', sessionId: 'session-1', resume: { id: 'session-1' } })
 
-    expect(world.ops.filter(op => op === 'keys')).toHaveLength(3)
+    // The project read as it joins and at two heartbeats, and the saved keys as it starts.
+    expect(world.ops.filter(op => op === 'keys')).toHaveLength(4)
     expect(world.ops.filter(op => op.startsWith('set '))).toEqual([])
   })
 
@@ -3176,7 +3300,7 @@ describe('across sessions', () => {
     await $.session.end({ reason: 'prompt_input_exit', sessionId: 'session-1', resume: { id: 'session-1' } })
 
     // No read: the exit's budget is short.
-    expect(world.ops).toEqual([`set ${MINE}`])
+    expect(world.ops.filter(ofProject)).toEqual([`set ${MINE}`])
     expect(slotsIn(world.store)['session-1']?.endedMs).toBe(NOW)
 
     world.sessionId = 'session-2'
@@ -4435,8 +4559,9 @@ describe('across sessions', () => {
 
     await $.tool.call(KEY_TASK)
 
-    expect(Object.keys(world.store)).toEqual([keysOf(world.root).session(world.sessionId)])
-    expect(Object.keys(world.store)[0]!.length).toBeLessThanOrEqual(256)
+    const slots = Object.keys(world.store).filter(key => !key.startsWith('session:'))
+    expect(slots).toEqual([keysOf(world.root).session(world.sessionId)])
+    expect(slots[0]!.length).toBeLessThanOrEqual(256)
   })
 })
 

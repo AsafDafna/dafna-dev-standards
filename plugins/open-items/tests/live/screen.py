@@ -2,8 +2,9 @@
 
 The test kit checks the tree the plugin returns, never how a terminal lays it
 out. This runs the real engine instead: a throwaway config folder, the store
-seeded with tasks an ended session left, `/open-items`, and `tmux capture-pane`
-at the width asked for. No model is called, so a dummy API key does.
+seeded with the items a session saved, that session started again, `/open-items`,
+and `tmux capture-pane` at the width asked for. No model is called, so a dummy
+API key does.
 """
 
 import hashlib
@@ -96,6 +97,8 @@ class Claude:
                 f,
             )
         self.session = f'hitl-{os.getpid()}-{int(time.time() * 1000) % 100000}'
+        # The conversation `seed` saves items for, and `pane` starts.
+        self.session_id = str(uuid.uuid4())
 
     def env(self):
         keep = {k: os.environ[k] for k in ('PATH', 'LANG', 'LC_ALL') if k in os.environ}
@@ -156,44 +159,41 @@ class Claude:
         return os.path.join(self.config, 'plugins', 'store', f'open-items_inline-{digest}.json')
 
     def seed(self, tasks):
-        """Leaves `tasks` in the store as an ended session's, for the next one to take on."""
+        """Leaves `tasks` in the store as the session saved them, for `pane` to start it again with them."""
         now_ms = int(time.time() * 1000)
-        slot = {
+        saved = {
             'tasks': [
                 {
                     'state': 'open',
                     'update': 'none',
                     'kind': 'do',
-                    'sessionId': 'earlier',
+                    'sessionId': self.session_id,
                     'createdMs': now_ms - task.get('ageMs', 180_000),
                     'updatedMs': now_ms - task.get('ageMs', 180_000),
                     **{k: v for k, v in task.items() if k != 'ageMs'},
                 }
                 for task in tasks
             ],
-            'seenMs': now_ms - 600_000,
-            'endedMs': now_ms - 600_000,
             'nextId': max(task['id'] for task in tasks) + 1,
+            'savedMs': now_ms,
         }
-        # keysOf keys a root this long by a hash: the seed would sit where no session reads.
-        assert len(f'tasks:{self.project}#session:') + 64 <= 256, f'{self.project} is too long a path for the seeded key'
         path = self.store_file()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        # The ended session's slot, under its own key; no session runs yet to write over it.
+        # No session runs yet to write over it.
         with open(path, 'w') as f:
-            json.dump({f'tasks:{self.project}#session:earlier': slot}, f)
+            json.dump({f'session:{self.session_id}': saved}, f)
 
     def pane(self, columns, rows, keys=(), name=None):
         """The screen with the pane opened by /open-items, after `keys`; kept as `name` when given."""
-        self.start(columns, rows)
-        # The session takes the tasks on as it starts; the status line counts
+        self.start(columns, rows, '--session-id', self.session_id)
+        # The session restores the items as it starts; the status line counts
         # them once it has. /open-items typed before that finds none.
         try:
             wait_for(self.session, lambda s: 'open-items: ☐' in s or 'open-items: ✓' in s)
         except TimeoutError as error:
             # The engine names the store's file; the seed goes where store_file() says it does.
             raise RuntimeError(
-                f'the session took on none of the tasks seeded in {self.store_file()}: '
+                f'the session restored none of the items seeded in {self.store_file()}: '
                 'if the engine names a --plugin-dir store otherwise now, store_file() must follow'
             ) from error
         self.command('/open-items')

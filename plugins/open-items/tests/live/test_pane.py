@@ -1,8 +1,9 @@
 """The Open items pane as a real Claude Code draws it, at narrow and wide widths.
 
 Run with `python3 tests/live/test_pane.py` from the repository's root, with
-`claude` and `tmux` on the PATH. Each case seeds tasks an ended session left,
-opens /open-items in a terminal of the given size and reads the screen back:
+`claude` and `tmux` on the PATH. Each case seeds the items a session saved,
+starts that session again, opens /open-items in a terminal of the given size
+and reads the screen back:
 every title shows whole, nothing is cut off at the pane's bottom, and the
 pane asks for no rows it leaves empty. Below 110 columns the pane is framed
 above the prompt; from 110 it docks beside the transcript, about 88 columns
@@ -30,7 +31,7 @@ INSTRUMENTS = 'Open Instruments from Xcode and record with the Activity Monitor 
 XCODE = 'Run xcodebuild test on your Mac and paste every failure you see here please'
 GERMAN = 'Datenbankverbindungseinstellungsüberprüfungsprotokoll im Ordner ablegen'
 JAPANESE = 'ステージング環境のデータベース移行を承認してください'
-# Longer than a title may be assigned: an older version's, left in the store.
+# Longer than a title may be when added: an older version's, left in the store.
 LONG = 'Rotate the deploy key ' + ' '.join(['and check every runner that holds it'] * 3)
 
 TASKS = [
@@ -106,33 +107,33 @@ class Pane(unittest.TestCase):
                 text = joined(body)
 
                 self.assert_fits(body, context)
-                self.assertIn(f'#1 {INSTRUMENTS} 3m · from an earlier session', text, context)
+                self.assertIn(f'#1 {INSTRUMENTS} 3m', text, context)
                 self.assertIn('d: Done', text, context)
                 self.assertIn('x: Reject…', text, context)
 
                 if XCODE in [task['title'] for task in tasks]:
-                    self.assertIn(f'#2 {XCODE} 3m · from an earlier session', text, context)
+                    self.assertIn(f'#2 {XCODE} 3m', text, context)
 
                 if GERMAN in [task['title'] for task in tasks]:
                     # A word longer than the row breaks where the row ends, nothing lost.
-                    self.assertIn(f'#3{GERMAN}3m·fromanearliersession'.replace(' ', ''), text.replace(' ', ''), context)
-                    self.assertIn(f'#4{JAPANESE}3m·fromanearliersession', text.replace(' ', ''), context)
+                    self.assertIn(f'#3{GERMAN}3m'.replace(' ', ''), text.replace(' ', ''), context)
+                    self.assertIn(f'#4{JAPANESE}3m', text.replace(' ', ''), context)
 
     def test_five_older_tasks_show_each_title_and_age_whole(self):
         body, context = self.draw(OLDER, 66)
         text = joined(body)
 
         self.assert_fits(body, context)
-        self.assertIn(f"#6 {OLDER[0]['title']} 1d · from an earlier session", text, context)
+        self.assertIn(f"#6 {OLDER[0]['title']} 1d", text, context)
         for task in OLDER[1:]:
-            self.assertIn(f"#{task['id']} {task['title']} 5d · from an earlier session", text, context)
+            self.assertIn(f"#{task['id']} {task['title']} 5d", text, context)
 
     def test_a_pane_taller_than_its_rows_scrolls_and_squeezes_nothing(self):
         body, context = self.draw(TASKS, 36)
 
         self.assertEqual(len(body), 18, context)
         # The rows in view are whole: none pressed into another.
-        self.assertIn(f'#2 {XCODE} 3m · from an earlier session', joined(body), context)
+        self.assertIn(f'#2 {XCODE} 3m', joined(body), context)
 
     def test_the_age_never_wraps_into_a_column_of_its_own(self):
         for columns in WIDTHS:
@@ -143,7 +144,7 @@ class Pane(unittest.TestCase):
                 title_rows = rows[1 : 1 + next(i for i, row in enumerate(rows[1:]) if 'I need a trace' in row)]
                 for row in title_rows[1:]:
                     self.assertTrue(row.startswith('  ') and not row.startswith('   '), 'a title row out of line\n' + context)
-                self.assertIn('3m · from an earlier session', joined(title_rows), context)
+                self.assertIn(f'{INSTRUMENTS} 3m', joined(title_rows), context)
 
     def test_emoji_take_the_cells_the_terminal_draws_them_in(self):
         for columns in (36, 100, 110, 200):
@@ -151,7 +152,7 @@ class Pane(unittest.TestCase):
                 body, context = self.draw([{'id': 7, 'title': EMOJI, 'why': 'The ⌛ build waits on it.', 'kind': 'answer'}], columns)
 
                 self.assert_fits(body, context)
-                self.assertIn(f'#7 {EMOJI} 3m · from an earlier session', joined(body), context)
+                self.assertIn(f'#7 {EMOJI} 3m', joined(body), context)
 
     def test_saved_responses_and_titles_past_80_characters_show_whole(self):
         for columns in (48, 64, 110):

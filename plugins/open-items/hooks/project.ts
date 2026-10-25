@@ -1,4 +1,5 @@
 import type { Task, TaskRef, Took } from '../types'
+import { isTask } from './saved'
 import { isShown } from './tasks'
 
 /** How often a live session says so in the project's store. */
@@ -106,22 +107,6 @@ export function isSlot(value: unknown): value is Slot {
 
 function isNote(value: unknown): value is Note {
   return isShaped(value, 'ids', 'atMs')
-}
-
-/** Whether a stored value is a task, as the pane and the project's reckoning read one. */
-function isTask(value: unknown): value is Task {
-  const task = value as Record<string, unknown> | null
-  const isText = (key: string) => typeof task?.[key] === 'string'
-  const options = task?.['options']
-
-  return (
-    task !== null &&
-    typeof task === 'object' &&
-    ['id', 'createdMs', 'updatedMs'].every(key => typeof task[key] === 'number') &&
-    ['title', 'why', 'kind', 'state', 'update', 'sessionId'].every(isText) &&
-    ['doneWhen', 'answer', 'reason'].every(key => task[key] === undefined || isText(key)) &&
-    (options === undefined || (Array.isArray(options) && options.every(option => typeof option === 'string')))
-  )
 }
 
 function isRef(value: unknown): value is TaskRef {
