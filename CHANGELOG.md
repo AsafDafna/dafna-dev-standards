@@ -8,6 +8,17 @@
   pane grouped by kind, an alert through `$.ui.notify`, and four steering lines.
 - The mod runs no host command; every `tool.call` hook matches its own tools.
 
+## coo 1.0.4 — batched reporting holds questions until the recap
+
+- `coo` orchestration.md: the batched-reporting rule allowed a mid-batch
+  message when "a decision is actually needed", and questions went out
+  through that gap and scrolled away under later hand-backs. Now questions,
+  decisions and failures wait for the phase recap, which ends with a
+  "Decisions needed:" block of every open question. Only a question that
+  blocks all remaining work ends the phase early. With the `open-items`
+  tools listed, held items go to its pane at once. Motivated by a 2026-10-24
+  recurrence across several sessions.
+
 ## core 1.6.0 — rules reach subagents (SubagentStart hook)
 
 - `hooks.json`: new SubagentStart hook runs `session-rules.sh subagent`, which
