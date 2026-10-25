@@ -7,7 +7,8 @@
   through that gap and scrolled away under later hand-backs. Now questions,
   decisions and failures wait for the phase recap, which ends with a
   "Decisions needed:" block of every open question. Only a question that
-  blocks all remaining work ends the phase early. Motivated by a 2026-10-24
+  blocks all remaining work ends the phase early. With the `open-items`
+  tools listed, held items go to its pane at once. Motivated by a 2026-10-24
   recurrence across several sessions.
 
 ## core 1.6.0 — rules reach subagents (SubagentStart hook)
