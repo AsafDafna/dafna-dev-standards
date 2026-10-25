@@ -3,9 +3,10 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { fieldRowsOf, rowsFor } from '../hooks/pane'
+import { register } from '../hooks/register'
 import { cellsOf, rowsOf, wrapRows } from '../hooks/text'
 
-const ASSIGN = 'mcp__open-items__add_item'
+const ADD = 'mcp__open-items__add_item'
 const LIST = 'mcp__open-items__list_items'
 const WITHDRAW = 'mcp__open-items__withdraw_item'
 
@@ -34,7 +35,7 @@ const DONE = {
 } as const
 
 const KEY_TASK = {
-  tool: ASSIGN,
+  tool: ADD,
   title: 'Add STRIPE_SECRET_KEY to .env',
   why: "The webhook test can't run without it.",
   done_when: "It's in .env. Don't paste it here.",
@@ -42,14 +43,14 @@ const KEY_TASK = {
 } as const
 
 const XCODE_TASK = {
-  tool: ASSIGN,
+  tool: ADD,
   title: 'Run xcodebuild test on your Mac, paste the failures',
   why: "I can't run Xcode here.",
   kind: 'question',
 } as const
 
 const PAGING_TASK = {
-  tool: ASSIGN,
+  tool: ADD,
   title: 'Pick a pagination strategy for /feed',
   why: 'I lean towards cursor: the feed is append-only.',
   kind: 'decision',
@@ -366,15 +367,15 @@ async function textOf(ui: Drawn, key: string): Promise<string> {
 const ROWS_THREE_KINDS = 15
 const ROWS_ONE_KIND = 8
 
-describe('assigning', () => {
-  test('a task opens the Tasks pane, with its why and its buttons, and the status line counts it', async ($, on) => {
+describe('adding', () => {
+  test('an item opens the Open items pane, with its why and its buttons, and the status line counts it', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
-    const assigned = await $.tool.call(KEY_TASK)
+    const added = await $.tool.call(KEY_TASK)
     const ui = await $.ui.mount(PANE)
 
-    expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
+    expect(String((added as { result?: unknown }).result)).toContain('Added item #1')
     expect(world.opens.at(-1)?.id).toBe('open-items')
     expect(world.opens.at(-1)?.focus).toBeUndefined()
     expect(world.status).toBe('☐ 1 action · /open-items')
@@ -397,7 +398,7 @@ describe('assigning', () => {
     expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
-  test('the same ask twice is one task, and a sixth open task is refused', async ($, on) => {
+  test('the same ask twice is one item, and a sixth open item is refused', async ($, on) => {
     seat(on)
     await start($)
 
@@ -409,7 +410,7 @@ describe('assigning', () => {
       await $.tool.call({ ...KEY_TASK, title: `Do thing number ${n}` })
     }
 
-    const sixth = await $.tool.call({ ...KEY_TASK, title: 'One task too many' })
+    const sixth = await $.tool.call({ ...KEY_TASK, title: 'One item too many' })
     expect((sixth as { deny?: string }).deny).toContain('already has 5 open items')
   })
 
@@ -418,14 +419,14 @@ describe('assigning', () => {
     on('tool.describe', ($, e) => ({ description: e.description, isDeferred: true }))
     await start($)
 
-    for (const tool of [ASSIGN, LIST, WITHDRAW]) {
+    for (const tool of [ADD, LIST, WITHDRAW]) {
       const described = await $.tool.describe({ tool, description: 'From the server.', isDeferred: true, provider: { plugin: 'open-items', tier: 'user' } })
 
       expect(described).toEqual({ description: 'From the server.', isDeferred: false })
     }
   })
 
-  test('a subagent cannot assign tasks', async ($, on) => {
+  test('a subagent cannot add items', async ($, on) => {
     seat(on)
     await start($)
 
@@ -435,7 +436,7 @@ describe('assigning', () => {
     expect((refused as { deny?: string }).deny).toContain('Only the main agent')
   })
 
-  test('a withdrawn task leaves: the pane closes and the status line clears', async ($, on) => {
+  test('a withdrawn item leaves: the pane closes and the status line clears', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -1130,7 +1131,7 @@ describe('long titles', () => {
       component: 'ToolUse',
       props: {
         tool_use_id: 'toolu_1',
-        tool: ASSIGN,
+        tool: ADD,
         input: { title: XCODE_LONG.title },
         isRunning: false,
         isErrored: false,
@@ -1272,7 +1273,7 @@ describe('the answer field', () => {
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'answer' })
     await ui.input({ key: 'answer-1', text: 'LoginTests', kind: 'change' })
-    // The pane draws again while the user types: Claude assigns another task.
+    // The pane draws again while the user types: Claude adds another item.
     await $.tool.call(ANDROID_TASK)
 
     expect((await ui.find({ type: 'Input', key: 'answer-1' }))?.props.value).toBe('')
@@ -1335,7 +1336,7 @@ describe('the answer field', () => {
     await clock.settle()
     await $.session.attach({ surface: 'desktop', clientId: 'laptop' })
     const laptop = await $.ui.mount({ ...PANE, surface: 'desktop' })
-    // The pane draws again: Claude assigns another task.
+    // The pane draws again: Claude adds another item.
     await $.tool.call(ANDROID_TASK)
 
     expect((await laptop.find({ type: 'Input', key: 'answer-1' }))?.props.value).toBe('Use the staging creds')
@@ -2475,24 +2476,57 @@ describe('the system prompt', () => {
     outputStyle: null,
   } as const
 
-  test('tells Claude to assign what only the user can do, where the tool can be reached', async ($, on) => {
+  const STEERING_LINES = [
+    'When you need something from the user, add it with mcp__open-items__add_item so it stays in their Open items pane until they resolve it: a decision that is theirs, a question only they can answer, an action only they can do, or info they must see (a failure, a finding that changes their plan).',
+    'Add it even when you also ask in your reply. When they answer in chat instead, withdraw the item with reason "answered in chat".',
+    'While background agents run, add the item and write no chat text about it until the batch ends.',
+    'If add_item fails, ask in chat.',
+  ]
+
+  test('the system prompt carries the four steering lines', async ($, on) => {
     seat(on)
     on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
     await start($)
 
-    const offered = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ASSIGN], traits: [] })
+    const offered = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ADD], traits: [] })
     const deferred = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', 'ToolSearch'], traits: [] })
-    const headless = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ASSIGN], traits: ['print'] })
     const without = await $.prompt.compose({ ...COMPOSE, tools: ['Bash'], traits: [] })
 
-    expect(offered.sections.at(-1)?.id).toBe('open-items:tasks')
+    expect(offered.sections.at(-1)?.id).toBe('open-items:steering')
     expect(offered.sections.at(-1)?.scope).toBe('session')
-    expect(offered.sections.at(-1)?.text).toContain('add it with mcp__open-items__add_item so it stays in front of them')
-    expect(offered.sections.at(-1)?.text).toContain('or opens it with /open-items')
-    expect(offered.sections.at(-1)?.text).toContain('review or approve your work: add it as an item even when you also ask in your reply')
-    expect(deferred.sections.at(-1)?.id).toBe('open-items:tasks')
-    expect(headless.sections).toHaveLength(1)
+    expect(offered.sections.at(-1)?.text).toBe(STEERING_LINES.join('\n'))
+    expect(deferred.sections.at(-1)?.id).toBe('open-items:steering')
     expect(without.sections).toHaveLength(1)
+  })
+
+  test('bare and print sessions get no section', async ($, on) => {
+    seat(on)
+    on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
+    await start($)
+
+    for (const trait of ['bare', 'print'] as const) {
+      const composed = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ADD], traits: [trait] })
+
+      expect(composed.sections.map(section => section.id)).toEqual(['intro'])
+    }
+  })
+})
+
+describe('the mod\'s own tools', () => {
+  test('every tool.call hook matches one of the mod\'s own tools', () => {
+    const calls: { event: string; matcher: unknown }[] = []
+    const record = ((event: string, ...rest: unknown[]) => {
+      calls.push({ event, matcher: typeof rest[0] === 'object' ? rest[0] : undefined })
+    }) as unknown as On
+
+    register(record, {})
+
+    const matchers = calls.filter(call => call.event === 'tool.call').map(call => (call.matcher as { tool?: string } | undefined)?.tool)
+
+    expect(matchers.length).toBeGreaterThan(0)
+    for (const tool of matchers) {
+      expect([ADD, LIST, WITHDRAW]).toContain(tool)
+    }
   })
 })
 
@@ -2888,7 +2922,7 @@ describe('the README example', () => {
 
     await $.turn.start({ text: 'Get our Stripe webhooks library ready to open-source.', turnId: 't1' })
     await $.tool.call({
-      tool: ASSIGN,
+      tool: ADD,
       title: 'Add STRIPE_SECRET_KEY to .env',
       why: "The integration tests run against Stripe's test mode and need it.",
       done_when: "It's in .env. Don't paste it here.",
@@ -2899,7 +2933,7 @@ describe('the README example', () => {
     expect(world.status).toBe('✓ 1 not sent yet · /open-items')
 
     await $.tool.call({
-      tool: ASSIGN,
+      tool: ADD,
       title: 'Decide whether to make the repo public',
       why: 'npm will link to it, and its whole git history becomes public. I found no secrets in it.',
       kind: 'decision',
@@ -2908,7 +2942,7 @@ describe('the README example', () => {
     await ui.press({ key: 'option-1' })
 
     await $.tool.call({
-      tool: ASSIGN,
+      tool: ADD,
       title: "Choose the package's name on npm",
       why: 'stripe-webhooks is taken. The name goes in package.json and the README.',
       kind: 'question',
@@ -2992,7 +3026,7 @@ describe('knowing whether Claude works', () => {
 
 describe('the four kinds', () => {
   const DECISION = {
-    tool: ASSIGN,
+    tool: ADD,
     title: 'Ship the feed rewrite this week',
     why: 'It unblocks the mobile release.',
     kind: 'decision',
@@ -3000,7 +3034,7 @@ describe('the four kinds', () => {
     recommended: 'Yes',
   } as const
 
-  const INFO = { tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing for you to do; the schema is current.', kind: 'info' } as const
+  const INFO = { tool: ADD, title: 'The migration ran clean', why: 'Nothing for you to do; the schema is current.', kind: 'info' } as const
 
   const resultOf = (call: unknown) => call as { result?: string; deny?: string }
 
@@ -3185,13 +3219,13 @@ describe('the four kinds', () => {
 
 describe('the pane groups items by kind', () => {
   const DECISION = {
-    tool: ASSIGN,
+    tool: ADD,
     title: 'Ship the feed rewrite this week',
     why: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
   } as const
-  const INFO = { tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing for you to do.', kind: 'info' } as const
+  const INFO = { tool: ADD, title: 'The migration ran clean', why: 'Nothing for you to do.', kind: 'info' } as const
 
   test('the pane draws sections in order, empty ones left out', async ($, on) => {
     seat(on)
@@ -3258,7 +3292,7 @@ describe('the pane groups items by kind', () => {
 })
 
 describe('the alert', () => {
-  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ASSIGN, title, why: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
+  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ADD, title, why: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
   const DECISION = ask('decision', 'Ship the feed rewrite this week')
   const QUESTION = ask('question', 'Which branch is the release cut from')
 
@@ -3292,7 +3326,7 @@ describe('the alert', () => {
     const { world, clock } = seat(on)
     await start($)
 
-    await $.tool.call({ tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
+    await $.tool.call({ tool: ADD, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
     await clock.settle()
 
     expect(world.notices).toEqual([])
@@ -3326,7 +3360,7 @@ describe('the alert', () => {
     const { world, clock } = seat(on)
     await start($)
 
-    await $.tool.call({ tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
+    await $.tool.call({ tool: ADD, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
     await clock.advance(180_000)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'seen' })

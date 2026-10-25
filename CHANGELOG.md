@@ -1,5 +1,13 @@
 # Changelog
 
+## open-items 0.1.0 — new opt-in mod
+
+- Fork of human-in-the-loop (Tzafrir Rehan, MIT), renamed to Open items.
+- Removed: the per-project store and the project-wide task list.
+- Added: a per-session store, four kinds (decision, question, action, info), a
+  pane grouped by kind, an alert through `$.ui.notify`, and four steering lines.
+- The mod runs no host command; every `tool.call` hook matches its own tools.
+
 ## core 1.6.0 — rules reach subagents (SubagentStart hook)
 
 - `hooks.json`: new SubagentStart hook runs `session-rules.sh subagent`, which

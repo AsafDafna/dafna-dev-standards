@@ -11,6 +11,7 @@ between repos.
 /plugin marketplace add AsafDafna/dafna-dev-standards
 /plugin install core@dafna-dev-standards
 /plugin install coo@dafna-dev-standards   # optional, personal orchestration mode
+/plugin install open-items@dafna-dev-standards   # optional mod: an Open items pane for what Claude needs from you
 ```
 
 Both `core` and `coo` install at **user scope** — once per machine/account,

@@ -66,16 +66,14 @@ const LIST = 'mcp__open-items__list_items'
 const WITHDRAW = 'mcp__open-items__withdraw_item'
 
 /**
- * Three lines at the end of the system prompt: where an ask for the user goes
- * so it stays in front of them, that a review is one even when the reply asks
- * for it too (the user is often busy and lets the reply's question go by),
- * and where they see it. Said as what to do,
- * never what not to: nothing here stops Claude reminding the user of an item.
+ * The end of the system prompt, said as what to do. It also covers the
+ * person answering in chat, and background agents running.
  */
 const STEERING = [
-  "When you need something only the user can do (a secret put in place, an action on their machine or an account you can't reach, a decision that's theirs), add it with mcp__open-items__add_item so it stays in front of them until they act on it.",
-  'That includes asking the user to review or approve your work: add it as an item even when you also ask in your reply, since they may be busy with other things when you ask, and the item keeps it in front of them.',
-  'The user sees open items in their Open items pane, or opens it with /open-items, and their response reaches you as a message.',
+  'When you need something from the user, add it with mcp__open-items__add_item so it stays in their Open items pane until they resolve it: a decision that is theirs, a question only they can answer, an action only they can do, or info they must see (a failure, a finding that changes their plan).',
+  'Add it even when you also ask in your reply. When they answer in chat instead, withdraw the item with reason "answered in chat".',
+  'While background agents run, add the item and write no chat text about it until the batch ends.',
+  'If add_item fails, ask in chat.',
 ].join('\n')
 
 /** Resolutions pressed this close together go to Claude as one message. */
@@ -123,17 +121,19 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'add_item',
     description: [
-      'Put an item in front of the user that only they can do, and keep it in front of them until they act on it.',
-      'Use it for a secret or credential they must put in place, an action on their machine or on an account you cannot reach (a dashboard, a device, a deploy approval), a decision that is theirs to make, or a review or approval of your work.',
+      'Put an item in front of the user and keep it in their Open items pane until they resolve it.',
+      'There are four kinds. decision: they pick one of 2 to 4 options, and you mark the one you suggest with recommended.',
+      'question: you need their words (an error, a log, test results).',
+      'action: they do something on their machine or on an account you cannot reach, then mark it done.',
+      'info: something they should see (a failure, a finding that changes their plan); it asks nothing and sends you no response.',
       'Add it even when you also ask in your reply: the user may be busy with other things, and the item keeps the ask in front of them.',
-      'An item does not block: you keep working while it waits, and the response reaches you whenever the user gets to it, so it suits anything you need from them at some point in the session.',
+      'An item does not block: you keep working while it waits, and the response reaches you whenever the user gets to it.',
       'AskUserQuestion is the blocking kind: it waits for the answer, so it suits what you need before you can go on.',
       'One item per need: list_items shows what is already open.',
-      'Use kind info for something the user should see that asks nothing of them; it sends you no response. For a decision, mark the option you suggest with recommended.',
       'Write the title as an imperative the user can act on without scrolling back.',
       'For a secret, ask the user to put it where it belongs and mark the item done, rather than paste it.',
       'The user sees open items in their Open items pane, or opens it with /open-items.',
-      'The user rejects (with a reason) or fulfills it (done, an option, or an answer in their words). Their response reaches you as a message, or when you call list_items.',
+      'Their response reaches you as a message, or when you call list_items.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -174,7 +174,7 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'list_items',
     description: [
-      'List the items you gave the user and what they did with them: accepted, done (with their answer or choice), rejected (with their reason).',
+      'List the items you gave the user and what they did with them: done (with their answer or choice) or rejected (with their reason). It also lists open info items.',
       'Call it when you are about to need an item\'s result, when told an answer is saved for you, or before adding, to avoid a duplicate.',
     ].join(' '),
     inputSchema: {
@@ -654,7 +654,7 @@ export const register: Register = on => {
       return composed
     }
 
-    return { sections: [...composed.sections, { id: 'open-items:tasks', text: STEERING, scope: 'session' }] }
+    return { sections: [...composed.sections, { id: 'open-items:steering', text: STEERING, scope: 'session' }] }
   })
 
   on('prompt.context', async ($, e, next) => {
