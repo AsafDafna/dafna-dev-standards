@@ -15,7 +15,7 @@ for s in plugins/*/skills/*/SKILL.md; do
 done
 rc=0
 # A '<placeholder>' segment after Users/ (e.g. /mnt/c/Users/<you>/) is exempt; any literal name still fails.
-grep -rniE 'asaf|nir|edut|testimony|monday|/Users/([^<]|$)|~/dev-projects|~/Downloads' plugins/ || rc=$?
+git grep --untracked -niE 'asaf|nir|edut|testimony|monday|/Users/([^<]|$)|~/dev-projects|~/Downloads' -- plugins/ || rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "LEAK in plugins/"; exit 1
 elif [ "$rc" -ne 1 ]; then
