@@ -354,6 +354,9 @@ async function textOf(ui: Drawn, key: string): Promise<string> {
   return (await ui.find({ key }))?.text ?? ''
 }
 
+const ROWS_THREE_KINDS = 14
+const ROWS_ONE_KIND = 8
+
 describe('assigning', () => {
   test('a task opens the Tasks pane, with its why and its buttons, and the status line counts it', async ($, on) => {
     const { world } = seat(on)
@@ -366,7 +369,7 @@ describe('assigning', () => {
     expect(world.opens.at(-1)?.id).toBe('open-items')
     expect(world.opens.at(-1)?.focus).toBeUndefined()
     expect(world.status).toBe('☐ 1 action · /open-items')
-    expect(await textOf(ui, 'head')).toContain('1 item for you')
+    expect(await textOf(ui, 'head')).toBe('☐ 1 action')
     expect(await textOf(ui, 'task-1')).toContain("The webhook test can't run without it.")
     expect(await textOf(ui, 'task-1')).toContain('Done when:')
     expect(await textOf(ui, 'actions')).toContain('Done')
@@ -537,10 +540,10 @@ describe('long titles', () => {
 
     // A title on one row would ask for 10 rows wherever it is drawn: the
     // rows Claude Code 2.1.296 drew at 36 and 64 columns, as the live check reads them.
-    expect(rowsFor(view, 32, 99)).toBe(16)
-    expect(rowsFor(view, 60, 99)).toBe(12)
-    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 32, 99)).toBe(13)
-    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 60, 99)).toBe(10)
+    expect(rowsFor(view, 32, 99)).toBe(17)
+    expect(rowsFor(view, 60, 99)).toBe(13)
+    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 32, 99)).toBe(14)
+    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 60, 99)).toBe(11)
     expect(rowsFor(view, 32, 12)).toBe(12)
   })
 
@@ -550,11 +553,11 @@ describe('long titles', () => {
 
     await runTasks($)
     const ui = await $.ui.mount(inline(60))
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
 
     // The terminal narrows: the titles take more rows, and the pane asks for them.
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(17)
   })
 
   test('drawn on two surfaces at once, the pane asks for the rows the narrower takes, and keeps them', async ($, on) => {
@@ -565,7 +568,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(60))
     const phone = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // Each draws again: the pane asks for nothing new.
     const opens = world.opens.length
@@ -577,7 +580,7 @@ describe('long titles', () => {
     await phone.unmount()
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('a surface that docks the pane it drew inline leaves it as tall as the surfaces still drawing it inline', async ($, on) => {
@@ -588,11 +591,11 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(32))
     await $.ui.mount({ ...inline(60), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(17)
 
     // The terminal widens and docks the pane: the phone's rows are the pane's.
     await terminal.redraw(PANE.props)
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('drawn by two clients of one surface, the pane asks for the rows the narrower takes, and keeps them', async ($, on) => {
@@ -605,7 +608,7 @@ describe('long titles', () => {
     await runTasks($)
     const mobile = await $.ui.mount({ ...inline(60), surface: 'mobile' })
     await mobile.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // Each draws again: the pane asks for nothing new.
     const opens = world.opens.length
@@ -618,11 +621,11 @@ describe('long titles', () => {
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await mobile.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
 
     await mobile.redraw(inline(100).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(9)
+    expect(world.opens.at(-1)?.rows).toBe(11)
   })
 
   test("of two clients of one surface, one drawing it otherwise again and again keeps the other's rows", async ($, on) => {
@@ -638,7 +641,7 @@ describe('long titles', () => {
       await mobile.redraw({ ...inline(columns).props, isFocused })
     }
 
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
   })
 
   test('a client of two leaving, the pane asks for none of the rows it took', async ($, on) => {
@@ -652,12 +655,12 @@ describe('long titles', () => {
     const mobile = await $.ui.mount({ ...inline(60), surface: 'mobile' })
     await mobile.redraw(inline(32).props)
     await mobile.redraw(inline(60).props)
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The phone leaves, and the tablet draws the pane again: the pane fits it and the terminal.
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('a client of three leaving, the two left draw the pane again, and it fits them', async ($, on) => {
@@ -672,13 +675,13 @@ describe('long titles', () => {
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
     await mobile.redraw(inline(60).props)
     await mobile.redraw(inline(50).props)
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The phone leaves. No surface seats the pane inline but theirs, and the
     // narrower of the two drew last.
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('two clients of one surface leaving at once, the pane fits the surfaces left', async ($, on) => {
@@ -690,7 +693,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // Both leave together, and the phone reads who is attached late: the tablet still is.
     await mobile.unmount()
@@ -703,7 +706,7 @@ describe('long titles', () => {
     await clock.advance(500)
     await leaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test("clients leaving as the roster's write answers late, the pane still fits those left", async ($, on) => {
@@ -728,7 +731,7 @@ describe('long titles', () => {
     await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
     await mobile.redraw(inline(50).props)
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The pane draws again before the write that wakes it answers: the two
     // left start their seats over, and once they leave too, the terminal's fit.
@@ -737,7 +740,7 @@ describe('long titles', () => {
     await clock.advance(100)
     await phoneLeaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
 
     await mobile.unmount()
 
@@ -748,7 +751,7 @@ describe('long titles', () => {
     }
 
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test("a client leaving and attaching again as the roster's write answers late keeps the rows it draws", async ($, on) => {
@@ -770,7 +773,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The phone drops and comes back, drawing the pane, before the write of
     // its leaving answers: the seat it draws stays.
@@ -785,7 +788,7 @@ describe('long titles', () => {
 
     await terminal.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
   })
 
   test('a client leaving and attaching again stays counted, though the write of its leaving lands late', async ($, on) => {
@@ -806,7 +809,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The phone drops and attaches again, and the write of its leaving lands
     // after the engine has it back: it stays counted, so a tablet attaching
@@ -823,7 +826,7 @@ describe('long titles', () => {
     await $.session.attach({ surface: 'mobile', clientId: 'tablet' })
     await phone.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
   })
 
   test('the last client of a surface leaving as it draws the pane, the pane asks for none of the rows that drawing takes', async ($, on) => {
@@ -834,7 +837,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(60))
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The phone draws the pane again and leaves before that drawing reads who is attached.
     world.slowRead = 'clients'
@@ -848,7 +851,7 @@ describe('long titles', () => {
 
     await terminal.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('a client is counted before it first draws the pane', async ($, on) => {
@@ -858,7 +861,7 @@ describe('long titles', () => {
 
     await runTasks($)
     const mobile = await $.ui.mount({ ...inline(32), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // The tablet draws as it attaches, before the engine is done attaching it.
     world.attachMs = 500
@@ -869,7 +872,7 @@ describe('long titles', () => {
     await attached
     await clock.settle()
 
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(16)
   })
 
   test("the clients attached are kept in the session's state, which a reload of the code keeps", async ($, on) => {
@@ -897,16 +900,16 @@ describe('long titles', () => {
     const ui = await $.ui.mount(inline(60))
     world.tasksRead = 0
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(17)
     expect(world.tasksRead).toBe(1)
 
     await ui.redraw(inline(100).props)
-    await ui.press({ key: 'select-2' })
+    await ui.press({ key: 'select-1' })
     await ui.press({ key: 'answer' })
     const rows = world.opens.at(-1)?.rows ?? 0
     world.tasksRead = 0
     await ui.input({
-      key: 'answer-2',
+      key: 'answer-1',
       text: 'LoginTests.testExpiredToken failed, and CartTests.testCouponRounding failed with a rounding error in the total',
       kind: 'change',
     })
@@ -922,7 +925,7 @@ describe('long titles', () => {
     await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 32 } })
     await $.ui.mount({ ...inline(60), surface: 'mobile' })
 
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('the last task leaving, the pane closes and asks for no rows as it goes', async ($, on) => {
@@ -1016,14 +1019,15 @@ describe('long titles', () => {
     await start($)
 
     const ui = await $.ui.mount(inline(32))
-    const selected = await ui.find({ type: 'Text', text: /Open Instruments/ })
-    const other = await ui.find({ type: 'Text', text: /Run xcodebuild/ })
+    // The question is drawn first, so it is the one selected.
+    const selected = await ui.find({ type: 'Text', text: /Run xcodebuild/ })
+    const other = await ui.find({ type: 'Text', text: /Open Instruments/ })
 
     expect(selected?.props.wrap).toBe('wrap')
-    expect(selected?.text).toBe(`#1 ${INSTRUMENTS.title}  3m`)
+    expect(selected?.text).toBe(`#2 ${XCODE_LONG.title}  3m`)
     expect(other?.props.wrap).toBe('wrap')
-    expect(other?.text).toBe(` ${XCODE_LONG.title}  3m`)
-    expect((await ui.find({ type: 'Button', key: 'select-2' }))?.props.label).toBe('#2')
+    expect(other?.text).toBe(` ${INSTRUMENTS.title}  3m`)
+    expect((await ui.find({ type: 'Button', key: 'select-1' }))?.props.label).toBe('#1')
   })
 
   test('a title past 80 characters, an older version left, is drawn whole', async ($, on) => {
@@ -1074,16 +1078,16 @@ describe('long titles', () => {
     // At 28 columns Claude Code 2.1.296 squeezes `⏎ send` under the empty field: 12 rows in all.
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'answer' })
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
 
     // A short answer leaves the hint room on its row.
     await ui.input({ key: 'answer-2', text: 'abc', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(11)
+    expect(world.opens.at(-1)?.rows).toBe(12)
 
     await ui.input({ key: 'answer-2', text: 'abcdefghijk', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('an empty field in a narrow pane, hidden and opened again, takes the ring and asks for the row it squeezes onto', async ($, on) => {
@@ -1096,7 +1100,7 @@ describe('long titles', () => {
     // Out of the keys, the field draws no hint: one row.
     await $.ui.focus(ringTo('long'))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(11)
+    expect(world.opens.at(-1)?.rows).toBe(12)
 
     // Hidden and opened again, the field's autoFocus takes the ring, and `⏎ send` squeezes under it.
     await ui.press({ key: 'hide' })
@@ -1104,7 +1108,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(24))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(13)
   })
 
   test('the transcript row keeps its label whole and wraps the title after it', async ($, on) => {
@@ -3167,5 +3171,79 @@ describe('the four kinds', () => {
     await start($)
 
     expect(world.status).toBeUndefined()
+  })
+})
+
+describe('the pane groups items by kind', () => {
+  const DECISION = {
+    tool: ASSIGN,
+    title: 'Ship the feed rewrite this week',
+    why: 'It unblocks the mobile release.',
+    kind: 'decision',
+    options: ['Yes', 'Not yet'],
+  } as const
+  const INFO = { tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing for you to do.', kind: 'info' } as const
+
+  test('the pane draws sections in order, empty ones left out', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(INFO)
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    const text = await textOf(ui, 'tasks')
+    const at = (needle: string) => text.indexOf(needle)
+
+    const order = ['DECISIONS', DECISION.title, 'QUESTIONS', XCODE_TASK.title, 'INFO', INFO.title].map(at)
+    expect(order.every(i => i >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(text).not.toContain('ACTIONS')
+    expect(await textOf(ui, 'head')).toBe('☐ 1 decision · 1 question · 1 info')
+  })
+
+  test('after the selected item closes, the first decision is selected', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(INFO)
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    expect(await ui.find({ type: 'Button', key: 'seen' })).toBeDefined()
+    await ui.press({ key: 'seen' })
+
+    expect(await ui.find({ type: 'Button', key: 'option-1' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'seen' })).toBeUndefined()
+  })
+
+  test('rows count the section headers', () => {
+    const task = (id: number, kind: 'decision' | 'question' | 'info') => ({ ...ROTATE, id, kind, title: `Item number ${id}`, why: 'A reason.' })
+    const view = {
+      shown: [task(1, 'info'), task(2, 'question'), task(3, 'decision')],
+      selectedId: null,
+      editing: null,
+      draft: '',
+      nowMs: NOW,
+      isWorking: false,
+      canType: true,
+      isFocused: true,
+      isTyping: false,
+    }
+
+    expect(rowsFor(view, 40, 99)).toBe(ROWS_THREE_KINDS)
+    expect(rowsFor({ ...view, shown: [task(2, 'question')] }, 40, 99)).toBe(ROWS_ONE_KIND)
+  })
+
+  test('a long-answer prompt naming an info item goes through as typed', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(INFO)
+    const sent = await $.prompt.submit(typed('↳ Answer to #1: Thanks'))
+
+    expect(sent.text).toBe('↳ Answer to #1: Thanks')
+    expect(world.submitted).toEqual([])
+    expect(world.status).toBe('☐ 1 info · /open-items')
   })
 })

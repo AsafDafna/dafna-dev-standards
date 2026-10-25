@@ -1,4 +1,4 @@
-import type { Editing, Task } from '../types'
+import type { Editing, Task, TaskKind } from '../types'
 import { MAX_OPTION, MAX_WHY, isActive, isAsk, waitingOf } from './tasks'
 import { ago, cellsOf, clip, printable, rowsOf } from './text'
 
@@ -38,13 +38,33 @@ export type PaneView = {
   isTyping: boolean
 }
 
+/** The pane's sections, in the order they are drawn. */
+export const SECTIONS: readonly { kind: TaskKind; label: string }[] = [
+  { kind: 'decision', label: 'DECISIONS' },
+  { kind: 'question', label: 'QUESTIONS' },
+  { kind: 'action', label: 'ACTIONS' },
+  { kind: 'info', label: 'INFO' },
+]
+
+/** The open items `active` by section, in `SECTIONS` order, the empty ones left out, each oldest first. */
+export function groupsOf(active: readonly Task[]): { label: string; tasks: Task[] }[] {
+  return SECTIONS.map(({ kind, label }) => ({ label, tasks: active.filter(task => task.kind === kind) })).filter(
+    group => group.tasks.length > 0,
+  )
+}
+
+/** The item drawn first, and so selected when nothing else is: the first of the first section. */
+export function firstOf(active: readonly Task[]): Task | undefined {
+  return groupsOf(active)[0]?.tasks[0]
+}
+
 export function selectedOf(view: PaneView): Task | undefined {
   const active = view.shown.filter(isActive)
 
-  return active.find(task => task.id === view.selectedId) ?? active[0]
+  return active.find(task => task.id === view.selectedId) ?? firstOf(active)
 }
 
-/** The pane's head: `☐ 2 items for you · 1 not sent yet`, or `✓ 1 response not sent yet`. */
+/** The pane's head: `☐ 1 decision · 2 questions · 1 not sent yet`, or `✓ 1 response not sent yet`. */
 export function headlineOf(view: PaneView): { glyph: string; headline: string; note: string } {
   return waitingOf(view.shown, 'response')
 }
@@ -220,20 +240,22 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
 
 /**
  * The rows the Open items pane's body takes at `columns` cells across, each
- * text wrapped as the pane draws it: the head, the selected task whole, a
- * row (or more, for a long title) for every other task, and the foot; at
- * most `max`.
+ * text wrapped as the pane draws it: the head, a header row for each section
+ * and a blank row between sections, the selected item whole, a row (or more,
+ * for a long title) for every other item, and the foot; at most `max`.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
   const inner = Math.max(1, width - GLYPH_CELLS)
-  const active = view.shown.filter(isActive)
+  const active = groupsOf(view.shown.filter(isActive))
   const saved = view.shown.filter(task => !isActive(task))
   const selected = selectedOf(view)
   const head = headlineOf(view)
   let rows = rowsOf(`${head.glyph}${head.headline}${head.note}`, width) + 1
 
-  for (const task of active) {
+  rows += Math.max(0, active.length * 2 - 1)
+
+  for (const task of active.flatMap(group => group.tasks)) {
     if (task !== selected) {
       // `#2` is the button that selects it; the title wraps beside it.
       rows += rowsOf(` ${nameOf(task)}${ageOf(task, view)}`, Math.max(1, inner - cellsOf(`#${task.id}`)))

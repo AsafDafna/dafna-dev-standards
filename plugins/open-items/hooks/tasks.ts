@@ -234,29 +234,30 @@ export function statusOf(shown: readonly Task[]): string | undefined {
     return undefined
   }
 
-  const counts = KINDS.map(kind => ({ kind, count: shown.filter(task => isActive(task) && task.kind === kind).length })).filter(
-    ({ count }) => count > 0,
-  )
   const { glyph, headline, note } = waitingOf(shown)
-  // "info" keeps its form for any count.
-  const kinds = counts.map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind))).join(' · ')
 
-  return `${glyph}${counts.length > 0 ? kinds : headline}${note} · /open-items`
+  return `${glyph}${headline}${note} · /open-items`
 }
 
 /**
- * What waits on the user among `shown`, as the pane's head leads with it
- * (the status line takes its glyph and note): `☐ 2 items for you · 1 not sent yet`, or `✓ 1 not sent
- * yet` with nothing open, the responses named `noun` where there's room.
+ * What waits on the user among `shown`, as the pane's head and the status line
+ * lead with it: `☐ 1 decision · 2 questions · 1 not sent yet` (the open items by
+ * kind), or `✓ 1 not sent yet` with nothing open, the responses named `noun`
+ * where there's room.
  */
 export function waitingOf(shown: readonly Task[], noun?: string): { glyph: string; headline: string; note: string } {
-  const open = shown.filter(isActive).length
-  const saved = shown.length - open
+  const open = shown.filter(isActive)
+  const saved = shown.length - open.length
+  // "info" keeps its form for any count.
+  const kinds = KINDS.map(kind => ({ kind, count: open.filter(task => task.kind === kind).length }))
+    .filter(({ count }) => count > 0)
+    .map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind)))
+    .join(' · ')
 
   return {
-    glyph: open > 0 ? '☐ ' : '✓ ',
-    headline: open > 0 ? `${plural(open, 'item')} for you` : `${noun === undefined ? saved : plural(saved, noun)} not sent yet`,
-    note: open > 0 && saved > 0 ? ` · ${saved} not sent yet` : '',
+    glyph: open.length > 0 ? '☐ ' : '✓ ',
+    headline: open.length > 0 ? kinds : `${noun === undefined ? saved : plural(saved, noun)} not sent yet`,
+    note: open.length > 0 && saved > 0 ? ` · ${saved} not sent yet` : '',
   }
 }
 

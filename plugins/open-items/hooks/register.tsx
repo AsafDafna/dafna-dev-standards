@@ -37,6 +37,8 @@ import {
   answerPlaceholderOf,
   doneWhenOf,
   fieldKeyOf,
+  firstOf,
+  groupsOf,
   headlineOf,
   hintOf,
   nameOf,
@@ -551,7 +553,7 @@ export const register: Register = on => {
     }
 
     const bridged = answerIn(e.text)
-    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isActive(one))
+    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isAsk(one))
     let isAnswered = false
 
     if (bridged !== null && task !== undefined) {
@@ -740,6 +742,7 @@ export const register: Register = on => {
     }
 
     const active = shown.filter(isActive)
+    const groups = groupsOf(active)
     const saved = shown.filter(task => !isActive(task))
     const selected = selectedOf(view)
     const head = headlineOf(view)
@@ -895,7 +898,7 @@ export const register: Register = on => {
       )
     }
 
-    const taskRows = active.map(task =>
+    const itemRow = (task: Task) =>
       task.id === selected?.id ? (
         selectedRows(task)
       ) : (
@@ -908,8 +911,16 @@ export const register: Register = on => {
             {` ${nameOf(task)}${ageOf(task, view)}`}
           </Text>
         </Box>
-      ),
-    )
+      )
+
+    const sectionRows = groups.map((group, i) => (
+      <Box key={`section-${group.label}`} flexDirection="column" flexShrink={0} marginTop={i === 0 ? 0 : 1}>
+        <Text bold color="yellow">
+          {group.label}
+        </Text>
+        {group.tasks.map(itemRow)}
+      </Box>
+    ))
 
     const savedRows = saved.map((task, i) => (
       <Box key={`saved-${task.id}`} flexDirection="row" flexShrink={0}>
@@ -933,7 +944,7 @@ export const register: Register = on => {
           </Text>
         </Box>
         <Box key="tasks" flexDirection="column" marginTop={1} flexShrink={0}>
-          {taskRows}
+          {sectionRows}
           {savedRows}
         </Box>
         <Box key="foot" flexDirection="row" marginTop={1} columnGap={BUTTON_GAP} flexShrink={0}>
@@ -1582,7 +1593,7 @@ async function settle($: EngineInterface, id: number) {
 async function reselect($: EngineInterface) {
   const active = (await read($, tasks)).filter(isActive)
 
-  await update($, selectedId, chosen => (active.some(task => task.id === chosen) ? chosen : (active[0]?.id ?? null)))
+  await update($, selectedId, chosen => (active.some(task => task.id === chosen) ? chosen : (firstOf(active)?.id ?? null)))
 }
 
 async function select($: EngineInterface, id: number) {

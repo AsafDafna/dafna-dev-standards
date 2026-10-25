@@ -43,6 +43,10 @@ TASKS = [
     {'id': 4, 'title': JAPANESE, 'why': 'The migration drops a column.', 'kind': 'decision', 'options': ['Approve', 'Wait for the freeze to end']},
 ]
 
+# The rows the pane draws at 40 columns for the items in tests/register.test.tsx's "rows count the section headers".
+ROWS_THREE_KINDS = 14
+ROWS_ONE_KIND = 8
+
 DAY_MS = 86_400_000
 
 # Five tasks a day or more old, as a live session showed them on 0.1.4: the
@@ -91,6 +95,12 @@ class Pane(unittest.TestCase):
         self.assertEqual(placement(screen), 'dock' if columns >= DOCK_FROM else 'inline', context)
         return body, context
 
+    @staticmethod
+    def rows_of(body):
+        """The rows the pane drew: from its head to its foot."""
+        rows = [row.strip() for row in body]
+        return max(i for i, row in enumerate(rows) if row) + 1
+
     def assert_fits(self, body, context):
         # The foot ends what is drawn, a blank row above it: none cut off
         # below it. Framed, it is the pane's last row, none asked for and
@@ -102,15 +112,16 @@ class Pane(unittest.TestCase):
         self.assertNotEqual(rows[foot - 2], '', 'a row asked for and left empty\n' + context)
 
     def test_titles_wrap_whole_and_the_pane_fits_them(self):
-        # As many tasks as fit the pane's 18 rows at each width.
-        for columns, tasks in ((36, TASKS[:2]), (48, TASKS[:1] + TASKS[2:]), *((width, TASKS) for width in WIDTHS[2:])):
+        # As many tasks, grouped in sections, as fit the pane's 18 rows at each width.
+        for columns, tasks in ((36, TASKS[:2]), (48, TASKS[:1] + TASKS[2:]), (64, TASKS[:1] + TASKS[2:]), *((width, TASKS) for width in WIDTHS[3:])):
             with self.subTest(columns=columns):
                 body, context = self.draw(tasks, columns)
                 text = joined(body)
 
                 self.assert_fits(body, context)
                 self.assertIn(f'#1 {INSTRUMENTS} 3m', text, context)
-                self.assertIn('d: Done', text, context)
+                # The first item of the first section is the one drawn whole.
+                self.assertIn('1: Approve' if JAPANESE in [task['title'] for task in tasks] else 'd: Done', text, context)
                 self.assertIn('x: Reject…', text, context)
 
                 if XCODE in [task['title'] for task in tasks]:
@@ -142,6 +153,7 @@ class Pane(unittest.TestCase):
             with self.subTest(columns=columns):
                 body, context = self.draw(TASKS[:1], columns)
                 rows = [row for row in body if row.strip() != '']
+                rows = rows[:1] + rows[2:]
                 # Each row of the title starts at the title's indent: the age flows after it.
                 title_rows = rows[1 : 1 + next(i for i, row in enumerate(rows[1:]) if 'I need a trace' in row)]
                 for row in title_rows[1:]:
@@ -167,6 +179,34 @@ class Pane(unittest.TestCase):
                 self.assert_fits(body, context)
                 self.assertIn('d: Seen', text, context)
                 self.assertNotIn('Reject', text, context)
+
+    def test_sections_group_the_four_kinds_and_the_pane_fits_them(self):
+        kinds = [
+            {'id': 1, 'title': 'Note one', 'why': 'Nothing to do.', 'kind': 'info'},
+            {'id': 2, 'title': 'Which branch holds the fix?', 'why': 'Two candidates.', 'kind': 'question'},
+            {'id': 3, 'title': 'Add the key to the env file', 'why': 'The test needs it.', 'kind': 'action'},
+            {'id': 4, 'title': 'Ship the rewrite', 'why': 'It unblocks the release.', 'kind': 'decision'},
+        ]
+        for columns in (40, 120):
+            with self.subTest(columns=columns):
+                body, context = self.draw(kinds, columns)
+                text = joined(body)
+
+                self.assert_fits(body, context)
+                positions = [text.index(word) for word in ('DECISIONS', '#4', 'QUESTIONS', '#2', 'ACTIONS', '#3', 'INFO', '#1')]
+                self.assertEqual(positions, sorted(positions), context)
+                self.assertIn('1 decision · 1 question · 1 action', text, context)
+
+    def test_the_rows_the_unit_test_counts_for_three_kinds_are_the_rows_drawn(self):
+        three = [{'id': n, 'title': f'Item number {n}', 'why': 'A reason.', 'kind': kind} for n, kind in ((1, 'info'), (2, 'question'), (3, 'decision'))]
+        body, context = self.draw(three, 40)
+
+        self.assert_fits(body, context)
+        self.assertEqual(self.rows_of(body), ROWS_THREE_KINDS, context)
+        body, context = self.draw(three[1:2], 40)
+
+        self.assert_fits(body, context)
+        self.assertEqual(self.rows_of(body), ROWS_ONE_KIND, context)
 
     def test_emoji_take_the_cells_the_terminal_draws_them_in(self):
         for columns in (36, 100, 110, 200):
