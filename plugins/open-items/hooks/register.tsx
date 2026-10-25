@@ -274,9 +274,9 @@ const live = {
   /** The roster's writes asked for and not yet done: each waits for the one before (see `rostered`). */
   rosterQueue: Promise.resolve() as Promise<unknown>,
   /**
-   * Turns begun and not yet ended. `turn.start` names no loop, so a loop
-   * other than main's (an engine side request, a teammate) may begin one that
-   * ends under an agent id: each ends by its own id.
+   * Turns begun and not yet ended. A loop other than main's (an engine side
+   * request, a teammate) may begin one whose `turn.complete` carries an agent
+   * id: each ends by its own id.
    */
   turns: new Set<string>(),
   /** Whether a turn runs, in the engine's own word (the band's `isWorking`), once it has said. */
@@ -396,7 +396,6 @@ export const register: Register = on => {
       ...ask,
       state: 'open',
       update: 'none',
-      sessionId: await $.session.id(),
       createdMs: nowMs,
       updatedMs: nowMs,
     }
@@ -1128,7 +1127,7 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   const nowMs = await $.clock.now()
 
   // A /clear or a resume while the read was out: the state is another session's now.
-  if (live.sessionId !== sessionId) {
+  if (live.loading !== sessionId) {
     return false
   }
 

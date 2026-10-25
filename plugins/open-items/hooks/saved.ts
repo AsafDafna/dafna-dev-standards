@@ -32,7 +32,7 @@ function isTask(value: unknown): value is Task {
     task !== null &&
     typeof task === 'object' &&
     ['id', 'createdMs', 'updatedMs'].every(key => typeof task[key] === 'number') &&
-    ['title', 'why', 'sessionId'].every(isText) &&
+    ['title', 'why'].every(isText) &&
     KINDS.includes(task['kind'] as TaskKind) &&
     STATES.includes(task['state'] as string) &&
     UPDATES.includes(task['update'] as string) &&

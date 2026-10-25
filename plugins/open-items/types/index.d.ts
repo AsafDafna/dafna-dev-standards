@@ -13,7 +13,7 @@ export type TaskKind = 'decision' | 'question' | 'action' | 'info'
 export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn' | 'seen'
 
 /**
- * Whether Claude has heard of the user's latest move on the task: nothing
+ * Whether Claude has heard of the user's latest move on the item: nothing
  * to tell (`none`), told nothing yet (`pending`), or told (`delivered`).
  */
 export type TaskUpdate = 'none' | 'pending' | 'delivered'
@@ -35,14 +35,12 @@ export type Task = {
   /** Why the user rejected it, or why Claude withdrew it. */
   reason?: string
   update: TaskUpdate
-  /** The session that added it. */
-  sessionId: string
   createdMs: number
   updatedMs: number
 }
 
 /**
- * The selected task's field, when the pane shows one in place of its
+ * The selected item's field, when the pane shows one in place of its
  * buttons: an answer, or a reason for rejecting. `held` is an answer held
  * back because it looks like a secret.
  */

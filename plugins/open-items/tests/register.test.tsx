@@ -70,7 +70,6 @@ const ROTATE = {
   kind: 'action',
   state: 'open',
   update: 'none',
-  sessionId: 'session-0',
   createdMs: 0,
   updatedMs: 0,
 } as const
@@ -457,7 +456,6 @@ describe('adding', () => {
 const INSTRUMENTS = {
   ...ROTATE,
   id: 1,
-  sessionId: 'session-1',
   title: 'Open Instruments from Xcode and record with the Activity Monitor template',
   why: 'I need a trace of the launch to see where the 4 seconds go.',
   doneWhen: 'The .trace file is in ~/traces.',
@@ -467,7 +465,6 @@ const INSTRUMENTS = {
 const XCODE_LONG = {
   ...ROTATE,
   id: 2,
-  sessionId: 'session-1',
   title: 'Run xcodebuild test on your Mac and paste every failure you see here please',
   why: "I can't run Xcode here.",
   kind: 'question',
@@ -1965,7 +1962,7 @@ describe('responding', () => {
     expect(world.isPaneOpen).toBe(false)
   })
 
-  test('list_items for one task marks only that one heard', async ($, on) => {
+  test('list_items for one item marks only that one heard', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -2532,7 +2529,7 @@ describe('the mod\'s own tools', () => {
 
 describe('saving', () => {
   const DAY_MS = 24 * 60 * 60_000
-  const MINE = { ...ROTATE, sessionId: 'session-1' } as const
+  const MINE = ROTATE
 
   function savedIdsOf(world: ReturnType<typeof seat>['world'], sessionId = 'session-1') {
     return (world.store[`session:${sessionId}`] as { tasks: { id: number }[] } | undefined)?.tasks.map(task => task.id)
@@ -2555,7 +2552,7 @@ describe('saving', () => {
     await $.tool.call(KEY_TASK)
 
     expect(world.store['session:session-1']).toEqual({
-      tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title, state: 'open', sessionId: 'session-1' })],
+      tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title, state: 'open' })],
       nextId: 2,
       savedMs: NOW,
     })
@@ -2835,7 +2832,7 @@ describe('saving', () => {
   })
 
   test('a resume into a saved session restores it', async ($, on) => {
-    const theirs = { ...ROTATE, sessionId: 'session-2' }
+    const theirs = ROTATE
     const { world, clock } = seat(on, { 'session:session-2': { tasks: [theirs], nextId: 8, savedMs: NOW } })
     await start($)
 
@@ -2879,6 +2876,26 @@ describe('saving', () => {
     expect(await textOf(ui, 'task-7')).toBe('')
     expect(world.store['session:session-1']).toEqual(saved)
     expect(savedIdsOf(world, 'session-2')).toEqual([1])
+  })
+
+  test('a start read still out at /clear takes nothing in when the engine never names a new session', async ($, on) => {
+    const saved = { tasks: [MINE], nextId: 8, savedMs: NOW }
+    const { world, clock } = seat(on, { 'session:session-1': saved })
+    world.isStuck = true
+    const started = start($)
+    await clock.advance(5000)
+    await started
+    const cleared = $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    await clock.advance(5000)
+    await cleared
+    // The engine never names a new id: the process goes on as the ended session after the id reads.
+    await clock.advance(1000)
+
+    world.unstick?.()
+    await clock.settle()
+
+    const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'task-7')).toBe('')
   })
 
   test('after /clear an answer saved for later stays with the session it was given in', async ($, on) => {
@@ -3193,7 +3210,6 @@ describe('the four kinds', () => {
     const decision = {
       ...ROTATE,
       id: 1,
-      sessionId: 'session-1',
       title: DECISION.title,
       why: DECISION.why,
       kind: 'decision',
@@ -3209,7 +3225,7 @@ describe('the four kinds', () => {
   })
 
   test('a seen info item is not brought back by a resumed session', async ($, on) => {
-    const seen = { ...ROTATE, id: 1, sessionId: 'session-1', kind: 'info', state: 'seen' }
+    const seen = { ...ROTATE, id: 1, kind: 'info', state: 'seen' }
     const { world } = seat(on, earlier([seen]))
     await start($)
 
