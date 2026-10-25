@@ -58,6 +58,9 @@ import { numbersOf, oneLine, printable } from './text'
 
 const PLUGIN = 'open-items'
 
+/** An ask alerts only when the person has been quiet this long. */
+const ALERT_QUIET_MS = 120_000
+
 const ADD = 'mcp__open-items__add_item'
 const LIST = 'mcp__open-items__list_items'
 const WITHDRAW = 'mcp__open-items__withdraw_item'
@@ -232,6 +235,10 @@ type Entered = { text: string; context?: readonly string[] }
 /** What the module tracks beside `$.state`; a hot reload starts it over. */
 const live = {
   sessionId: '',
+  /** When the person last typed a prompt or used the pane. */
+  lastPersonMs: 0,
+  /** An alert went out in the main loop's current turn; one per turn. */
+  alertedTurn: false,
   /** A Send now row joined the running turn and no step has read it yet. */
   isUnread: false,
   /** A Send now the running turn could not take: it goes once the turn ends. */
@@ -408,6 +415,11 @@ export const register: Register = on => {
       $.ui.toast(`Claude added an item for you: ${printable(task.title, MAX_TITLE)}. See /open-items`)
     }
 
+    if (!isInfo && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
+      live.alertedTurn = true
+      $.ui.notify(printable(task.title, MAX_TITLE), { title: 'Open items' }).catch(() => undefined)
+    }
+
     return { result: addedOf(task, Math.min(group.length + 1, isInfo ? MAX_INFO : MAX_OPEN)) }
   })
 
@@ -485,6 +497,10 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      live.alertedTurn = false
+    }
+
     live.isUnread = false
     live.turns.add(e.turnId)
     await syncWorking($)
@@ -505,6 +521,7 @@ export const register: Register = on => {
 
     // Main's turn ending ends every turn; another loop's ends its own.
     if (e.agentId === undefined) {
+      live.alertedTurn = false
       live.turns.clear()
       live.engineWorking = false
     } else {
@@ -547,9 +564,27 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('ui.press', { plugin: PLUGIN }, async ($, e, next) => {
+    live.lastPersonMs = await $.clock.now()
+
+    return next(e)
+  })
+
+  on('ui.input', { plugin: PLUGIN }, async ($, e, next) => {
+    if (e.kind === 'submit') {
+      live.lastPersonMs = await $.clock.now()
+    }
+
+    return next(e)
+  })
+
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind === 'plugin' && e.origin.name === PLUGIN) {
       return next(e)
+    }
+
+    if (e.origin.kind === 'composer' || e.origin.kind === 'bridge') {
+      live.lastPersonMs = await $.clock.now()
     }
 
     const bridged = answerIn(e.text)

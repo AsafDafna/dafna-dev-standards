@@ -85,6 +85,10 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     submitted: [] as string[],
     appended: [] as { type: string; text: string }[],
     toasts: [] as string[],
+    /** Every `$.ui.notify` the plugin made. */
+    notices: [] as { text: string; title: string | undefined }[],
+    /** Set, a hook beneath refuses the plugin's notifications with this reason. */
+    refusingNotify: undefined as string | undefined,
     opens: [] as PaneOpenArgs[],
     isPaneOpen: false,
     isNarrow: false,
@@ -213,6 +217,11 @@ function seat(on: On, store: Record<string, unknown> = {}) {
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)
     return { value: undefined }
+  })
+  on('ui.notify', ($, e) => {
+    world.notices.push({ text: e.text, title: e.title })
+
+    return world.refusingNotify === undefined ? { value: { isSent: true as const, channel: 'ghostty' as const } } : { deny: world.refusingNotify }
   })
   on('ui.status', ($, e) => {
     world.status = e.text
@@ -3245,5 +3254,109 @@ describe('the pane groups items by kind', () => {
     expect(sent.text).toBe('↳ Answer to #1: Thanks')
     expect(world.submitted).toEqual([])
     expect(world.status).toBe('☐ 1 info · /open-items')
+  })
+})
+
+describe('the alert', () => {
+  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ASSIGN, title, why: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
+  const DECISION = ask('decision', 'Ship the feed rewrite this week')
+  const QUESTION = ask('question', 'Which branch is the release cut from')
+
+  test('a decision added while the person is away alerts once', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await clock.advance(180_000)
+    await $.tool.call(DECISION)
+    await $.tool.call(QUESTION)
+    await clock.settle()
+
+    expect(world.notices).toEqual([{ text: DECISION.title, title: 'Open items' }])
+  })
+
+  test('the next turn can alert again', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await $.tool.call(DECISION)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.turn.start({ text: 'go on', turnId: 't2' })
+    await $.tool.call(QUESTION)
+    await clock.settle()
+
+    expect(world.notices.map(one => one.text)).toEqual([DECISION.title, QUESTION.title])
+  })
+
+  test('no alert for info', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call({ tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
+    await clock.settle()
+
+    expect(world.notices).toEqual([])
+  })
+
+  test("no alert within 2 minutes of the person's prompt", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.prompt.submit(typed('hello'))
+    await clock.advance(30_000)
+    await $.tool.call(DECISION)
+    await clock.settle()
+
+    expect(world.notices).toEqual([])
+  })
+
+  test("a prompt from the phone also counts as the person's", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'bridge' } })
+    await clock.advance(30_000)
+    await $.tool.call(DECISION)
+    await clock.settle()
+
+    expect(world.notices).toEqual([])
+  })
+
+  test('no alert within 2 minutes of a pane press', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call({ tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
+    await clock.advance(180_000)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'seen' })
+    await clock.advance(30_000)
+    await $.tool.call(QUESTION)
+    await clock.settle()
+
+    expect(world.notices).toEqual([])
+  })
+
+  test('a title with quotes and a newline reaches notify as one clipped line', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(ask('decision', 'Merge "PR #18"\nnow?'))
+    await clock.settle()
+
+    expect(world.notices.map(one => one.text)).toEqual(['Merge "PR #18" now?'])
+  })
+
+  test('a refused notify does not fail add_item', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    world.refusingNotify = 'muted'
+    const added = (await $.tool.call(DECISION)) as { result?: string; deny?: string }
+    await clock.settle()
+
+    expect(added.deny).toBeUndefined()
+    expect(added.result).toContain('#1')
+    expect(world.notices).toHaveLength(1)
   })
 })
