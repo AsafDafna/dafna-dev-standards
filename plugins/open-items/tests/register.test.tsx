@@ -354,7 +354,7 @@ async function textOf(ui: Drawn, key: string): Promise<string> {
   return (await ui.find({ key }))?.text ?? ''
 }
 
-const ROWS_THREE_KINDS = 14
+const ROWS_THREE_KINDS = 15
 const ROWS_ONE_KIND = 8
 
 describe('assigning', () => {
@@ -3218,7 +3218,7 @@ describe('the pane groups items by kind', () => {
   })
 
   test('rows count the section headers', () => {
-    const task = (id: number, kind: 'decision' | 'question' | 'info') => ({ ...ROTATE, id, kind, title: `Item number ${id}`, why: 'A reason.' })
+    const task = (id: number, kind: 'decision' | 'question' | 'info') => ({ ...ROTATE, id, kind, title: `Item number ${id}`, why: 'A reason.', ...(kind === 'decision' ? { options: ['Ship it', 'Hold'] } : {}) })
     const view = {
       shown: [task(1, 'info'), task(2, 'question'), task(3, 'decision')],
       selectedId: null,

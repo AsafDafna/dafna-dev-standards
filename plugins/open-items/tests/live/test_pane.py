@@ -44,7 +44,7 @@ TASKS = [
 ]
 
 # The rows the pane draws at 40 columns for the items in tests/register.test.tsx's "rows count the section headers".
-ROWS_THREE_KINDS = 14
+ROWS_THREE_KINDS = 15
 ROWS_ONE_KIND = 8
 
 DAY_MS = 86_400_000
@@ -185,20 +185,23 @@ class Pane(unittest.TestCase):
             {'id': 1, 'title': 'Note one', 'why': 'Nothing to do.', 'kind': 'info'},
             {'id': 2, 'title': 'Which branch holds the fix?', 'why': 'Two candidates.', 'kind': 'question'},
             {'id': 3, 'title': 'Add the key to the env file', 'why': 'The test needs it.', 'kind': 'action'},
-            {'id': 4, 'title': 'Ship the rewrite', 'why': 'It unblocks the release.', 'kind': 'decision'},
+            {'id': 4, 'title': 'Ship the rewrite', 'why': 'It unblocks the release.', 'kind': 'decision', 'options': ['Go', 'No']},
         ]
-        for columns in (40, 120):
+        for columns in (48, 120):
             with self.subTest(columns=columns):
                 body, context = self.draw(kinds, columns)
                 text = joined(body)
 
                 self.assert_fits(body, context)
+                self.assertIn('1: Go', text, context)
+                self.assertNotIn('d: Done', ' '.join(text.split('QUESTIONS')[0:1]), context)
                 positions = [text.index(word) for word in ('DECISIONS', '#4', 'QUESTIONS', '#2', 'ACTIONS', '#3', 'INFO', '#1')]
                 self.assertEqual(positions, sorted(positions), context)
                 self.assertIn('1 decision · 1 question · 1 action', text, context)
 
     def test_the_rows_the_unit_test_counts_for_three_kinds_are_the_rows_drawn(self):
         three = [{'id': n, 'title': f'Item number {n}', 'why': 'A reason.', 'kind': kind} for n, kind in ((1, 'info'), (2, 'question'), (3, 'decision'))]
+        three[2]['options'] = ['Ship it', 'Hold']
         body, context = self.draw(three, 40)
 
         self.assert_fits(body, context)
