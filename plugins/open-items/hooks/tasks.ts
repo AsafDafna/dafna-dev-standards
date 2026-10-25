@@ -1,23 +1,30 @@
 import type { Task, TaskKind } from '../types'
 import { ago, oneLine, plural, sizeOf } from './text'
 
-/** Open tasks at once; the next is refused. */
+/** Open decisions, questions and actions at once; the next is refused. */
 export const MAX_OPEN = 5
+/** Open info items at once; the next drops the oldest, since an info item asks nothing. */
+export const MAX_INFO = 5
 export const MAX_TITLE = 80
-/** The longest why or done-when a task keeps, and the pane draws. */
+/** The longest why or done-when an item keeps, and the pane draws. */
 export const MAX_WHY = 300
 export const MAX_OPTION = 60
 /** Answers longer than this are named in a digest, not quoted. */
 const MAX_INLINE_ANSWER = 2000
 
-const KINDS: readonly TaskKind[] = ['do', 'answer', 'choose']
+const KINDS: readonly TaskKind[] = ['decision', 'question', 'action', 'info']
 
-/** Still the user's to act on. */
+/** Still open for the user: any kind, `info` included. */
 export function isActive(task: Task): boolean {
   return task.state === 'open'
 }
 
-/** In the Open items pane: the user's to act on, or acted on and not yet told to Claude. */
+/** Open and asks something of the user: every kind but `info`. */
+export function isAsk(task: Task): boolean {
+  return isActive(task) && task.kind !== 'info'
+}
+
+/** In the Open items pane: open for the user, or acted on and not yet told to Claude. */
 export function isShown(task: Task): boolean {
   return isActive(task) || task.update === 'pending'
 }
@@ -29,7 +36,7 @@ export function sameAsk(a: string, b: string): boolean {
   return norm(a) === norm(b)
 }
 
-export type Ask = Pick<Task, 'title' | 'why' | 'doneWhen' | 'kind' | 'options'>
+export type Ask = Pick<Task, 'title' | 'why' | 'doneWhen' | 'kind' | 'options' | 'recommended'>
 
 /** Reads `add_item`'s arguments, or says what is wrong with them. */
 export function parseAsk(args: Record<string, unknown>): Ask | { error: string } {
@@ -37,7 +44,8 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
   const title = text('title')
   const why = text('why')
   const doneWhen = text('done_when')
-  const kind = args['kind'] ?? 'do'
+  const recommended = text('recommended')
+  const kind = args['kind'] ?? 'action'
 
   if (title === '') {
     return { error: 'title is required: what the user should do, as an imperative.' }
@@ -52,18 +60,22 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
   }
 
   if (!KINDS.includes(kind as TaskKind)) {
-    return { error: 'kind must be "do", "answer" or "choose".' }
+    return { error: 'kind must be "decision", "question", "action" or "info".' }
   }
 
   const raw = Array.isArray(args['options']) ? args['options'] : []
   const options = raw.filter((o): o is string => typeof o === 'string').map(oneLine).filter(o => o !== '')
 
-  if (kind === 'choose' && (options.length < 2 || options.length > 4)) {
-    return { error: 'a choose item needs 2 to 4 options.' }
+  if (kind === 'decision' && (options.length < 2 || options.length > 4)) {
+    return { error: 'a decision needs 2 to 4 options.' }
   }
 
   if (options.some(o => o.length > MAX_OPTION)) {
     return { error: `keep each option under ${MAX_OPTION} characters.` }
+  }
+
+  if (kind === 'decision' && recommended !== '' && !options.includes(recommended)) {
+    return { error: 'recommended must be one of the options, spelled the same.' }
   }
 
   return {
@@ -71,7 +83,8 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
     why: why.slice(0, MAX_WHY),
     ...(doneWhen === '' ? {} : { doneWhen: doneWhen.slice(0, MAX_WHY) }),
     kind: kind as TaskKind,
-    ...(kind === 'choose' ? { options } : {}),
+    ...(kind === 'decision' ? { options } : {}),
+    ...(kind === 'decision' && recommended !== '' ? { recommended } : {}),
   }
 }
 
@@ -91,7 +104,7 @@ function bodyOf(task: Task, isFull: boolean): string {
         return ''
       }
 
-      if (task.kind === 'choose' && task.options?.includes(task.answer)) {
+      if (task.kind === 'decision' && task.options?.includes(task.answer)) {
         return `The user chose: ${task.answer}`
       }
 
@@ -134,7 +147,7 @@ function ownWordsOf(task: Task): string {
         return `${head} Done.`
       }
 
-      if (task.kind === 'choose' && task.options?.includes(task.answer)) {
+      if (task.kind === 'decision' && task.options?.includes(task.answer)) {
         return `${head} I chose "${task.answer}".`
       }
 
@@ -182,7 +195,12 @@ export function listOf(tasks: readonly Task[], nowMs: number): string {
     .map(task => {
       const age = ago(nowMs - task.createdMs)
       const detail = isActive(task)
-        ? [`Why: ${task.why}`, task.doneWhen ? `Done when: ${task.doneWhen}` : '', task.options ? `Options: ${task.options.join(' | ')}` : '']
+        ? [
+            `Why: ${task.why}`,
+            task.doneWhen ? `Done when: ${task.doneWhen}` : '',
+            task.options ? `Options: ${task.options.join(' | ')}` : '',
+            task.recommended ? `Recommended: ${task.recommended}` : '',
+          ]
         : bodyOf(task, true).split('\n')
 
       return [`#${task.id} ${task.state} · added ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail]
@@ -192,31 +210,44 @@ export function listOf(tasks: readonly Task[], nowMs: number): string {
     .join('\n\n')
 }
 
-/** `add_item`'s answer. */
-export function addedOf(task: Task, open: number): string {
+/** `add_item`'s answer; `count` is the open items of the new item's group (info, or the rest). */
+export function addedOf(task: Task, count: number): string {
+  if (task.kind === 'info') {
+    return [
+      `Added item #${task.id}: "${task.title}".`,
+      'The user sees it in their Open items pane, or with /open-items, until they mark it seen. It asks nothing, so no response reaches you.',
+      `Info items: ${count} of ${MAX_INFO}; a sixth drops the oldest.`,
+    ].join(' ')
+  }
+
   return [
     `Added item #${task.id}: "${task.title}".`,
     'The user sees it in their Open items pane, or with /open-items, until they act on it. Their response reaches you as a message, or through list_items.',
     'You can carry on with work that does not depend on it.',
-    `Open items: ${open} of ${MAX_OPEN}.`,
+    `Open items: ${count} of ${MAX_OPEN}.`,
   ].join(' ')
 }
 
-/** The status line under the prompt: the session's open items and responses not sent yet. */
+/** The status line under the prompt: the open items by kind, and responses not sent yet. */
 export function statusOf(shown: readonly Task[]): string | undefined {
   if (shown.length === 0) {
     return undefined
   }
 
+  const counts = KINDS.map(kind => ({ kind, count: shown.filter(task => isActive(task) && task.kind === kind).length })).filter(
+    ({ count }) => count > 0,
+  )
   const { glyph, headline, note } = waitingOf(shown)
+  // "info" keeps its form for any count.
+  const kinds = counts.map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind))).join(' · ')
 
-  return `${glyph}${headline}${note} · /open-items`
+  return `${glyph}${counts.length > 0 ? kinds : headline}${note} · /open-items`
 }
 
 /**
- * What waits on the user among `shown`, as the status line and the pane's
- * head lead with it: `☐ 2 items for you · 1 not sent yet`, or `✓ 1 not sent
- * yet` with no task open, the responses named `noun` where there's room.
+ * What waits on the user among `shown`, as the pane's head leads with it
+ * (the status line takes its glyph and note): `☐ 2 items for you · 1 not sent yet`, or `✓ 1 not sent
+ * yet` with nothing open, the responses named `noun` where there's room.
  */
 export function waitingOf(shown: readonly Task[], noun?: string): { glyph: string; headline: string; note: string } {
   const open = shown.filter(isActive).length

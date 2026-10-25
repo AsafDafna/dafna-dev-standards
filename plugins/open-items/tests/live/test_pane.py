@@ -38,9 +38,9 @@ LONG = 'Rotate the deploy key ' + ' '.join(['and check every runner that holds i
 
 TASKS = [
     {'id': 1, 'title': INSTRUMENTS, 'why': 'I need a trace of the launch to see where the 4 seconds go.', 'doneWhen': 'The .trace file is in ~/traces.'},
-    {'id': 2, 'title': XCODE, 'why': "I can't run Xcode here.", 'kind': 'answer'},
+    {'id': 2, 'title': XCODE, 'why': "I can't run Xcode here.", 'kind': 'question'},
     {'id': 3, 'title': GERMAN, 'why': 'Die Prüfung braucht es.'},
-    {'id': 4, 'title': JAPANESE, 'why': 'The migration drops a column.', 'kind': 'choose', 'options': ['Approve', 'Wait for the freeze to end']},
+    {'id': 4, 'title': JAPANESE, 'why': 'The migration drops a column.', 'kind': 'decision', 'options': ['Approve', 'Wait for the freeze to end']},
 ]
 
 DAY_MS = 86_400_000
@@ -148,10 +148,30 @@ class Pane(unittest.TestCase):
                     self.assertTrue(row.startswith('  ') and not row.startswith('   '), 'a title row out of line\n' + context)
                 self.assertIn(f'{INSTRUMENTS} 3m', joined(title_rows), context)
 
+    def test_a_decision_marks_its_recommended_option_and_an_info_item_has_one_seen_button(self):
+        for columns in (36, 100):
+            with self.subTest(columns=columns):
+                decision = {'id': 1, 'title': 'Ship the feed rewrite this week', 'why': 'It unblocks the mobile release.', 'kind': 'decision', 'options': ['Yes', 'Not yet'], 'recommended': 'Yes'}
+                body, context = self.draw([decision], columns)
+                text = joined(body)
+
+                self.assert_fits(body, context)
+                self.assertIn('1: Yes (recommended)', text, context)
+                self.assertIn('2: Not yet', text, context)
+                self.assertIn('r: Other…', text, context)
+
+                info = {'id': 2, 'title': 'The migration ran clean', 'why': 'The schema is current.', 'kind': 'info'}
+                body, context = self.draw([info], columns)
+                text = joined(body)
+
+                self.assert_fits(body, context)
+                self.assertIn('d: Seen', text, context)
+                self.assertNotIn('Reject', text, context)
+
     def test_emoji_take_the_cells_the_terminal_draws_them_in(self):
         for columns in (36, 100, 110, 200):
             with self.subTest(columns=columns):
-                body, context = self.draw([{'id': 7, 'title': EMOJI, 'why': 'The ⌛ build waits on it.', 'kind': 'answer'}], columns)
+                body, context = self.draw([{'id': 7, 'title': EMOJI, 'why': 'The ⌛ build waits on it.', 'kind': 'question'}], columns)
 
                 self.assert_fits(body, context)
                 self.assertIn(f'#7 {EMOJI} 3m', joined(body), context)
@@ -238,7 +258,7 @@ class TranscriptRow(unittest.TestCase):
             with self.subTest(columns=columns):
                 claude = Claude(ROOT)
                 try:
-                    tool_input = {'title': XCODE, 'why': "I can't run Xcode here.", 'kind': 'answer'}
+                    tool_input = {'title': XCODE, 'why': "I can't run Xcode here.", 'kind': 'question'}
                     screen = claude.transcript(columns, 40, tool_input, name=f'{self._testMethodName}-{columns}')
                 finally:
                     claude.close()

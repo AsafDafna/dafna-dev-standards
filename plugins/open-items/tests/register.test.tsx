@@ -38,21 +38,21 @@ const KEY_TASK = {
   title: 'Add STRIPE_SECRET_KEY to .env',
   why: "The webhook test can't run without it.",
   done_when: "It's in .env. Don't paste it here.",
-  kind: 'do',
+  kind: 'action',
 } as const
 
 const XCODE_TASK = {
   tool: ASSIGN,
   title: 'Run xcodebuild test on your Mac, paste the failures',
   why: "I can't run Xcode here.",
-  kind: 'answer',
+  kind: 'question',
 } as const
 
 const PAGING_TASK = {
   tool: ASSIGN,
   title: 'Pick a pagination strategy for /feed',
   why: 'I lean towards cursor: the feed is append-only.',
-  kind: 'choose',
+  kind: 'decision',
   options: ['Cursor', 'Offset, capped at 10k'],
 } as const
 
@@ -66,7 +66,7 @@ const ROTATE = {
   id: 7,
   title: 'Rotate the leaked token in Vault',
   why: 'It was in a public gist.',
-  kind: 'do',
+  kind: 'action',
   state: 'open',
   update: 'none',
   sessionId: 'session-0',
@@ -365,7 +365,7 @@ describe('assigning', () => {
     expect(String((assigned as { result?: unknown }).result)).toContain('Added item #1')
     expect(world.opens.at(-1)?.id).toBe('open-items')
     expect(world.opens.at(-1)?.focus).toBeUndefined()
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
     expect(await textOf(ui, 'head')).toContain('1 item for you')
     expect(await textOf(ui, 'task-1')).toContain("The webhook test can't run without it.")
     expect(await textOf(ui, 'task-1')).toContain('Done when:')
@@ -382,7 +382,7 @@ describe('assigning', () => {
     await $.tool.call(KEY_TASK)
 
     expect(world.toasts[0]).toBe('Claude added an item for you: Add STRIPE_SECRET_KEY to .env. See /open-items')
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
   test('the same ask twice is one task, and a sixth open task is refused', async ($, on) => {
@@ -457,7 +457,7 @@ const XCODE_LONG = {
   sessionId: 'session-1',
   title: 'Run xcodebuild test on your Mac and paste every failure you see here please',
   why: "I can't run Xcode here.",
-  kind: 'answer',
+  kind: 'question',
   createdMs: NOW - 180_000,
 } as const
 
@@ -1186,7 +1186,7 @@ describe('the pane and /open-items', () => {
     await ui.press({ key: 'hide' })
 
     expect(world.isPaneOpen).toBe(false)
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
   })
 })
 
@@ -1541,7 +1541,7 @@ describe('responding', () => {
     await clock.settle()
 
     expect(world.submitted).toHaveLength(0)
-    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
 
     const next = await $.prompt.submit(typed('now the cart'))
 
@@ -1569,13 +1569,13 @@ describe('responding', () => {
     expect(blocked.drop).toBe('Blocked by your organization.')
     // The engine shows why the prompt didn't enter; the answer waits, as it did.
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
 
     world.refusingTyped = undefined
     const next = await $.prompt.submit(typed('now the cart'))
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
   test('a saved answer that a hook beneath takes out of a typed prompt waits for the next one, and a toast says so', async ($, on) => {
@@ -1597,7 +1597,7 @@ describe('responding', () => {
 
     expect(stripped.context).toBeUndefined()
     expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
 
     world.isStripping = false
     const next = await $.prompt.submit(typed('now the cart'))
@@ -1623,7 +1623,7 @@ describe('responding', () => {
     const stripped = await $.prompt.submit(typed('Earlier you wrote "#1 done: Run xcodebuild test on your Mac, paste the failures." Why?'))
 
     expect(stripped.context).toBeUndefined()
-    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
   })
 
   test('a saved answer that a hook beneath rewrites as it rides a typed prompt reaches Claude', async ($, on) => {
@@ -1645,7 +1645,7 @@ describe('responding', () => {
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed with token ******')
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
   test('of two saved answers riding a typed prompt, the one a hook beneath takes out waits for the next', async ($, on) => {
@@ -1671,7 +1671,7 @@ describe('responding', () => {
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
     expect(next.context?.[0]).not.toContain('#2 ')
     expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #2: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
 
     world.rewriting = undefined
     const again = await $.prompt.submit(typed('and the docs'))
@@ -1733,7 +1733,7 @@ describe('responding', () => {
 
     expect(world.toasts.at(-1)).toContain("Claude didn't get your response to #1: no implementation for prompt.submit")
     expect(world.toasts.at(-1)).toContain("It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('☐ 1 item for you · 1 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
 
     world.isTypedFailing = false
     world.isStoreFailing = false
@@ -1806,7 +1806,7 @@ describe('responding', () => {
 
     expect(typedMeanwhile.context).toBeUndefined()
     expect(world.appended.filter(row => row.type === 'user')).toHaveLength(1)
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
   test('Send now that the running turn refuses goes the moment the turn ends', async ($, on) => {
@@ -2043,7 +2043,7 @@ describe('responding', () => {
 
     expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved.")
     expect(world.submitted).toEqual([])
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 question · /open-items')
   })
 
   test('Save for later with nothing typed asks for an answer, or, pressed as Claude withdraws its task, says the task is gone', async ($, on) => {
@@ -2492,7 +2492,7 @@ describe('saving', () => {
   }
 
   test('restores open items and unsent answers when the same session starts again', async ($, on) => {
-    const choose = { ...MINE, id: 1, title: PAGING_TASK.title, why: PAGING_TASK.why, kind: 'choose', options: PAGING_TASK.options }
+    const choose = { ...MINE, id: 1, title: PAGING_TASK.title, why: PAGING_TASK.why, kind: 'decision', options: PAGING_TASK.options }
     const answered = { ...MINE, id: 2, state: 'done', update: 'pending' }
     const { world } = seat(on, { 'session:session-1': { tasks: [choose, answered], nextId: 3, savedMs: NOW } })
     await start($)
@@ -2573,7 +2573,7 @@ describe('saving', () => {
     await $.tool.call(XCODE_TASK)
     await start($)
 
-    expect(world.status).toBe('☐ 2 items for you · /open-items')
+    expect(world.status).toBe('☐ 1 question · 1 action · /open-items')
   })
 
   test('a stuck store holds a tool call 5 s at most', async ($, on) => {
@@ -2726,7 +2726,7 @@ describe('saving', () => {
       await clock.advance(5000)
 
       expect(String((added as { result?: unknown }).result)).toContain('Added item #1')
-      expect(world.status).toBe('☐ 1 item for you · /open-items')
+      expect(world.status).toBe('☐ 1 question · /open-items')
       expect(world.store).toEqual({ 'session:session-1': saved })
     })
   }
@@ -2798,7 +2798,7 @@ describe('saving', () => {
     await clock.advance(1)
 
     const ui = await $.ui.mount(PANE)
-    expect(world.status).toBe('☐ 1 item for you · /open-items')
+    expect(world.status).toBe('☐ 1 action · /open-items')
     expect(world.isPaneOpen).toBe(true)
     expect(await textOf(ui, 'task-7')).toContain(ROTATE.title)
     expect(await textOf(ui, 'task-1')).toBe('')
@@ -2879,7 +2879,7 @@ describe('the README example', () => {
       title: 'Add STRIPE_SECRET_KEY to .env',
       why: "The integration tests run against Stripe's test mode and need it.",
       done_when: "It's in .env. Don't paste it here.",
-      kind: 'do',
+      kind: 'action',
     })
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'done' })
@@ -2889,7 +2889,7 @@ describe('the README example', () => {
       tool: ASSIGN,
       title: 'Decide whether to make the repo public',
       why: 'npm will link to it, and its whole git history becomes public. I found no secrets in it.',
-      kind: 'choose',
+      kind: 'decision',
       options: ['Make it public', 'Keep it private'],
     })
     await ui.press({ key: 'option-1' })
@@ -2898,9 +2898,9 @@ describe('the README example', () => {
       tool: ASSIGN,
       title: "Choose the package's name on npm",
       why: 'stripe-webhooks is taken. The name goes in package.json and the README.',
-      kind: 'answer',
+      kind: 'question',
     })
-    expect(world.status).toBe('☐ 1 item for you · 2 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 question · 2 not sent yet · /open-items')
     await clock.advance(1000)
     expect(world.submitted).toHaveLength(0)
 
@@ -2974,5 +2974,198 @@ describe('knowing whether Claude works', () => {
 
     expect(world.submitted).toHaveLength(1)
     expect(await band.find({ key: 'engine' })).toBeDefined()
+  })
+})
+
+describe('the four kinds', () => {
+  const DECISION = {
+    tool: ASSIGN,
+    title: 'Ship the feed rewrite this week',
+    why: 'It unblocks the mobile release.',
+    kind: 'decision',
+    options: ['Yes', 'Not yet'],
+    recommended: 'Yes',
+  } as const
+
+  const INFO = { tool: ASSIGN, title: 'The migration ran clean', why: 'Nothing for you to do; the schema is current.', kind: 'info' } as const
+
+  const resultOf = (call: unknown) => call as { result?: string; deny?: string }
+
+  test('a decision shows its options, the recommended one marked', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+
+    const labelOf = async (key: string) => {
+      const button = await ui.find({ type: 'Button', key })
+
+      return `${button?.props.hotkey}: ${button?.props.label}`
+    }
+
+    expect(await labelOf('option-1')).toBe('1: Yes (recommended)')
+    expect(await labelOf('option-2')).toBe('2: Not yet')
+    expect(await labelOf('answer')).toBe('r: Other…')
+  })
+
+  test('a recommended value that is not an option is refused', async ($, on) => {
+    seat(on)
+    await start($)
+
+    const refused = resultOf(await $.tool.call({ ...DECISION, recommended: 'Maybe' }))
+
+    expect(refused.deny).toContain('recommended')
+  })
+
+  test('choosing the recommended option answers with the plain option', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'option-1' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Ship the feed rewrite this week: I chose "Yes".'])
+  })
+
+  test('an info item has one Seen button and sends nothing to Claude', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(INFO)
+    const ui = await $.ui.mount(PANE)
+
+    const seen = await ui.find({ type: 'Button', key: 'seen' })
+    expect([seen?.props.hotkey, seen?.props.label]).toEqual(['d', 'Seen'])
+    expect(await ui.find({ type: 'Button', key: 'reject' })).toBeUndefined()
+    await ui.press({ key: 'seen' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([])
+    expect(world.appended).toEqual([])
+    expect(world.status).toBeUndefined()
+    expect(world.isPaneOpen).toBe(false)
+  })
+
+  test('info items do not count toward the cap of 5 asks', async ($, on) => {
+    seat(on)
+    await start($)
+
+    for (const n of [1, 2, 3, 4, 5]) {
+      expect(resultOf(await $.tool.call({ ...INFO, title: `Note number ${n}` })).result).toContain('Added item')
+      expect(resultOf(await $.tool.call({ ...XCODE_TASK, title: `Question number ${n}` })).result).toContain('Added item')
+    }
+
+    expect(resultOf(await $.tool.call({ ...XCODE_TASK, title: 'Question number 6' })).deny).toContain('already has 5 open items')
+  })
+
+  test('a sixth info item drops the oldest', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      await $.tool.call({ ...INFO, title: `Note number ${n}` })
+    }
+
+    const ui = await $.ui.mount(PANE)
+
+    expect(await ui.find({ key: 'task-1' })).toBeUndefined()
+    expect(await textOf(ui, 'task-2')).toContain('Note number 2')
+    expect(await textOf(ui, 'task-6')).toContain('Note number 6')
+    expect(world.status).toBe('☐ 5 info · /open-items')
+  })
+
+  test('an unseen info item does not hold back saved answers at turn end', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(INFO)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
+    await clock.advance(1000)
+    expect(world.submitted).toHaveLength(0)
+
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+
+    expect(world.submitted).toHaveLength(1)
+    expect(world.submitted[0]).toContain('LoginTests.testExpiredToken failed')
+    expect(world.submitted[0]).not.toContain('migration')
+  })
+
+  test('an info item stays out of the context Claude reads', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(INFO)
+    await $.tool.call(XCODE_TASK)
+    const context = await $.prompt.context({ blocks: [] })
+
+    const text = JSON.stringify(context)
+    expect(text).toContain('Run xcodebuild test')
+    expect(text).not.toContain('The migration ran clean')
+  })
+
+  test('the status line counts by kind', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    await $.tool.call({ ...XCODE_TASK, title: 'First question' })
+    await $.tool.call({ ...XCODE_TASK, title: 'Second question' })
+    await $.tool.call(INFO)
+    await $.tool.call({ ...INFO, title: 'Another note' })
+
+    expect(world.status).toBe('☐ 1 decision · 2 questions · 2 info · /open-items')
+
+    await $.tool.call(KEY_TASK)
+
+    expect(world.status).toBe('☐ 1 decision · 2 questions · 1 action · 2 info · /open-items')
+  })
+
+  test('withdrawn with "answered in chat" leaves the pane', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'answered in chat' })
+
+    expect(world.isPaneOpen).toBe(false)
+    expect(world.status).toBeUndefined()
+    expect(world.toasts.at(-1)).toContain('answered in chat')
+  })
+
+  test('a resumed decision with a recommended option comes back', async ($, on) => {
+    const decision = {
+      ...ROTATE,
+      id: 1,
+      sessionId: 'session-1',
+      title: DECISION.title,
+      why: DECISION.why,
+      kind: 'decision',
+      options: DECISION.options,
+      recommended: 'Yes',
+    }
+    const { world } = seat(on, earlier([decision]))
+    await start($)
+    const ui = await $.ui.mount(PANE)
+
+    expect(world.status).toBe('☐ 1 decision · /open-items')
+    expect((await ui.find({ type: 'Button', key: 'option-1' }))?.props.label).toBe('Yes (recommended)')
+  })
+
+  test('a seen info item is not brought back by a resumed session', async ($, on) => {
+    const seen = { ...ROTATE, id: 1, sessionId: 'session-1', kind: 'info', state: 'seen' }
+    const { world } = seat(on, earlier([seen]))
+    await start($)
+
+    expect(world.status).toBeUndefined()
   })
 })

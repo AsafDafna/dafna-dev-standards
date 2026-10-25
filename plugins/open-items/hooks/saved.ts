@@ -5,6 +5,10 @@ export const KEEP_MS = 30 * 24 * 60 * 60_000
 
 const PREFIX = 'session:'
 
+const KINDS: readonly string[] = ['decision', 'question', 'action', 'info']
+const STATES: readonly string[] = ['open', 'done', 'rejected', 'withdrawn', 'seen']
+const UPDATES: readonly string[] = ['none', 'pending', 'delivered']
+
 /**
  * What a session keeps in the store under its own key: its shown items only,
  * as one JSON file of 4 MiB holds every session's key.
@@ -28,8 +32,11 @@ export function isTask(value: unknown): value is Task {
     task !== null &&
     typeof task === 'object' &&
     ['id', 'createdMs', 'updatedMs'].every(key => typeof task[key] === 'number') &&
-    ['title', 'why', 'kind', 'state', 'update', 'sessionId'].every(isText) &&
-    ['doneWhen', 'answer', 'reason'].every(key => task[key] === undefined || isText(key)) &&
+    ['title', 'why', 'sessionId'].every(isText) &&
+    KINDS.includes(task['kind'] as string) &&
+    STATES.includes(task['state'] as string) &&
+    UPDATES.includes(task['update'] as string) &&
+    ['doneWhen', 'answer', 'reason', 'recommended'].every(key => task[key] === undefined || isText(key)) &&
     (options === undefined || (Array.isArray(options) && options.every(option => typeof option === 'string')))
   )
 }

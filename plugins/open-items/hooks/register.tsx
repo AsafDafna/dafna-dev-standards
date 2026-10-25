@@ -3,6 +3,7 @@ import type { EngineInterface, PromptSubmitResult, Register, RenderElement, Rend
 
 import type { Editing, Task } from '../types'
 import {
+  MAX_INFO,
   MAX_OPEN,
   MAX_TITLE,
   answerIn,
@@ -11,6 +12,7 @@ import {
   contextOf,
   digestOf,
   isActive,
+  isAsk,
   isShown,
   listOf,
   looksSecret,
@@ -122,6 +124,7 @@ const TOOLS: readonly ToolSpec[] = [
       'An item does not block: you keep working while it waits, and the response reaches you whenever the user gets to it, so it suits anything you need from them at some point in the session.',
       'AskUserQuestion is the blocking kind: it waits for the answer, so it suits what you need before you can go on.',
       'One item per need: list_items shows what is already open.',
+      'Use kind info for something the user should see that asks nothing of them; it sends you no response. For a decision, mark the option you suggest with recommended.',
       'Write the title as an imperative the user can act on without scrolling back.',
       'For a secret, ask the user to put it where it belongs and mark the item done, rather than paste it.',
       'The user sees open items in their Open items pane, or opens it with /open-items.',
@@ -140,19 +143,24 @@ const TOOLS: readonly ToolSpec[] = [
         },
         done_when: {
           type: 'string',
-          description: "Optional: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
+          description: "Optional, for action only: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
         },
         kind: {
           type: 'string',
-          enum: ['do', 'answer', 'choose'],
-          description: 'do: the user does something and marks it done. answer: you need their words (an error, a log, test results). choose: they pick one of options.',
+          enum: ['decision', 'question', 'action', 'info'],
+          description:
+            'decision: they pick one of options. question: you need their words (an error, a log, test results). action: the user does something and marks it done. info: something for them to see; it asks nothing and sends you no response.',
         },
         options: {
           type: 'array',
           items: { type: 'string' },
           minItems: 2,
           maxItems: 4,
-          description: 'For choose only: 2 to 4 short options.',
+          description: 'For decision only: 2 to 4 short options.',
+        },
+        recommended: {
+          type: 'string',
+          description: 'For decision only: the option you suggest, spelled exactly as in options.',
         },
       },
       required: ['title', 'why', 'kind'],
@@ -363,7 +371,10 @@ export const register: Register = on => {
       return { result: `Item #${same.id} already asks the user for this ("${same.title}"); nothing new was added.` }
     }
 
-    if (active.length >= MAX_OPEN) {
+    const isInfo = ask.kind === 'info'
+    const group = active.filter(task => (task.kind === 'info') === isInfo)
+
+    if (!isInfo && group.length >= MAX_OPEN) {
       return {
         deny: `The user already has ${MAX_OPEN} open items. Withdraw one you no longer need, or wait for them to act (list_items shows them).`,
       }
@@ -381,14 +392,21 @@ export const register: Register = on => {
       updatedMs: nowMs,
     }
 
-    await change($, list => [...list, task])
+    const dropped = isInfo ? group.slice(0, Math.max(0, group.length + 1 - MAX_INFO)) : []
+
+    await change($, list => [
+      ...list.map(one => (dropped.some(old => old.id === one.id) ? { ...one, state: 'seen' as const, updatedMs: nowMs } : one)),
+      task,
+    ])
+    await Promise.all(dropped.map(old => settle($, old.id)))
+    await reselect($)
     await update($, selectedId, chosen => chosen ?? id)
 
     if (!(await show($, false))) {
       $.ui.toast(`Claude added an item for you: ${printable(task.title, MAX_TITLE)}. See /open-items`)
     }
 
-    return { result: addedOf(task, active.length + 1) }
+    return { result: addedOf(task, Math.min(group.length + 1, isInfo ? MAX_INFO : MAX_OPEN)) }
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
@@ -498,7 +516,7 @@ export const register: Register = on => {
       // task is still open: then they go with that last answer, together.
       // One a prompt entered without goes with them, but sends nothing alone.
       const all = await read($, tasks)
-      const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isActive)
+      const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isAsk)
 
       if (live.isSendingAtEnd || isAllAnswered) {
         live.isSendingAtEnd = false
@@ -558,7 +576,7 @@ export const register: Register = on => {
       isAnswered = was !== undefined && isActive(was)
 
       if (isAnswered && e.turnId !== undefined) {
-        const when = (await read($, tasks)).some(isActive) ? 'with your other answers' : 'when this turn ends'
+        const when = (await read($, tasks)).some(isAsk) ? 'with your other answers' : 'when this turn ends'
 
         return {
           drop: `Saved as your answer to #${task.id}. Claude gets it ${when}, or press Send now in /open-items.`,
@@ -604,7 +622,7 @@ export const register: Register = on => {
 
   on('prompt.context', async ($, e, next) => {
     const result = await next(e)
-    const shown = (await read($, tasks)).filter(isShown)
+    const shown = (await read($, tasks)).filter(task => isShown(task) && task.kind !== 'info')
 
     if (shown.length === 0) {
       return result
@@ -753,6 +771,10 @@ export const register: Register = on => {
             onPress={() => {
               if (action.option !== undefined) {
                 return respond($, task.id, { state: 'done', answer: action.option }, 'auto')
+              }
+
+              if (action.key === 'seen') {
+                return markSeen($, task.id)
               }
 
               if (action.key === 'done') {
@@ -1640,6 +1662,14 @@ async function answerTyped($: EngineInterface, id: number, how: How) {
   const key = fieldKeyOf({ id, field: 'answer' })
 
   return answer($, id, live.drafts.get(key) ?? live.closed.get(key) ?? '', how)
+}
+
+/** The user looked at info item `id`: it leaves the pane, and Claude hears nothing. */
+async function markSeen($: EngineInterface, id: number) {
+  if (await edit($, id, task => ({ ...task, state: 'seen' }))) {
+    await settle($, id)
+    await reselect($)
+  }
 }
 
 /** Whether task `id` is open now: one closed meanwhile, or gone, takes no answer. */

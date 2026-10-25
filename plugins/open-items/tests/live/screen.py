@@ -166,7 +166,7 @@ class Claude:
                 {
                     'state': 'open',
                     'update': 'none',
-                    'kind': 'do',
+                    'kind': 'action',
                     'sessionId': self.session_id,
                     'createdMs': now_ms - task.get('ageMs', 180_000),
                     'updatedMs': now_ms - task.get('ageMs', 180_000),

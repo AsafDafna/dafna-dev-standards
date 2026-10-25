@@ -1,5 +1,5 @@
 import type { Editing, Task } from '../types'
-import { MAX_OPTION, MAX_WHY, isActive, waitingOf } from './tasks'
+import { MAX_OPTION, MAX_WHY, isActive, isAsk, waitingOf } from './tasks'
 import { ago, cellsOf, clip, printable, rowsOf } from './text'
 
 /**
@@ -79,14 +79,23 @@ export function savedOf(task: Task): string {
 
 /** The selected task's buttons, as `hotkey` and `label`. */
 export function actionsOf(task: Task, canType: boolean): { key: string; hotkey: string; label: string; option?: string }[] {
+  if (task.kind === 'info') {
+    return [{ key: 'seen', hotkey: 'd', label: 'Seen' }]
+  }
+
   const choices =
-    task.kind === 'choose' && task.options !== undefined
-      ? task.options.map((option, i) => ({ key: `option-${i + 1}`, hotkey: String(i + 1), label: printable(option, MAX_OPTION), option }))
+    task.kind === 'decision' && task.options !== undefined
+      ? task.options.map((option, i) => ({
+          key: `option-${i + 1}`,
+          hotkey: String(i + 1),
+          label: `${printable(option, MAX_OPTION)}${option === task.recommended ? ' (recommended)' : ''}`,
+          option,
+        }))
       : [{ key: 'done', hotkey: 'd', label: 'Done' }]
 
   const typed = canType
     ? [
-        { key: 'answer', hotkey: 'r', label: task.kind === 'choose' ? 'Other…' : 'Answer…' },
+        { key: 'answer', hotkey: 'r', label: task.kind === 'decision' ? 'Other…' : 'Answer…' },
         { key: 'reject', hotkey: 'x', label: 'Reject…' },
       ]
     : [{ key: 'reject', hotkey: 'x', label: 'Reject' }]
@@ -106,7 +115,7 @@ export function answerPlaceholderOf(view: PaneView): string {
     return 'Enter sends it to Claude'
   }
 
-  return view.shown.filter(isActive).length > 1
+  return view.shown.filter(isAsk).length > 1
     ? 'Enter saves it; Claude gets it with your other answers'
     : 'Enter saves it; Claude gets it when this turn ends'
 }

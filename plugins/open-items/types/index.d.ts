@@ -1,14 +1,16 @@
 /**
- * What Claude needs from the user: something done (`do`), an answer in
- * their own words (`answer`), or one of a few options (`choose`).
+ * What Claude needs from the user: one of a few options (`decision`), an
+ * answer in their own words (`question`), something done (`action`), or
+ * nothing but a look (`info`).
  */
-export type TaskKind = 'do' | 'answer' | 'choose'
+export type TaskKind = 'decision' | 'question' | 'action' | 'info'
 
 /**
- * Where a task stands: waiting for the user (`open`), fulfilled (`done`),
- * turned down (`rejected`), or taken back by Claude (`withdrawn`).
+ * Where an item stands: waiting for the user (`open`), fulfilled (`done`),
+ * turned down (`rejected`), taken back by Claude (`withdrawn`), or looked at
+ * (`seen`, an `info` item only).
  */
-export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn'
+export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn' | 'seen'
 
 /**
  * Whether Claude has heard of the user's latest move on the task: nothing
@@ -25,6 +27,8 @@ export type Task = {
   doneWhen?: string
   kind: TaskKind
   options?: readonly string[]
+  /** One of `options`, the one Claude suggests. */
+  recommended?: string
   state: TaskState
   /** The user's answer, or the option they chose. */
   answer?: string
