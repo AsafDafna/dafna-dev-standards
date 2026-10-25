@@ -18,7 +18,7 @@ export type TaskUpdate = 'none' | 'pending' | 'delivered'
 
 /** A task Claude gave the user. */
 export type Task = {
-  /** Counts up per project: #1, #2, … */
+  /** Counts up per session: #1, #2, … */
   id: number
   title: string
   why: string
@@ -31,24 +31,11 @@ export type Task = {
   /** Why the user rejected it, or why Claude withdrew it. */
   reason?: string
   update: TaskUpdate
-  /** The session that assigned it. */
+  /** The session that added it. */
   sessionId: string
   createdMs: number
   updatedMs: number
 }
-
-/**
- * A task as the session that held it numbered it, and when it was assigned:
- * where two sessions drew one number, that tells their tasks apart.
- */
-export type TaskRef = { id: number; createdMs: number }
-
-/**
- * The tasks one session took on from another that had ended or gone quiet,
- * as that session numbered them, and when. `isEnded`: it had ended, so it
- * won't come back for them.
- */
-export type Took = { tasks: readonly TaskRef[]; atMs: number; isEnded?: boolean }
 
 /**
  * The selected task's field, when the pane shows one in place of its
@@ -66,11 +53,8 @@ declare module 'claude-code' {
     'open-items': {
       tasks: readonly Task[]
       nextId: number
-      /** The tasks this session took on from others, by their session id. */
-      took: Readonly<Record<string, Took>>
       selectedId: number | null
       editing: Editing | null
-      loadedFor: string | null
       /** The session whose saved key the state was read from: a reload of the code finds it read. */
       restoredFor: string | null
       isWorking: boolean

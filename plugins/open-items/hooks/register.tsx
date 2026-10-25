@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
-import type { Editing, Task, Took } from '../types'
+import type { Editing, Task } from '../types'
 import {
   MAX_OPEN,
   MAX_TITLE,
@@ -48,24 +48,6 @@ import {
   whyOf,
 } from './pane'
 import type { PaneView } from './pane'
-import {
-  HEARTBEAT_MS,
-  adopt,
-  editedLegacy,
-  elsewhereIn,
-  floorOf,
-  hasLegacyPeer,
-  isEmptyEdit,
-  isSameTask,
-  isSlot,
-  isTakenFrom,
-  keysOf,
-  legacyOf,
-  projectOf,
-  prune,
-  withSlots,
-} from './project'
-import type { Adoption, LegacyEdit, Project, Slot } from './project'
 import { isExpired, isSavedKey, keyOf, savedIn } from './saved'
 import type { Saved } from './saved'
 import { numbersOf, oneLine, printable } from './text'
@@ -94,9 +76,6 @@ const BATCH_MS = 800
 
 /** The longest a person, or Claude, waits on the store: what it doesn't answer by then finishes on its own. */
 const STORE_WAIT_MS = 5000
-
-/** What a tool answers while the session moves to another folder, before it has read that folder's items. */
-const MOVING = 'This session is still joining its project: the item store is slow to answer. Try again in a moment.'
 
 /** What a tool answers while the session's saved items are still being read at its start. */
 const LOADING = "Open items is still loading this session's items. Try again in a moment."
@@ -206,10 +185,8 @@ const TOOLS: readonly ToolSpec[] = [
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, [] as readonly Task[])
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, 1)
-const took = atom({ plugin: 'open-items', key: 'took' } as const, {} as Readonly<Record<string, Took>>)
 const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, null as number | null)
 const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
-const loadedFor = atom({ plugin: 'open-items', key: 'loadedFor' } as const, null as string | null)
 const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
 const isWorking = atom({ plugin: 'open-items', key: 'isWorking' } as const, false)
 /** The remote clients attached, by surface, as the state's contract declares them. */
@@ -235,19 +212,9 @@ type DropNote = 'why' | 'kept' | 'nothing'
 /** A prompt as it entered: its words, and the blocks that go beside them. */
 type Entered = { text: string; context?: readonly string[] }
 
-/**
- * What a sync changed of what the session shows: nothing (`same`), the tasks
- * another session took on (`lost`), or everything, taking the project on
- * (`joined`).
- */
-type Synced = 'same' | 'lost' | 'joined'
-
 /** What the module tracks beside `$.state`; a hot reload starts it over. */
 const live = {
   sessionId: '',
-  root: '',
-  /** The folder the latest join is for, set as it is asked: `root` follows in queue order. */
-  joinRoot: '',
   /** A Send now row joined the running turn and no step has read it yet. */
   isUnread: false,
   /** A Send now the running turn could not take: it goes once the turn ends. */
@@ -268,30 +235,14 @@ const live = {
    */
   drawn: new Map<RenderSurface, Map<string, string>>(),
   batch: null as Timer | null,
-  /** Says in the project's store that this session is alive. */
-  heartbeat: null as Timer | null,
-  /** Tasks waiting in the project's other live sessions. */
-  elsewhere: 0,
-  /** The project's next task number at its last reading. */
-  floor: 1,
-  /** A 0.1.4 session was alive in the project at its last reading. */
-  hasLegacyPeer: false,
-  /** The session has a slot in the project's store: it writes it, its count in it, until it ends. */
-  hasSlot: false,
-  /** When the session's slot was last written. */
-  writtenMs: 0,
-  /** When the session last read the project. */
-  readMs: 0,
-  /** Set once the session ended: its slot says so from then on. */
-  endedMs: undefined as number | undefined,
-  /** How many sessions of the process have ended: one that ends before its join comes up in the queue stays ended. */
+  /** How many sessions of the process have ended: a start read that lands after its session ended opens no pane. */
   ends: 0,
   /** Responses a prompt entered without, by `updateKeyOf`: they go with Send now, the next prompt or another response, never alone as a turn ends. */
   held: new Set<string>(),
-  /** Joins into another folder not done yet: until then the tasks the process holds are the folder's it leaves. */
-  moving: 0,
-  /** Start reads of the session's saved items not settled yet: until then the tools refuse, as the read replaces the items. */
-  restoring: 0,
+  /** The session whose saved items are being read at its start: until the read settles, the tools refuse, as it replaces the items. */
+  loading: null as string | null,
+  /** The session whose start read failed: a write reads its key first, and writes only where none is saved. */
+  unread: null as string | null,
   /** The store work asked for and not yet done: each piece waits for the one before. */
   queue: Promise.resolve() as Promise<unknown>,
   /** Store work a wait gave up on, not settled yet: while there is any, nothing waits on the store. */
@@ -338,47 +289,35 @@ export const register: Register = on => {
     }
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
-    await join($)
     await restore($)
 
     return next(e)
   })
 
-  // An ended session's tasks wait in the store for the next session in the
-  // project. After /clear or a resume the process goes on as another session
-  // with no session.start, so it joins the project again here.
+  // Every change already saved the session's key: the end writes it once
+  // more, for a change whose write failed. The exit's budget is short, and
+  // the end waits for the write only through half of what is left.
   on('session.end', async ($, e, next) => {
-    live.heartbeat?.cancel()
-    live.heartbeat = null
-    live.endedMs = await $.clock.now()
     live.ends += 1
-    const ends = live.ends
-
-    // The slot marked ended and the session's key, a write each and no read,
-    // once the store work in flight is done; a session that never read the
-    // project reads it first. The exit's budget is short, and the end waits
-    // for the writes only through half of what is left: a slot not written
-    // by then goes stale, and the next session takes it on then. A process
-    // that goes on makes the writes all the same, before it joins again.
-    const written = Promise.allSettled([queued(async () => ((await isLoaded($)) ? writeOwn($) : load($))), persist($)])
+    const written = persist($).catch(() => undefined)
     const leftMs = next.budget.remainingMs
 
     await (Number.isFinite(leftMs) ? Promise.race([written, $.clock.sleep(leftMs / 2)]) : written)
 
     const ended = await next(e)
 
-    if (e.reason === 'clear' || e.reason === 'resume') {
-      // With the count as this session ended: the next one, ending before
-      // the join runs, stays ended.
-      $.clock.after(0, () => void join($, ends))
+    // After /clear or a resume the process goes on as another session, with
+    // no session.start; the engine names it only once this hook is done.
+    if (e.reason === 'clear') {
+      $.clock.after(0, () => void startCleared($))
+    } else if (e.reason === 'resume') {
+      $.clock.after(0, () => void startResumed($))
     }
 
     return ended
   })
 
   on('command.run', { command: 'open-items' }, async $ => {
-    await wake($)
-
     if ((await read($, tasks)).filter(isShown).length === 0) {
       return { text: 'No items for you right now.' }
     }
@@ -406,25 +345,9 @@ export const register: Register = on => {
       return { deny: ask.error }
     }
 
-    // Resumed into another folder, the session takes it on once the store
-    // work in flight is done and it has read it. An item added before then
-    // is the old folder's: the join drops it here, and the old session's end
-    // write may leave it there.
-    if (live.moving > 0) {
-      return { deny: MOVING }
-    }
-
-    if (live.restoring > 0) {
+    if (live.loading !== null) {
       return { deny: LOADING }
     }
-
-    // Task numbers count per project, across its sessions: the next is past
-    // every number a session there drew, which each slot carries, so this
-    // reads the project first (and lets go of tasks taken on while the
-    // session slept). Two sessions assigning at the same moment can still
-    // draw one number; each shows and answers only its own, and where their
-    // tasks meet (one taking on the other's), `adopt` gives the later a new one.
-    await beat($, false)
 
     const active = (await read($, tasks)).filter(isActive)
     const same = active.find(task => sameAsk(task.title, ask.title))
@@ -439,26 +362,19 @@ export const register: Register = on => {
       }
     }
 
-    const id = (await update($, nextId, n => Math.max(n, live.floor) + 1)) - 1
+    const id = (await update($, nextId, n => n + 1)) - 1
     const nowMs = await $.clock.now()
     const task: Task = {
       id,
       ...ask,
       state: 'open',
       update: 'none',
-      // The conversation's own: until it joins the project (a store slow
-      // after /clear), the process still acts for the one it left.
       sessionId: await $.session.id(),
       createdMs: nowMs,
       updatedMs: nowMs,
     }
 
     await change($, list => [...list, task])
-
-    if (live.hasLegacyPeer) {
-      await awaited($, queued(() => editLegacy($, { removed: [], taken: {} })))
-    }
-
     await update($, selectedId, chosen => chosen ?? id)
 
     if (!(await show($, false))) {
@@ -469,15 +385,10 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
-    if (live.moving > 0) {
-      return { deny: MOVING }
-    }
-
-    if (live.restoring > 0) {
+    if (live.loading !== null) {
       return { deny: LOADING }
     }
 
-    await wake($)
     const args = e as unknown as Record<string, unknown>
     const id = typeof args['id'] === 'number' ? args['id'] : undefined
     const scope = args['show'] === 'open' || args['show'] === 'all' ? args['show'] : 'updates'
@@ -510,15 +421,10 @@ export const register: Register = on => {
       return { deny: 'Only the main agent withdraws items.' }
     }
 
-    if (live.moving > 0) {
-      return { deny: MOVING }
-    }
-
-    if (live.restoring > 0) {
+    if (live.loading !== null) {
       return { deny: LOADING }
     }
 
-    await wake($)
     const args = e as unknown as Record<string, unknown>
     const id = args['id']
     const reason = typeof args['reason'] === 'string' ? oneLine(args['reason']) : ''
@@ -615,11 +521,10 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if ((e.origin.kind === 'plugin' && e.origin.name === PLUGIN) || live.moving > 0) {
+    if (e.origin.kind === 'plugin' && e.origin.name === PLUGIN) {
       return next(e)
     }
 
-    await wake($)
     const bridged = answerIn(e.text)
     const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isActive(one))
     let isAnswered = false
@@ -655,9 +560,9 @@ export const register: Register = on => {
     }
 
     const due = await claim($)
-    // A task still here has its answer in this prompt, or in another send
-    // that took it as it was saved. One gone meanwhile (another session took
-    // it on) leaves the prompt as typed.
+    // An item still here has its answer in this prompt, or in another send
+    // that took it as it was saved. One gone meanwhile (a /clear) leaves the
+    // prompt as typed.
     const isAnswer = isAnswered && task !== undefined && (await read($, tasks)).some(one => one.id === task.id)
 
     if (isAnswer && due.length === 0) {
@@ -676,7 +581,7 @@ export const register: Register = on => {
   })
 
   // Read at a conversation's start and again after a compaction: what is
-  // still with the user, so Claude neither forgets nor assigns it twice.
+  // still with the user, so Claude neither forgets nor adds it twice.
   // Added last, on the session's side of the cache boundary, wherever the
   // tool can be reached: offered outright, or found through ToolSearch.
   on('prompt.compose', async ($, e, next) => {
@@ -694,11 +599,11 @@ export const register: Register = on => {
     const result = await next(e)
     const shown = (await read($, tasks)).filter(isShown)
 
-    if (shown.length === 0 || live.moving > 0) {
+    if (shown.length === 0) {
       return result
     }
 
-    return { ...result, blocks: [...result.blocks, { name: 'openItems', text: contextOf(shown, await $.session.id()) }] }
+    return { ...result, blocks: [...result.blocks, { name: 'openItems', text: contextOf(shown) }] }
   })
 
   on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {
@@ -1022,96 +927,31 @@ async function syncWorking($: EngineInterface) {
   await update($, isWorking, () => now)
 }
 
-/**
- * Joins the project as this session: takes on its tasks, the store's slot
- * kept alive by a heartbeat, the status line and, for tasks taken on from an
- * earlier session, the pane.
- */
-async function join($: EngineInterface, ends = live.ends) {
+/** Goes on as the session /clear started: it has no saved items to read. */
+async function startCleared($: EngineInterface) {
   const sessionId = await $.session.id()
-  const root = await $.session.root()
-  // From the folder the latest join is for: one still queued takes the process there first.
-  const isMoving = live.joinRoot !== '' && live.joinRoot !== root
-  live.joinRoot = root
 
-  // A row of the conversation the process leaves is none of this one's.
-  live.isUnread = false
+  await switchTo($, sessionId)
+  await update($, restoredFor, () => sessionId)
+}
 
-  // After /clear the process goes on as a new session, with no slot yet: it
-  // takes over once the old session's writes are done, and takes on what
-  // the old one held, ended whether or not its end write landed (or, when
-  // the old one never read the project, what the one before it held).
-  // Resumed in another folder, it leaves that folder's tasks as its last
-  // write there left them and starts on this one as a new process would,
-  // keeping nothing it tracked of that project. A store that fails now
-  // takes nothing on yet: the session writes nothing until it has read the
-  // project, which the heartbeat tries again.
-  const joined = queued(async () => {
-    if (live.root !== '' && live.root !== root) {
-      await switchTo($, sessionId)
-      await update($, took, () => ({}))
-      await update($, loadedFor, () => null)
-      live.elsewhere = 0
-      live.floor = 1
-      live.hasLegacyPeer = false
-    }
-
-    live.sessionId = sessionId
-    live.root = root
-    live.hasSlot = false
-    live.writtenMs = 0
-    live.readMs = 0
-
-    // A session that ended while this waited in the queue (an exit right
-    // after /clear, the store slow) reads the project as an ending session
-    // does, and its end write, queued after this, marks its slot ended.
-    if (live.ends === ends) {
-      live.endedMs = undefined
-    }
-
-    return load($)
-  }).catch(() => undefined)
-
-  if (isMoving) {
-    live.moving += 1
-    void joined.then(() => {
-      live.moving -= 1
-    })
-  }
-
-  // Tasks from an earlier session: the status line says so, and the pane
-  // opens where the terminal is wide enough to seat it unasked, unless the
-  // session has ended since.
-  const shown = joined
-    .then(async () => {
-      if ((await refresh($)) && live.ends === ends) {
-        await show($, false)
-      }
-    })
-    .catch(() => undefined)
-
-  // One that ended before this ran has no heartbeat: its end stopped the last.
-  if (live.ends === ends) {
-    live.heartbeat?.cancel()
-    live.heartbeat = $.clock.every(HEARTBEAT_MS, () => void beat($))
-  }
-
-  // A store slow to answer holds up the start 5 seconds at most: what the
-  // session takes on shows once it answers.
-  await awaited($, joined)
-  await redrawn($, shown)
+/** Goes on as the session a resume took up, with the items it saved. */
+async function startResumed($: EngineInterface) {
+  await switchTo($, await $.session.id())
+  await restore($)
 }
 
 /**
  * Starts the process over as session `sessionId`: no items, numbered from #1,
- * and nothing kept of the last session's fields, answers or sends. Every
- * write after this goes to its key.
+ * and nothing kept of the last session's fields, answers, sends or reads.
+ * Every write after this goes to its key.
  */
 async function switchTo($: EngineInterface, sessionId: string) {
-  await update($, tasks, () => [])
-  await update($, nextId, () => 1)
-  await update($, selectedId, () => null)
-  await update($, editing, () => null)
+  // Before any wait: a write the store runs meanwhile is this session's,
+  // which has read nothing yet, so it writes nothing (see `writeSaved`).
+  live.sessionId = sessionId
+  live.loading = null
+  live.unread = null
   live.drafts.clear()
   live.closed.clear()
   live.drawn.clear()
@@ -1120,29 +960,45 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.batch = null
   live.isSendingAtEnd = false
   live.isUnread = false
-  live.sessionId = sessionId
+  await update($, tasks, () => [])
+  await update($, nextId, () => 1)
+  await update($, selectedId, () => null)
+  await update($, editing, () => null)
+  await refresh($)
 }
 
 /**
  * Takes up the items this session saved, when its key has them (a resumed
  * session), and deletes the keys of sessions saved more than `KEEP_MS` ago.
  * Until the read settles, the tools refuse: an item Claude added meanwhile
- * would go under the items read. Like joining, a store slow to answer holds
- * up the start 5 seconds at most.
+ * would go under the items read. A store slow to answer holds up the start
+ * 5 seconds at most.
  */
 async function restore($: EngineInterface) {
   const sessionId = await $.session.id()
+  const ends = live.ends
 
-  live.restoring += 1
-  const restored = queued(() => takeUp($, sessionId)).catch(() => false)
+  // A reload starts `live` over.
+  live.sessionId = sessionId
+  live.loading = sessionId
+  const restored = queued(() => takeUp($, sessionId)).catch(() => {
+    if (live.sessionId === sessionId) {
+      live.unread = sessionId
+    }
+
+    return false
+  })
   void restored.then(() => {
-    live.restoring -= 1
+    if (live.loading === sessionId) {
+      live.loading = null
+    }
   })
   const cleaned = queued(() => dropExpired($)).catch(() => undefined)
 
+  // The pane opens for what was read, unless the session has ended since.
   const shown = restored
     .then(async isKept => {
-      if (isKept && (await refresh($))) {
+      if (isKept && (await refresh($)) && live.ends === ends) {
         await show($, false)
       }
     })
@@ -1158,15 +1014,19 @@ async function restore($: EngineInterface) {
  * again with its state kept, which is newer than its key: it reads nothing.
  */
 async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
-  // A reload starts `live` over.
-  live.sessionId = sessionId
-
   if ((await read($, restoredFor)) === sessionId) {
     return false
   }
 
   const saved = savedIn(await $.store.get(keyOf(sessionId)))
-  const isKept = saved !== undefined && !isExpired(saved, await $.clock.now())
+  const nowMs = await $.clock.now()
+
+  // A /clear or a resume while the read was out: the state is another session's now.
+  if (live.sessionId !== sessionId) {
+    return false
+  }
+
+  const isKept = saved !== undefined && !isExpired(saved, nowMs)
 
   if (isKept) {
     await update($, tasks, () => saved.tasks)
@@ -1179,7 +1039,7 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   return isKept
 }
 
-/** Deletes every session's saved key that has expired: all of them share the store's one file. */
+/** Deletes every saved key that has expired or holds no saved session: all of them share the store's one file. */
 async function dropExpired($: EngineInterface) {
   const nowMs = await $.clock.now()
   const keys = (await $.store.keys()).filter(isSavedKey)
@@ -1188,7 +1048,7 @@ async function dropExpired($: EngineInterface) {
   for (const [i, key] of keys.entries()) {
     const saved = savedIn(values[i])
 
-    if (saved !== undefined && isExpired(saved, nowMs)) {
+    if (saved === undefined || isExpired(saved, nowMs)) {
       await $.store.delete(key)
     }
   }
@@ -1201,15 +1061,17 @@ function persist($: EngineInterface): Promise<void> {
 
 /**
  * Writes the session's shown items and its count under its key. Nothing
- * before the session has read its key, which the write would go over, nor
- * before its first item: most sessions never hold one.
+ * before its first item (most sessions never hold one), nor before the
+ * session has read its key, which the write would go over: one whose start
+ * read failed reads it here, and writes only where none is saved.
  */
 async function writeSaved($: EngineInterface) {
+  // Read at one moment: a switch to another session never falls between them.
   const sessionId = live.sessionId
-  const shown = (await read($, tasks)).filter(isShown)
-  const count = await read($, nextId)
+  const [restored, list, count] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId)])
+  const shown = list.filter(isShown)
 
-  if ((await read($, restoredFor)) !== sessionId || (shown.length === 0 && count === 1)) {
+  if ((shown.length === 0 && count === 1) || (restored !== sessionId && !(await isUnsaved($, sessionId)))) {
     return
   }
 
@@ -1218,270 +1080,30 @@ async function writeSaved($: EngineInterface) {
 }
 
 /**
- * Takes on the tasks this session owns in the project's store: its own (a
- * resumed session) and those of sessions that ended or went quiet. A live
- * session's tasks stay its own: answers go to the session that asked. A hot
- * reload keeps the session's tasks as they are.
+ * Reads session `sessionId`'s key again when its start read failed; resolves
+ * whether nothing is saved there, which then counts as read. Once the store
+ * answers it reads no more: saved items are never written over.
  */
-async function load($: EngineInterface) {
-  if (await isLoaded($)) {
-    await sync($)
-    return
-  }
-
-  const nowMs = await $.clock.now()
-  const stored = await readProject($)
-  const holder = await read($, loadedFor)
-  const notes = await read($, took)
-  const count = await read($, nextId)
-  let project = stored
-  let adoption!: Adoption
-  // Tasks the process held that the join numbers anew.
-  let moves: Move[] = []
-  // Tasks the process didn't hold: their numbers may have named others here.
-  let arrived: Task[] = []
-
-  // Taken on against the task list as it stands when it changes hands, so a
-  // press meanwhile is kept. `update` runs this again when another write
-  // beat it: the last run is the list it wrote. The session's own tasks it
-  // is done with, which no slot holds, stay in it, with the numbers its
-  // Claude knows them by.
-  await update($, tasks, current => {
-    const done = current.filter(task => task.sessionId === live.sessionId && !isShown(task))
-    project = withHeld(stored, holder, slotFrom(current, notes, count, nowMs), nowMs)
-    adoption = adopt(project, live.sessionId, nowMs, done.map(task => task.id), live.endedMs !== undefined, holder)
-    moves = adoption.renumbered.filter(({ task }) => current.some(one => isSameTask(one, task))).map(({ task, id }) => ({ from: task.id, to: id }))
-    arrived = adoption.adopted.filter(task => !current.some(one => isSameTask(one, task)) && !moves.some(move => move.to === task.id))
-
-    return [...done, ...adoption.adopted].sort((a, b) => a.id - b.id)
-  })
-
-  await renumber($, moves, arrived.map(task => task.id))
-  live.readMs = nowMs
-  live.hasSlot ||= live.sessionId in stored.slots
-  await update($, nextId, n => Math.max(n, adoption.nextId))
-  await update($, took, () => adoption.took)
-  await update($, loadedFor, () => live.sessionId)
-  live.elsewhere = elsewhereIn(project, live.sessionId, nowMs)
-  live.floor = adoption.nextId
-  live.hasLegacyPeer = hasLegacyPeer(project, live.sessionId, nowMs)
-  await reselect($)
-
-  try {
-    // The slot first, noting what it took: only then do the slots it took from leave.
-    await writeOwn($, adoption.removed.length > 0)
-    await clean($, project, adoption.removed, adoption.legacy)
-  } catch {
-    // What it took on stands, and the caller shows it: the next heartbeat
-    // makes the writes.
-  }
-}
-
-/** A task the process held that the join numbered anew: the number it leaves, and the one it takes. */
-type Move = { from: number; to: number }
-
-/**
- * Has what the process keeps under task numbers follow its tasks through a
- * join. A task it held that the join numbered anew (`moves`) takes its
- * drafts, a field open on it, the ring and the selection along. Under the
- * numbers of tasks it didn't hold (`arrived`: another session drew the
- * number too, or a resumed one did), it lets go of the drafts, what was
- * typed as a task under it closed, and a field open on it. Kept, they would
- * go with the task that holds the number now.
- */
-async function renumber($: EngineInterface, moves: readonly Move[], arrived: readonly number[]) {
-  const toOf = (id: number) => moves.find(move => move.from === id)?.to
-
-  for (const field of ['answer', 'reason'] as const) {
-    // Carried first: the number a task leaves may be one another arrived under.
-    for (const { from, to } of moves) {
-      const draft = live.drafts.get(fieldKeyOf({ id: from, field }))
-
-      if (draft !== undefined) {
-        live.drafts.set(fieldKeyOf({ id: to, field }), draft)
-      }
-
-      if (live.ring === fieldKeyOf({ id: from, field })) {
-        live.ring = fieldKeyOf({ id: to, field })
-      }
-    }
-
-    for (const id of arrived) {
-      live.drafts.delete(fieldKeyOf({ id, field }))
-    }
-  }
-
-  for (const id of arrived) {
-    live.closed.delete(fieldKeyOf({ id, field: 'answer' }))
-  }
-
-  await update($, editing, field => {
-    if (field === null) {
-      return null
-    }
-
-    const to = toOf(field.id)
-    return to !== undefined ? { ...field, id: to } : arrived.includes(field.id) ? null : field
-  })
-  await update($, selectedId, id => (id === null ? id : (toOf(id) ?? id)))
-}
-
-/**
- * Whether the session has read the project as itself: until then, the store
- * may hold tasks of its own it hasn't taken on. `loadedFor` names the session
- * whose tasks the process holds.
- */
-async function isLoaded($: EngineInterface): Promise<boolean> {
-  return (await read($, loadedFor)) === live.sessionId
-}
-
-/**
- * The project as read, with what this process holds (`slot`) that the store
- * may not have. Held for another session (`holder`, the one it left at
- * /clear or a resume in place), it is that session's slot, ended: its end
- * write may have failed. The slot keeps the time the store has, so that it
- * leaves once this session's is written. Held for none (no session of the
- * process has read the project), it is the tasks its sessions assigned: each
- * session's beside the tasks the store holds for it, ended, unless it is this
- * one or the store doesn't show it ended. One alive or quiet there has been
- * resumed by another process since, or may have been: it keeps its slot, and
- * what it added here goes on in this one's.
- */
-function withHeld(project: Project, holder: string | null, slot: Slot, nowMs: number): Project {
-  if (holder !== null) {
-    const stored = project.slots[holder]
-
-    if (stored === undefined && slot.tasks.length === 0 && slot.took === undefined) {
-      return project
-    }
-
-    return withSlots(project, { [holder]: { ...slot, seenMs: stored?.seenMs ?? 0, endedMs: nowMs } })
-  }
-
-  const own = live.sessionId
-  const slots: Record<string, Slot> = {}
-
-  for (const task of slot.tasks) {
-    const stored = project.all[task.sessionId]
-    const id = stored === undefined || stored.endedMs !== undefined ? task.sessionId : own
-    const into = (slots[id] ??= { seenMs: 0, ...project.all[id], tasks: [], ...(id === own ? {} : { endedMs: nowMs }) })
-
-    into.tasks.push(task)
-  }
-
-  for (const [id, held] of Object.entries(slots)) {
-    held.tasks.push(...(project.all[id]?.tasks ?? []))
-  }
-
-  return withSlots(project, slots)
-}
-
-/**
- * Says this session is alive, and counts the tasks waiting in the project's
- * other sessions: `sync`, and a redraw of what it changed. Not `isWriting`
- * where a write follows (assigning). While store work given up on is still
- * out, it asks for no more: the first heartbeat after it settles syncs.
- */
-async function beat($: EngineInterface, isWriting = true) {
-  if (live.stalled > 0) {
-    return
-  }
-
-  const was = live.elsewhere
-  const synced = queued(() => sync($, isWriting)).catch((): Synced => 'same')
-  const shown = synced
-    .then(async outcome => {
-      // A first read shows the project as joining does: the pane opens for
-      // the tasks it took on.
-      if ((outcome !== 'same' || live.elsewhere !== was) && (await refresh($)) && outcome === 'joined') {
-        await show($, false)
-      }
-    })
-    .catch(() => undefined)
-
-  await awaited($, synced)
-  await redrawn($, shown)
-}
-
-/**
- * Reads the project and acts on it: lets go of the tasks another session
- * took on while this one slept, keeps the notes of what this one took that
- * are still needed, counts the tasks waiting elsewhere, and writes the slot,
- * unless not `isWriting` (a write follows) and nothing leaves it or the
- * store: a task let go of leaves at once, since the caller may write nothing
- * after all (an ask that repeats one, say). A session that couldn't read the
- * project as it joined takes it on instead.
- * Resolves what changed of what it shows.
- */
-async function sync($: EngineInterface, isWriting = true): Promise<Synced> {
-  if (!(await isLoaded($))) {
-    await load($)
-    return 'joined'
-  }
-
-  const nowMs = await $.clock.now()
-  const stored = await readProject($)
-  const own = live.sessionId
-  // With the session's own slot as it holds it: the store may not have its
-  // last write, the note of tasks it took back among them.
-  const project = withSlots(stored, { [own]: await slotOf($, nowMs) })
-  const isLost = await letGo($, project)
-  const pruned = prune(project, own, await read($, took), nowMs)
-
-  await update($, took, () => pruned.took)
-  live.readMs = nowMs
-  live.hasSlot ||= own in stored.slots
-  live.elsewhere = elsewhereIn(project, own, nowMs)
-  live.floor = floorOf(project)
-  live.hasLegacyPeer = hasLegacyPeer(project, own, nowMs)
-
-  try {
-    // The slot first: it carries the tasks let go of before the note that
-    // told of them leaves, and the notes and count of a slot before it does.
-    if (isWriting || isLost || pruned.removed.length > 0 || !isEmptyEdit(pruned.legacy)) {
-      await writeOwn($, pruned.removed.length > 0)
-    }
-
-    await clean($, project, pruned.removed, pruned.legacy)
-  } catch {
-    // What it let go of stands, and the caller redraws it: the next
-    // heartbeat makes the writes.
-  }
-
-  return isLost ? 'lost' : 'same'
-}
-
-/**
- * Lets go of the tasks another session took on while this one was quiet (a
- * laptop asleep, say): they are that session's now, and the user answers
- * them there. Resolves whether any of them was shown.
- */
-async function letGo($: EngineInterface, project: Project): Promise<boolean> {
-  const isTaken = (task: Task) => isTakenFrom(project, live.sessionId, task)
-  const list = await read($, tasks)
-
-  if (!list.some(isTaken)) {
+async function isUnsaved($: EngineInterface, sessionId: string): Promise<boolean> {
+  if (live.unread !== sessionId) {
     return false
   }
 
-  const lost = list.filter(task => isTaken(task) && isShown(task))
+  const saved = savedIn(await $.store.get(keyOf(sessionId)))
+  const isFree = saved === undefined || isExpired(saved, await $.clock.now())
 
-  await update($, tasks, current => current.filter(task => !isTaken(task)))
-
-  for (const task of lost) {
-    await settle($, task.id)
+  // A switch to another session meanwhile.
+  if (live.unread !== sessionId) {
+    return false
   }
 
-  if (lost.length > 0) {
-    const which = numbersOf(lost.map(task => task.id))
-    const [noun, them] = lost.length === 1 ? ['item', 'it'] : ['items', 'them']
+  live.unread = null
 
-    $.ui.toast(`Another session in this project took on ${noun} ${which} while this one was away. Answer ${them} there.`, {
-      timeoutMs: 8000,
-    })
+  if (isFree) {
+    await update($, restoredFor, () => sessionId)
   }
 
-  return lost.length > 0
+  return isFree
 }
 
 /**
@@ -1532,7 +1154,7 @@ async function awaited($: EngineInterface, work: Promise<unknown>) {
 /**
  * Resolves once the redraw that store work leads to settles, `STORE_WAIT_MS`
  * on, or at once while that work was given up on: it is no store work, so a
- * surface slow to open the pane holds up neither the store nor the heartbeat.
+ * surface slow to open the pane doesn't hold up the store.
  */
 async function redrawn($: EngineInterface, shown: Promise<unknown>) {
   if (live.stalled === 0) {
@@ -1554,125 +1176,11 @@ function within($: EngineInterface, work: Promise<unknown>): Promise<boolean> {
 }
 
 /**
- * Reads the project: 0.1.4's value, when there is one, and each session's
- * slot, one read of the store each. Joining, the heartbeat and assigning
- * read it; a pane press or a prompt, which a person waits on, doesn't.
- */
-async function readProject($: EngineInterface): Promise<Project> {
-  const keys = keysOf(live.root)
-  const wanted = (await $.store.keys()).filter(key => key === keys.legacy || key.startsWith(keys.prefix))
-  const values = await Promise.all(wanted.map(key => $.store.get(key)))
-
-  return projectOf(live.root, Object.fromEntries(wanted.map((key, i) => [key, values[i]])))
-}
-
-/**
- * Writes the session's slot from what it holds, under its own key: the one
- * key it writes. A session that never held a task has no slot, unless
- * `isForced`: its count must be in the store before a slot that carries one
- * leaves it. One that has a slot keeps it, its count in it, until it ends,
- * and the next session in the project removes it; it has one from the first
- * write it makes, landed or not, since a write that fails, the next one
- * makes, its tasks gone by then or not. A session that hasn't read the
- * project writes nothing: it would write over tasks of its own.
- */
-async function writeOwn($: EngineInterface, isForced = false) {
-  if (!(await isLoaded($))) {
-    return
-  }
-
-  const nowMs = await $.clock.now()
-  const slot = await slotOf($, nowMs)
-
-  if (!live.hasSlot && !isForced && slot.tasks.length === 0 && slot.took === undefined) {
-    return
-  }
-
-  live.hasSlot = true
-  await $.store.set(keysOf(live.root).session(live.sessionId), slot)
-  live.writtenMs = nowMs
-}
-
-/** The session's slot, from what it holds now. */
-async function slotOf($: EngineInterface, nowMs: number): Promise<Slot> {
-  return slotFrom(await read($, tasks), await read($, took), await read($, nextId), nowMs)
-}
-
-/** The session's slot, holding `list`, its `notes` of what it took, and its count. */
-function slotFrom(list: readonly Task[], notes: Readonly<Record<string, Took>>, count: number, nowMs: number): Slot {
-  return {
-    tasks: list.filter(isShown),
-    seenMs: nowMs,
-    nextId: count,
-    ...(Object.keys(notes).length > 0 ? { took: { ...notes } } : {}),
-    ...(live.endedMs === undefined ? {} : { endedMs: live.endedMs }),
-  }
-}
-
-/**
- * Removes the slots this session took over and no longer needs, once its own
- * is written: each of this version's unless it changed since it was read (its
- * session came back), and 0.1.4's by `legacyEdit`.
- */
-async function clean($: EngineInterface, project: Project, removed: readonly string[], legacyEdit: LegacyEdit) {
-  const keys = keysOf(live.root)
-
-  for (const id of removed) {
-    const key = keys.session(id)
-    const current = await $.store.get(key)
-
-    if (isSlot(current) && current.seenMs === project.slots[id]?.seenMs) {
-      await $.store.delete(key)
-    }
-  }
-
-  await editLegacy($, legacyEdit, project.legacy.nextId)
-}
-
-/**
- * Applies `legacyEdit` to 0.1.4's value as it stands just before, its count
- * raised to this session's; with nothing else to change, raises the count
- * alone, while a 0.1.4 session alive here numbers its tasks from it, and only
- * past the count as it was just read (`readCount`). A 0.1.4 session writing
- * in between is the race 0.1.4 always had among its own. A session that
- * hasn't read the project changes nothing there.
- */
-async function editLegacy($: EngineInterface, legacyEdit: LegacyEdit, readCount = 0) {
-  const key = keysOf(live.root).legacy
-  const count = await read($, nextId)
-
-  if (key === undefined || !(await isLoaded($)) || (isEmptyEdit(legacyEdit) && (!live.hasLegacyPeer || count <= readCount))) {
-    return
-  }
-
-  const current = legacyOf(await $.store.get(key))
-  const edited = editedLegacy(current, legacyEdit, count, await $.clock.now())
-
-  if (!isEmptyEdit(legacyEdit) || edited.nextId > current.nextId) {
-    await $.store.set(key, edited)
-  }
-}
-
-/**
- * Before a person's press or prompt acts on the tasks: when the slot is two
- * heartbeats old, the session may have slept long enough for another to take
- * its tasks on, so it reads the project, lets them go and redraws. Otherwise
- * it reads nothing: a person waits on this.
- */
-async function wake($: EngineInterface) {
-  if (live.hasSlot && (await $.clock.now()) - Math.max(live.writtenMs, live.readMs) >= 2 * HEARTBEAT_MS) {
-    await beat($)
-  }
-}
-
-/**
- * Changes the task list and, when that changes it (`fn` hands back a new
- * list), writes the slot and the session's key, reading nothing (see
- * `wake`). The session's own state is what counts: a write that fails now,
- * the heartbeat makes for the slot, and the next change or the end for the key.
+ * Changes the item list and, when that changes it (`fn` hands back a new
+ * list), saves it. The session's own state is what counts: a write that
+ * fails now, the next change or the end makes.
  */
 async function change($: EngineInterface, fn: (list: readonly Task[]) => readonly Task[]) {
-  await wake($)
   let isChanged = false
 
   // `update` runs `fn` again when another write beat it: the last run counts.
@@ -1683,8 +1191,7 @@ async function change($: EngineInterface, fn: (list: readonly Task[]) => readonl
   })
 
   if (isChanged) {
-    // At once, so a change waits on one write's time.
-    await awaited($, queued(() => Promise.allSettled([writeOwn($), writeSaved($)])))
+    await awaited($, persist($))
     await refresh($)
   }
 }
@@ -1718,7 +1225,7 @@ async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () 
 async function refresh($: EngineInterface): Promise<boolean> {
   const shown = (await read($, tasks)).filter(isShown)
 
-  $.ui.status(statusOf(shown, live.elsewhere))
+  $.ui.status(statusOf(shown))
 
   if (shown.length === 0) {
     await closePane($).catch(() => undefined)
@@ -1780,7 +1287,6 @@ async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 
     editing: field,
     draft: key === undefined ? '' : (live.drafts.get(key) ?? ''),
     nowMs: await $.clock.now(),
-    sessionId: await $.session.id(),
     isWorking: await read($, isWorking),
   }
 
@@ -1880,8 +1386,7 @@ function fieldValueOf(surface: RenderSurface, key: string): string {
 /**
  * Changes task `id` with `fn` while it is open, and resolves the task as the
  * change found it: one closed meanwhile (Claude withdrew it, or a press from
- * an older render answered it) or gone (another session took it on) stays
- * as it is.
+ * an older render answered it) or gone (a /clear) stays as it is.
  */
 async function edit($: EngineInterface, id: number, fn: (task: Task) => Task): Promise<Task | undefined> {
   const nowMs = await $.clock.now()
@@ -2058,8 +1563,8 @@ function isRepeatOf(was: Task | undefined, patch: Pick<Task, 'state'> & Partial<
 
 /**
  * A press on the pane resolves task `id`, as `resolve` does. One Claude
- * withdrew, another session took on, or the user answered otherwise (on
- * another surface, say) since the pane drew it says so, and what the user
+ * withdrew, or the user answered otherwise (on another surface, say), since
+ * the pane drew it says so, and what the user
  * typed for it (`typedText`) goes to the prompt box, unless it looks like a
  * secret; one already answered as this press would answer it (a second
  * press) stays answered.
@@ -2203,12 +1708,6 @@ function sendSoon($: EngineInterface) {
  * engine's last word on it was.
  */
 async function send($: EngineInterface, isTurnOver = false) {
-  // What the process holds is the folder's it leaves: its Claude hears it there.
-  if (live.moving > 0) {
-    return
-  }
-
-  await wake($)
   const due = await claim($)
 
   if (due.length === 0) {

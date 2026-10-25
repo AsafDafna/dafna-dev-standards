@@ -8,16 +8,18 @@ every title shows whole, nothing is cut off at the pane's bottom, and the
 pane asks for no rows it leaves empty. Below 110 columns the pane is framed
 above the prompt; from 110 it docks beside the transcript, about 88 columns
 at most. With RENDERS_DIR set, each screen a test reads is kept there, and
-`tests/live/renders.py` lays them out.
+`tests/live/renders.py` lays them out. One case types /clear instead and
+reads the store back.
 """
 
+import json
 import os
 import re
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-from screen import Claude, pane_body, placement  # noqa: E402
+from screen import Claude, pane_body, placement, wait_for  # noqa: E402
 
 ROOT = os.environ.get('PLUGIN_DIR') or os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 # Framed, then each side of where the pane docks (110), and past where the
@@ -208,6 +210,26 @@ class Pane(unittest.TestCase):
 
                 self.assert_fits(body, context)
                 self.assertIn('Cancel', joined(body), context)
+
+
+class Clear(unittest.TestCase):
+    def test_clear_starts_a_session_with_no_items_and_the_old_one_stays_saved(self):
+        claude = Claude(ROOT)
+        try:
+            claude.seed(TASKS[:1])
+            claude.start(100, 40, '--session-id', claude.session_id)
+            wait_for(claude.session, lambda s: 'open-items: ☐' in s)
+            claude.command('/clear')
+            screen = wait_for(claude.session, lambda s: 'open-items:' not in s)
+            with open(claude.store_file()) as f:
+                store = json.load(f)
+        finally:
+            claude.close()
+        key = f'session:{claude.session_id}'
+
+        # The session /clear started holds nothing, so it saved nothing.
+        self.assertEqual(list(store), [key], screen)
+        self.assertEqual([task['id'] for task in store[key]['tasks']], [1], screen)
 
 
 class TranscriptRow(unittest.TestCase):

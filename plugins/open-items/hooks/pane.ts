@@ -5,7 +5,7 @@ import { ago, cellsOf, clip, printable, rowsOf } from './text'
 /**
  * The longest title the pane and the transcript draw. `add_item` takes
  * titles of at most MAX_TITLE characters; this bounds what an older version
- * or another session left in the store, never a title assigned now.
+ * left in the store, never a title added now.
  */
 export const MAX_SHOWN_TITLE = 300
 
@@ -30,7 +30,6 @@ export type PaneView = {
   /** The draft in the open field. */
   draft: string
   nowMs: number
-  sessionId: string
   isWorking: boolean
   /** The surface draws a text field (the mobile app draws none yet). */
   canType: boolean
@@ -60,11 +59,9 @@ export function titleOf(task: Task): string {
   return `#${task.id} ${nameOf(task)}`
 }
 
-/** `  3m · from an earlier session`, drawn dim after an open task's title. */
-export function ageOf(task: Task, view: Pick<PaneView, 'nowMs' | 'sessionId'>): string {
-  const earlier = task.sessionId === view.sessionId ? '' : ' · from an earlier session'
-
-  return `  ${ago(view.nowMs - task.createdMs)}${earlier}`
+/** `  3m`, drawn dim after an open task's title. */
+export function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
+  return `  ${ago(view.nowMs - task.createdMs)}`
 }
 
 export function whyOf(task: Task): string {

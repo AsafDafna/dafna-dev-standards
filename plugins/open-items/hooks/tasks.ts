@@ -162,11 +162,8 @@ export function digestOf(due: readonly Task[]): string {
 }
 
 /** Read after a compaction or at a session's start: what is still with the user. */
-export function contextOf(shown: readonly Task[], sessionId: string): string {
-  const lines = shown.map(task => {
-    const earlier = task.sessionId === sessionId ? '' : ' (from an earlier session)'
-    return isActive(task) ? `#${task.id} ${task.state}${earlier}: ${task.title}. ${task.why}` : newsOf(task, false)
-  })
+export function contextOf(shown: readonly Task[]): string {
+  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${task.why}` : newsOf(task, false)))
 
   return [
     'Items you gave the user, through the Open items tools (add_item, list_items, withdraw_item):',
@@ -205,21 +202,15 @@ export function addedOf(task: Task, open: number): string {
   ].join(' ')
 }
 
-/**
- * The status line under the prompt: this session's tasks and responses not
- * sent yet, and how many tasks wait in the project's other live sessions,
- * which this session neither shows nor answers.
- */
-export function statusOf(shown: readonly Task[], elsewhere = 0): string | undefined {
-  const others = elsewhere > 0 ? `${plural(elsewhere, 'item')} in another session` : ''
-
+/** The status line under the prompt: the session's open items and responses not sent yet. */
+export function statusOf(shown: readonly Task[]): string | undefined {
   if (shown.length === 0) {
-    return others === '' ? undefined : others
+    return undefined
   }
 
   const { glyph, headline, note } = waitingOf(shown)
 
-  return [`${glyph}${headline}${note}`, '/open-items', others].filter(part => part !== '').join(' · ')
+  return `${glyph}${headline}${note} · /open-items`
 }
 
 /**
