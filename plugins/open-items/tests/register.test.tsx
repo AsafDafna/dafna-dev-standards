@@ -2504,6 +2504,65 @@ describe('delivery', () => {
     expect(world.appended[0]?.text).toBe(`${ONE}#1 Pick a pagination strategy for /feed: I chose "Cursor".`)
   })
 
+  test('a press is held through its store write: an unrelated prompt and list_items leave it to the batch', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    // The press's write takes a second: a hand-back and list_items land meanwhile.
+    world.setMs = 1000
+    const pressed = ui.press({ key: 'option-1' })
+    await clock.advance(1)
+    const handBack = $.prompt.submit({ ...HAND_BACK, turnId: 't1' })
+    const listed = $.tool.call({ tool: LIST })
+    await clock.advance(1)
+
+    expect(itemOf(world, 1)?.update).toBe('pending')
+
+    await clock.advance(1000)
+    await pressed
+    world.setMs = 0
+    await clock.advance(2000)
+    await clock.settle()
+
+    expect((await handBack).context).toEqual(['Open items: 1 open, 0 unread answers; call list_items.'])
+    expect(resultOf(await listed).result).toContain('chose "Cursor"')
+    expect(world.appended[0]?.text).toBe(`${ONE}#1 Pick a pagination strategy for /feed: I chose "Cursor".`)
+  })
+
+  test('an answer appended to a turn the user stops wakes nothing: the next prompt reads it', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(KEY_TASK)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await $.turn.complete({ ...DONE, turnId: 't1', reason: 'aborted', isAborted: true })
+    await clock.settle()
+
+    expect(world.appended[0]?.text).toBe(repliedOn1('Two failures'))
+    expect(world.submitted).toEqual([])
+
+    // Nor does a row that goes in as the user stops the turn.
+    await $.turn.start({ text: 'go on', turnId: 't2' })
+    world.appendMs = 500
+    await ui.press({ key: 'done' })
+    await clock.advance(800)
+    await $.turn.complete({ ...DONE, turnId: 't2', reason: 'aborted', isAborted: true })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.appended.filter(row => row.type === 'user').at(-1)?.text).toBe(`${ONE}#2 Add STRIPE_SECRET_KEY to .env: Done.`)
+    expect(world.submitted).toEqual([])
+  })
+
   test('a secret pasted as a reply is held and not sent', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)

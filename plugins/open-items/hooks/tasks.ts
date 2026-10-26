@@ -443,12 +443,12 @@ export function digestOf(due: readonly Task[]): string {
  * The line each prompt carries while asks are open, for a Claude that lost
  * sight of them (after a compaction, say): the open asks, Later ones
  * included, and the unread answers: a move Claude has not been told of, or a
- * reply it has not answered or closed. One a batch is about to send (`held`)
- * is not unread yet. Undefined while no ask is open.
+ * reply it has not answered or closed. One about to be sent (`isHeld`) is
+ * not unread yet. Undefined while no ask is open.
  */
-export function reminderOf(tasks: readonly Task[], held: ReadonlySet<number>): string | undefined {
+export function reminderOf(tasks: readonly Task[], isHeld: (task: Task) => boolean): string | undefined {
   const open = tasks.filter(isOpenAsk).length
-  const unread = tasks.filter(task => !held.has(task.id) && (task.update === 'pending' || task.isWaitingForClaude)).length
+  const unread = tasks.filter(task => !isHeld(task) && (task.update === 'pending' || task.isWaitingForClaude)).length
 
   return open === 0 ? undefined : `Open items: ${open} open, ${plural(unread, 'unread answer')}; call list_items.`
 }

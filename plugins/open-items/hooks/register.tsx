@@ -349,6 +349,8 @@ const live = {
   alertedTurn: false,
   /** Whether the main loop's turn runs: undefined until the mod has seen it begin or end. */
   mainTurn: undefined as boolean | undefined,
+  /** The main loop's last turn ended by the user's interrupt: an answer that joined it waits for the next prompt. */
+  wasStopped: false,
   /** The items whose answers joined the running main turn as a row no model request has read yet. */
   unreadAppend: [] as readonly number[],
   /** What the user has typed in each field so far, by `fieldKeyOf`. */
@@ -369,6 +371,8 @@ const live = {
   batch: null as Timer | null,
   /** The items the batch under way sends: their updates go in the user's own words, which no other path takes. */
   batchIds: new Set<number>(),
+  /** How many presses on each item are still writing, before they reach the batch: held as the batch's are. */
+  writing: new Map<number, number>(),
   /** How many sessions of the process have ended: a start read that lands after its session ended opens no pane. */
   ends: 0,
   /** The session whose saved items are being read at its start: until the read settles, the tools refuse, as it replaces the items. */
@@ -488,9 +492,9 @@ function isMainTurnRunning(): boolean | undefined {
   return live.mainTurn
 }
 
-/** Whether the batch under way sends `task`'s update. */
+/** Whether the batch under way, or a press still writing, sends `task`'s update. */
 function isHeld(task: Task): boolean {
-  return live.batchIds.has(task.id)
+  return live.batchIds.has(task.id) || live.writing.has(task.id)
 }
 
 export const register: Register = on => {
@@ -748,6 +752,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       live.alertedTurn = false
       live.mainTurn = true
+      live.wasStopped = false
       live.unreadAppend = []
     }
 
@@ -768,11 +773,16 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       live.alertedTurn = false
       live.mainTurn = false
+      live.wasStopped = e.reason === 'aborted'
 
-      // A row that joined the turn during its last request has no step left to read it.
-      if (live.unreadAppend.length > 0) {
+      // A row that joined the turn during its last request has no step left
+      // to read it. After the user's Esc the next prompt reads it: a wake-up
+      // would start the turn they just stopped.
+      if (live.unreadAppend.length > 0 && !live.wasStopped) {
         wakeUp($)
       }
+
+      live.unreadAppend = []
     }
 
     return result
@@ -880,7 +890,7 @@ export const register: Register = on => {
 
     // Some seats skip this mod's prompt.context and session.compact hooks, so
     // a line on every prompt is what reminds a Claude past a compaction.
-    const reminder = reminderOf(await read($, tasks), live.batchIds)
+    const reminder = reminderOf(await read($, tasks), isHeld)
     const context = [...(e.context ?? []), ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []), ...(reminder === undefined ? [] : [reminder])]
     const entered = { ...e, ...(isAnswer ? { text: messageOf(due) } : {}), ...(context.length > 0 ? { context } : {}) }
 
@@ -1240,6 +1250,7 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.drawn.clear()
   cancelBatch()
   live.mainTurn = undefined
+  live.wasStopped = false
   live.unreadAppend = []
   const cwd = await $.session.cwd().catch(() => undefined)
   await update($, folder, known => cwd ?? known)
@@ -1856,17 +1867,31 @@ async function select($: EngineInterface, id: number) {
  * task as it stood, as `edit` does: one no longer open stays as it is.
  */
 async function resolve($: EngineInterface, id: number, move: Move) {
-  const was = await edit($, id, (task, nowMs) => movedBy(task, move, nowMs))
-  const isNew = was !== undefined && isActive(was) && !isRepeatOf(was, move)
-  await settle($, id)
+  // Pending from the edit on, it is held until the batch holds it: else a
+  // prompt's digest or list_items could take it while the store writes.
+  live.writing.set(id, (live.writing.get(id) ?? 0) + 1)
 
-  // A move that changes nothing sends nothing new, and holds back no batch under way.
-  if (isNew) {
-    await moveOn($, id)
-    sendSoon($, id)
+  try {
+    const was = await edit($, id, (task, nowMs) => movedBy(task, move, nowMs))
+    const isNew = was !== undefined && isActive(was) && !isRepeatOf(was, move)
+    await settle($, id)
+
+    // A move that changes nothing sends nothing new, and holds back no batch under way.
+    if (isNew) {
+      await moveOn($, id)
+      sendSoon($, id)
+    }
+
+    return was
+  } finally {
+    const left = (live.writing.get(id) ?? 1) - 1
+
+    if (left > 0) {
+      live.writing.set(id, left)
+    } else {
+      live.writing.delete(id)
+    }
   }
-
-  return was
 }
 
 /**
@@ -2059,7 +2084,7 @@ async function deliver($: EngineInterface, ids: readonly number[]) {
 
   if (isMainTurnRunning() === true) {
     live.unreadAppend = [...new Set([...live.unreadAppend, ...which])]
-  } else {
+  } else if (!live.wasStopped) {
     // The turn ended while the row went in.
     wakeUp($)
   }
