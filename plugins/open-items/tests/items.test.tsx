@@ -85,7 +85,7 @@ describe('the item model', () => {
   })
 
   test('savedIn converts a v0.1 key', () => {
-    const done = { ...ROTATE, id: 6, state: 'done', update: 'pending', answer: 'Rotated it.' }
+    const done = { ...ROTATE, id: 6, state: 'done', update: 'delivered', answer: 'Rotated it.' }
     const converted = savedIn({ tasks: [ROTATE, done], nextId: 8, savedMs: 0 })
 
     expect(converted?.tasks.map(task => task.id)).toEqual([7])
@@ -113,6 +113,33 @@ describe('the item model', () => {
       folder: '',
       taken: [],
     })
+  })
+
+  test('savedIn keeps the answers a v0.1 key had not sent yet, resolved, each move in its thread', () => {
+    const answered = { ...ROTATE, update: 'pending', updatedMs: 5 }
+    const v1 = [
+      { ...answered, id: 1, state: 'done' },
+      { ...answered, id: 2, kind: 'decision', options: ['Cursor', 'Offset'], state: 'done', answer: 'Cursor' },
+      { ...answered, id: 3, kind: 'question', state: 'done', answer: 'Two failures' },
+      { ...answered, id: 4, kind: 'info', state: 'seen' },
+      { ...answered, id: 5, state: 'done', update: 'delivered' },
+      { ...answered, id: 6, state: 'rejected', reason: 'Not now' },
+    ]
+    const tasks = savedIn({ tasks: v1, nextId: 8, savedMs: 0 })?.tasks ?? []
+    const why: Message = { from: 'claude', text: 'It was in a public gist.', atMs: 0 }
+
+    expect(tasks.map(task => [task.id, task.state, task.update])).toEqual([
+      [1, 'resolved', 'pending'],
+      [2, 'resolved', 'pending'],
+      [3, 'resolved', 'pending'],
+      [4, 'resolved', 'pending'],
+    ])
+    expect(tasks.map(task => task.thread)).toEqual([
+      [why, { from: 'user', text: '', event: 'done', atMs: 5 }],
+      [why, { from: 'user', text: 'Cursor', event: 'chose', atMs: 5 }],
+      [why, { from: 'user', text: 'Two failures', atMs: 5 }],
+      [why, { from: 'user', text: '', event: 'seen', atMs: 5 }],
+    ])
   })
 
   test('trimmed keeps a resolved item\'s thread while its update is pending, strips it once delivered, drops it after 7 days, and keeps an open one of any age', () => {

@@ -41,6 +41,8 @@ export type Task = {
   /** Claude replied; the user has not opened the item since. */
   hasNewReply: boolean
   update: TaskUpdate
+  /** The `atMs` of the user's latest move Claude was told of: the moves after it are what Claude has not heard. */
+  heardMs?: number
   /** Claude's note on closing it, "recorded in …", or "was #5 in the previous session". */
   note?: string
   createdMs: number
@@ -83,7 +85,7 @@ declare module 'claude-code' {
       editing: Editing | null
       /** The session whose saved key the state was read from: a reload of the code finds it read. */
       restoredFor: string | null
-      /** The folder the process's first session started in: a reload of the code, or a later cd, keeps it. */
+      /** The folder the session started in, or its saved key names: a reload of the code, or a later cd, keeps it. */
       folder: string | null
       isWorking: boolean
       /** The remote clients attached, by surface: two phones are two clients on one. */

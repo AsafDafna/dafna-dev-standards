@@ -104,6 +104,8 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     /** Set, the plugin's own rows don't enter the conversation: a hook beneath refuses them with this reason. */
     refusingRows: undefined as string | undefined,
     sessionId: 'session-1',
+    /** The folder the session runs in now: a /cd or a worktree move changes it. */
+    cwd: '/repo',
     store: JSON.parse(JSON.stringify(store)) as Record<string, unknown>,
     /** Every store call the plugin makes, in order: `get <key>`, `set <key>`, `delete <key>` or `keys`. */
     ops: [] as string[],
@@ -217,6 +219,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
   })
 
   on('session.id', () => ({ value: world.sessionId }))
+  on('session.cwd', () => ({ value: world.cwd }))
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('session.attach', async ($, e) => {
     if (world.attachMs > 0) {
@@ -385,6 +388,10 @@ function itemOf(world: ReturnType<typeof seat>['world'], id: number): Task | und
   return world.items.find(task => task.id === id)
 }
 
+function folderOf(world: ReturnType<typeof seat>['world'], sessionId: string): string | undefined {
+  return (world.store[`session:${sessionId}`] as { folder?: string } | undefined)?.folder
+}
+
 const ROWS_THREE_KINDS = 15
 const ROWS_ONE_KIND = 8
 
@@ -419,16 +426,27 @@ describe('adding', () => {
     expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
-  // Task 3: there is no cap now; Task 3 rewrites this test.
-  skip('the same ask twice is one item, and a sixth open item is refused', async ($, on) => {
-    seat(on)
+  test('the same ask twice is one item, one the user put off for later too', async ($, on) => {
+    const { world } = seat(on)
     await start($)
 
     await $.tool.call(KEY_TASK)
     const again = await $.tool.call({ ...KEY_TASK, title: 'add stripe_secret_key to .env!' })
     expect(String((again as { result?: unknown }).result)).toContain('Item #1 already asks')
 
-    for (const n of [2, 3, 4, 5]) {
+    await (await $.ui.mount(PANE)).press({ key: 'later' })
+    const later = await $.tool.call(KEY_TASK)
+
+    expect(String((later as { result?: unknown }).result)).toContain('Item #1 already asks')
+    expect(world.items.map(task => task.id)).toEqual([1])
+  })
+
+  // Task 3: there is no cap now; Task 3 rewrites this test.
+  skip('a sixth open item is refused', async ($, on) => {
+    seat(on)
+    await start($)
+
+    for (const n of [1, 2, 3, 4, 5]) {
       await $.tool.call({ ...KEY_TASK, title: `Do thing number ${n}` })
     }
 
@@ -1943,6 +1961,38 @@ describe('responding', () => {
     expect(await textOf(ui, 'held')).toContain('looks like a secret')
   })
 
+  test('an answer over 4000 characters is not sent, and a toast names the limit', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'x'.repeat(4001) })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.toasts.at(-1)).toContain('4001 characters')
+    expect(world.toasts.at(-1)).toContain('the most is 4000')
+    expect(world.submitted).toEqual([])
+    expect(itemOf(world, 1)?.thread).toHaveLength(1)
+    expect(await ui.find({ type: 'Input', key: 'answer-1' })).toBeDefined()
+  })
+
+  test('an answer over 4000 characters in the prompt box is held, as a secret is: nothing is sent or kept', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const sent = await $.prompt.submit(typed(`↳ Answer to #1: ${'x'.repeat(4001)}`))
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(sent.drop).toContain('the most is 4000')
+    expect(world.submitted).toEqual([])
+    expect(itemOf(world, 1)?.thread).toHaveLength(1)
+  })
+
   test('list_items shows a saved answer and marks it heard', async ($, on) => {
     const { world } = seat(on)
     await start($)
@@ -2596,6 +2646,52 @@ describe('saving', () => {
     expect(Object.keys(world.store)).toEqual(['session:session-new'])
   })
 
+  test("a code reload keeps the session's folder, though the session has moved", async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    world.cwd = '/repo/elsewhere'
+    await $.session.start({ cwd: '/repo/elsewhere', surface: 'terminal', isInteractive: true })
+    await $.tool.call(XCODE_TASK)
+
+    expect(folderOf(world, 'session-1')).toBe('/repo')
+  })
+
+  test('the session /clear starts takes the folder it starts in', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    world.cwd = '/repo/worktree'
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    await $.tool.call(XCODE_TASK)
+
+    expect(folderOf(world, 'session-1')).toBe('/repo')
+    expect(folderOf(world, 'session-2')).toBe('/repo/worktree')
+  })
+
+  for (const [format, value, folder] of [
+    ['v0.2', { version: 2, tasks: asItems([ROTATE]), nextId: 8, savedMs: NOW, lastActiveMs: NOW, folder: '/old', taken: [] }, '/old'],
+    ['v0.1', { tasks: [ROTATE], nextId: 8, savedMs: NOW }, '/repo/now'],
+  ] as const) {
+    test(`a resume keeps the folder a ${format} key saved, or takes the one it runs in`, async ($, on) => {
+      const { world, clock } = seat(on, { 'session:session-2': value })
+      await start($)
+
+      await $.tool.call(KEY_TASK)
+      world.cwd = '/repo/now'
+      await $.session.end({ reason: 'resume', sessionId: 'session-1', resume: { id: 'session-1' } })
+      world.sessionId = 'session-2'
+      await clock.advance(1)
+      await $.tool.call(XCODE_TASK)
+
+      expect(folderOf(world, 'session-2')).toBe(folder)
+    })
+  }
+
   test('a session that never held an item leaves no key', async ($, on) => {
     const { world } = seat(on)
     await start($)
@@ -3204,6 +3300,71 @@ describe('the four kinds', () => {
     expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures'])
     expect(await textOf(ui, 'task-1')).toContain('waiting for Claude')
     expect(world.status).toBeUndefined()
+  })
+
+  test('a reply, then Done: the second message tells Claude of Done only', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await clock.settle()
+    await ui.press({ key: 'done' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([
+      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
+      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures: Done.',
+    ])
+  })
+
+  test('Later, then an option: the second message tells Claude of the option only', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'later' })
+    await clock.advance(1000)
+    await clock.settle()
+    await ui.press({ key: 'option-1' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([
+      'My response to an item you gave me (Open items):\n\n#1 Ship the feed rewrite this week: Later. Go on without it.',
+      'My response to an item you gave me (Open items):\n\n#1 Ship the feed rewrite this week: I chose "Yes".',
+    ])
+  })
+
+  test('a second reply whose message does not enter goes again, without the first', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    world.refusing = 'Another plugin held the prompt.'
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'And CartTests.testCouponRounding' })
+    await clock.advance(1000)
+    await clock.settle()
+    world.refusing = undefined
+    await ui.press({ key: 'send-1' })
+    await clock.settle()
+
+    expect(world.submitted).toEqual([
+      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
+      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nAnd CartTests.testCouponRounding',
+    ])
   })
 
   test('an answer written in the prompt box is a reply too', async ($, on) => {

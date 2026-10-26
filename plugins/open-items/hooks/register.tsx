@@ -23,11 +23,13 @@ import {
   messageOf,
   movedBy,
   newsHeadOf,
+  overLimitOf,
   ownHeadOf,
   parseAsk,
   replyOf,
   sameAsk,
   statusOf,
+  toldOf,
   waitsOnUser,
 } from './tasks'
 import type { Move } from './tasks'
@@ -595,6 +597,12 @@ export const register: Register = on => {
         }
       }
 
+      const overLimit = overLimitOf(task.id, bridged.answer)
+
+      if (overLimit !== undefined) {
+        return { drop: overLimit }
+      }
+
       if (e.turnId === undefined) {
         // Claude is idle: this prompt is the answer, sent with every other
         // update Claude has not heard, those a batch was about to send among them.
@@ -1026,6 +1034,8 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.batch = null
   live.isSendingAtEnd = false
   live.isUnread = false
+  const cwd = await $.session.cwd().catch(() => undefined)
+  await update($, folder, known => cwd ?? known)
   await update($, restoredFor, () => null)
   await update($, tasks, () => [])
   await update($, nextId, () => 1)
@@ -1098,6 +1108,11 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   if (isKept) {
     await update($, tasks, () => trimmed(saved, nowMs).tasks)
     await update($, nextId, () => saved.nextId)
+    // A v0.1 key saved no folder: the session keeps the one it runs in.
+    if (saved.folder !== '') {
+      await update($, folder, () => saved.folder)
+    }
+
     await reselect($)
   }
 
@@ -1279,7 +1294,7 @@ async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () 
   await change($, list => {
     due = list.filter(isDue)
 
-    return list.map(task => (isDue(task) ? { ...task, update: 'delivered' } : task))
+    return list.map(task => (isDue(task) ? toldOf(task) : task))
   })
 
   return due
@@ -1511,7 +1526,7 @@ async function passOn<R extends PromptSubmitResult>(
     throw error
   } finally {
     if (back !== undefined) {
-      await giveBack($, back.lost.map(task => task.id), back.note, back.reason)
+      await giveBack($, back.lost, back.note, back.reason)
     }
   }
 }
@@ -1542,9 +1557,9 @@ function inDigest(entered: Entered, task: Task): boolean {
  * and says so as `note` says. It never throws: `passOn` keeps the prompt's
  * own error.
  */
-async function giveBack($: EngineInterface, ids: readonly number[], note: DropNote, reason?: string) {
+async function giveBack($: EngineInterface, lost: readonly Task[], note: DropNote, reason?: string) {
   try {
-    await undelivered($, ids)
+    await undelivered($, lost)
   } catch {
     // `change` sets the session's state before the store and lets a store
     // write fail quietly; nothing else here is expected to throw.
@@ -1554,7 +1569,7 @@ async function giveBack($: EngineInterface, ids: readonly number[], note: DropNo
     return
   }
 
-  const which = numbersOf(ids)
+  const which = numbersOf(lost.map(task => task.id))
   const why = note === 'why' && reason !== undefined ? `: ${printable(reason, 200).replace(/[.!]+$/, '')}` : ''
 
   $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved; press Send now in /open-items.`, {
@@ -1562,9 +1577,19 @@ async function giveBack($: EngineInterface, ids: readonly number[], note: DropNo
   })
 }
 
-/** Gives back updates marked delivered that never reached Claude: they wait again. */
-async function undelivered($: EngineInterface, ids: readonly number[]) {
-  await change($, list => list.map(task => (ids.includes(task.id) && task.update === 'delivered' ? { ...task, update: 'pending' } : task)))
+/**
+ * Gives back updates that never reached Claude, `lost` as they stood before
+ * they were claimed: they wait again, and Claude counts as told only of what
+ * it was told before.
+ */
+async function undelivered($: EngineInterface, lost: readonly Task[]) {
+  await change($, list =>
+    list.map(task => {
+      const was = lost.find(one => one.id === task.id)
+
+      return was === undefined ? task : { ...task, update: task.update === 'delivered' ? 'pending' : task.update, heardMs: was.heardMs }
+    }),
+  )
 }
 
 /**
@@ -1703,6 +1728,13 @@ async function answer($: EngineInterface, id: number, text: string, how: How, is
     return
   }
 
+  const overLimit = overLimitOf(id, value)
+
+  if (isOpen && overLimit !== undefined) {
+    $.ui.toast(overLimit, { timeoutMs: 8000 })
+    return
+  }
+
   if (isOpen && !isSecretOk && looksSecret(value)) {
     await update($, editing, (): Editing => ({ id, field: 'answer', held: value }))
     return
@@ -1797,8 +1829,7 @@ async function send($: EngineInterface, isTurnOver = false) {
   }
 
   const text = messageOf(due)
-  const ids = due.map(task => task.id)
-  const which = numbersOf(ids)
+  const which = numbersOf(due.map(task => task.id))
 
   if (isTurnOver || !working()) {
     await passOn($, due, inWords, 'why', () => $.prompt.submit({ text, asUser: true })).catch(() => undefined)
@@ -1811,7 +1842,7 @@ async function send($: EngineInterface, isTurnOver = false) {
   )
 
   if (!isTaken) {
-    await undelivered($, ids)
+    await undelivered($, due)
 
     // The turn ended while the row was being refused: they go now.
     if (!working()) {

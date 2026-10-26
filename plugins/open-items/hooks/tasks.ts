@@ -207,13 +207,18 @@ export function isRepeatOf(task: Task | undefined, move: Move): boolean {
   return last !== undefined && last.from === 'user' && last.event === move.event && last.text === move.text
 }
 
-/** `task` after the user's `move` at `atMs`; the same task when the move repeats their last. */
+/**
+ * `task` after the user's `move` at `atMs`; the same task when the move
+ * repeats their last. A move in the same millisecond as the user's one
+ * before it takes the next, so `heardMs` tells the two apart.
+ */
 export function movedBy(task: Task, move: Move, atMs: number): Task {
   if (isRepeatOf(task, move)) {
     return task
   }
 
-  const thread = [...task.thread, { from: 'user' as const, ...move, atMs }]
+  const last = task.thread.at(-1)
+  const thread = [...task.thread, { from: 'user' as const, ...move, atMs: last?.from === 'user' ? Math.max(atMs, last.atMs + 1) : atMs }]
 
   switch (move.event) {
     case undefined:
@@ -232,6 +237,25 @@ const SPOKEN: readonly (ThreadEvent | undefined)[] = [undefined, 'chose', 'done'
 /** The user's replies and presses since Claude's last message, oldest first: what Claude has had no word on. */
 function movesOf(task: Task): readonly Message[] {
   return task.thread.slice(task.thread.findLastIndex(message => message.from === 'claude') + 1).filter(move => SPOKEN.includes(move.event))
+}
+
+/** Of `movesOf(task)`, those Claude has not been told of yet. */
+function unheardOf(task: Task): readonly Message[] {
+  return movesOf(task).filter(move => task.heardMs === undefined || move.atMs > task.heardMs)
+}
+
+/** `task` once Claude has been told of every move on it so far. */
+export function toldOf(task: Task): Task {
+  const last = task.thread.findLast(message => message.from === 'user')
+
+  return { ...task, update: 'delivered', ...(last === undefined ? {} : { heardMs: last.atMs }) }
+}
+
+/** Why the user's answer to item `id` is not sent: it is longer than MAX_DETAIL. Undefined when it fits. */
+export function overLimitOf(id: number, text: string): string | undefined {
+  return text.length > MAX_DETAIL
+    ? `Your answer to #${id} is ${text.length} characters, so it wasn't sent: the most is ${MAX_DETAIL}. Shorten it, or put the rest in a file and give Claude its path.`
+    : undefined
 }
 
 function detailIn(task: Task): string {
@@ -254,9 +278,13 @@ function newsLineOf(task: Task, move: Message, isFull: boolean): string {
   }
 }
 
-/** What the user did with an item, after its head; '' when there is nothing more to say. */
+/**
+ * What the user did with an item, after its head; '' when there is nothing
+ * more to say. `isFull` (`list_items`) tells all they said since Claude's last
+ * message; a digest tells only what Claude has not been told of.
+ */
 function bodyOf(task: Task, isFull: boolean): string {
-  const lines = movesOf(task)
+  const lines = (isFull ? movesOf(task) : unheardOf(task))
     .map(move => newsLineOf(task, move, isFull))
     .filter(line => line !== '')
 
@@ -297,9 +325,9 @@ function ownWordOf(move: Message): string {
   }
 }
 
-/** What the user did with an item, in their own words: a reply starts on a line of its own. */
+/** What the user did with an item that Claude has not been told of, in their own words: a reply starts on a line of its own. */
 function ownWordsOf(task: Task): string {
-  const moves = movesOf(task)
+  const moves = unheardOf(task)
   const head = ownHeadOf(task)
 
   if (moves.length === 0) {
