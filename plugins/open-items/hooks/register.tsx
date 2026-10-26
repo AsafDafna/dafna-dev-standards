@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
-import type { Held, Saved, Screen, Task } from '../types'
+import type { Header, Held, Offer, Saved, Screen, Taken, Task } from '../types'
 import {
   DONE,
   MAX_NOTE,
@@ -9,22 +9,26 @@ import {
   SEEN,
   addedOf,
   answerIn,
+  arrivedAs,
   bridgeOf,
   closedAs,
   digestOf,
   hasAnswerIn,
   hasNewsIn,
   isActive,
+  isAway,
   isOpenAsk,
   isRepeatOf,
   isShown,
   isStale,
+  leftTakenOf,
   listOf,
   looksSecret,
   messageOf,
   movedBy,
   newsHeadOf,
   newsOf,
+  numbersFor,
   overLimitOf,
   ownHeadOf,
   parseAsk,
@@ -35,8 +39,12 @@ import {
   replyErrorOf,
   replyOf,
   sameAsk,
+  stateBefore,
   statusOf,
+  takenBackOf,
+  takenByCodeOf,
   toldOf,
+  tookBy,
   waitsOnUser,
 } from './tasks'
 import type { Move } from './tasks'
@@ -48,10 +56,15 @@ import {
   LINK_LABEL,
   LONG_ANSWER,
   MAX_SHOWN_TITLE,
+  MOVING_LABEL,
+  OFFER_BUTTONS,
   REPLY_LABEL,
   REPLY_PLACEHOLDER,
   ROW_INDENT,
+  SAVE_FAILED,
   SUBMIT_LABEL,
+  TAKE_BACK,
+  UNCLAIMED_NOTE,
   actionsOf,
   ageOf,
   arrowTargetOf,
@@ -68,6 +81,9 @@ import {
   insteadOf,
   linkOf,
   marksOf,
+  movingOf,
+  movingRowOf,
+  offerOf,
   openTaskOf,
   placeholderOf,
   replyKeyOf,
@@ -78,8 +94,8 @@ import {
   titleOf,
 } from './pane'
 import type { Entry, PaneView } from './pane'
-import { isExpired, isSavedKey, keyOf, savedIn, trimmed } from './saved'
-import { numbersOf, printable } from './text'
+import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed } from './saved'
+import { numbersOf, plural, printable } from './text'
 
 const PLUGIN = 'open-items'
 
@@ -136,6 +152,14 @@ const NEW_ID_GAP_MS = 100
 
 /** What a tool answers while the session's saved items are still being read at its start. */
 const LOADING = "Open items is still loading this session's items. Try again in a moment."
+
+/** A hand-off code: CODE_LENGTH characters of CODE_CHARS, as CODE_SHAPE reads it. */
+const CODE_LENGTH = 6
+const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
+const CODE_SHAPE = /^[a-z0-9]{6}$/
+
+/** What a tool answers when the store cannot be read, which a hand-off needs. */
+const STORE_DOWN = 'Open items could not read the store, so nothing changed. Try again in a moment.'
 
 /** The pane the items wait in, and the command that opens it. */
 const PANE = 'open-items'
@@ -338,6 +362,12 @@ const folder = atom({ plugin: 'open-items', key: 'folder' } as const, null as st
 type Roster = StateValue<'open-items', 'clients'>
 /** The roster, kept where a reload of the code finds it. */
 const clients = atom({ plugin: 'open-items', key: 'clients' } as const, {} as Roster)
+const header = atom({ plugin: 'open-items', key: 'header' } as const, { lastActiveMs: 0, taken: [] } as Header)
+const offer = atom({ plugin: 'open-items', key: 'offer' } as const, [] as Offer)
+const saveFailing = atom({ plugin: 'open-items', key: 'isSaveFailing' } as const, false)
+
+/** Items another session's key holds, to take from it, and the hand-off code they go by ('' for leftovers). */
+type Source = { key: string; code: string; tasks: readonly Task[] }
 
 /**
  * What a toast says when a prompt carrying updates is dropped: why (`why`,
@@ -515,6 +545,7 @@ export const register: Register = on => {
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
     await update($, folder, known => known ?? e.cwd)
+    await noteActive($)
     // Background tasks may have started unseen in a conversation that holds
     // rows already (a resume, or the mod loaded mid-session), or before a
     // reload of the code, which finds the session read (see `takeUp`).
@@ -534,6 +565,8 @@ export const register: Register = on => {
     // Its answers stay unsent in its key: a prompt sent now could reach the session /clear starts.
     cancelBatch()
     live.ends += 1
+    const endedMs = await $.clock.now()
+    await update($, header, now => ({ ...now, endedMs }))
     const written = persist($).catch(() => undefined)
     const leftMs = next.budget.remainingMs
 
@@ -553,7 +586,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'open-items' }, async $ => {
-    if ((await read($, tasks)).filter(isShown).length === 0) {
+    if ((await read($, tasks)).filter(isShown).length === 0 && (await read($, offer)).length === 0) {
       return { text: 'No items for you right now.' }
     }
 
@@ -735,9 +768,102 @@ export const register: Register = on => {
     return { result: listOf(picked, await $.clock.now(), id !== undefined) }
   })
 
-  for (const tool of [HANDOFF, TAKE] as const) {
-    on('tool.call', { tool }, async ($, e) => ({ deny: e.agentId === undefined ? 'Not ready yet.' : 'Only the main agent hands items off.' }))
-  }
+  on('tool.call', { tool: HANDOFF }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent hands items off.' }
+    }
+
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    const all = await readAll($).catch(() => undefined)
+
+    if (all === undefined) {
+      return { deny: STORE_DOWN }
+    }
+
+    await noteMoved($, all, live.sessionId)
+
+    if (!(await read($, tasks)).some(task => isActive(task) || task.state === 'handing-off')) {
+      return { result: 'There are no open or Later items to hand off.' }
+    }
+
+    const nowMs = await $.clock.now()
+    const { handoff } = await read($, header)
+    // A second call keeps the code a successor may hold already.
+    const code = handoff !== undefined && !takenCodes(all).has(handoff.code) ? handoff.code : newCode(all)
+    const unread = new Set(live.unreadAppend)
+    let handed: number[] = []
+
+    await update($, header, now => ({ ...now, handoff: { code, atMs: nowMs } }))
+    await change($, list => {
+      handed = list.filter(isActive).map(task => task.id)
+
+      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(task, unread.has(task.id), nowMs) : task))
+    })
+
+    if (handed.length === 0) {
+      await awaited($, persist($))
+    }
+
+    // Read by no model request, those answers go with their items: the old Claude is not woken for them.
+    live.unreadAppend = live.unreadAppend.filter(id => !handed.includes(id))
+
+    for (const id of handed) {
+      await settle($, id)
+    }
+
+    const count = (await read($, tasks)).filter(task => task.state === 'handing-off').length
+
+    return {
+      result: `Marked ${plural(count, 'item')} for the next session. Hand-off code: ${code}. Put the code in the successor's prompt; it calls take_items with it.`,
+    }
+  })
+
+  on('tool.call', { tool: TAKE }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent takes items.' }
+    }
+
+    const args = e as unknown as Record<string, unknown>
+    const code = typeof args['code'] === 'string' ? args['code'].trim().toLowerCase() : ''
+
+    if (!CODE_SHAPE.test(code)) {
+      return { deny: `code is required: the ${CODE_LENGTH}-character hand-off code from your prompt.` }
+    }
+
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    const all = await readAll($).catch(() => undefined)
+
+    if (all === undefined) {
+      return { deny: STORE_DOWN }
+    }
+
+    if (takenCodes(all).has(code)) {
+      return { deny: `The items of hand-off code ${code} were taken already.` }
+    }
+
+    const found = handedOffIn(all, code, keyOf(live.sessionId))
+
+    if (found === undefined) {
+      return { deny: `No items to take with hand-off code ${code}.` }
+    }
+
+    const nowMs = await $.clock.now()
+    const source = { key: found.key, code, tasks: found.saved.tasks }
+    // The result tells Claude what the user did that it has not heard.
+    const came = await takeIn($, [source], arrived => tookBy(arrived.update === 'pending' ? toldOf(arrived) : arrived, 'claude', nowMs))
+
+    await dropOffered($, [source])
+    $.ui.toast(`${plural(came.length, 'item')} moved from the previous session`)
+    await show($, false)
+
+    return { result: takenByCodeOf(code, came.map(({ arrived, was }) => ({ task: arrived, was })), nowMs) }
+  })
 
   // Observes only: the mod hooks no tool of Claude Code's own, so it reads a
   // background start from the main loop's result row. A subagent's background
@@ -762,6 +888,8 @@ export const register: Register = on => {
       live.mainTurn = true
       live.wasStopped = false
       live.unreadAppend = []
+      await noteActive($)
+      await awaited($, Promise.all([scan($), persist($)]))
     }
 
     return next(e)
@@ -796,17 +924,16 @@ export const register: Register = on => {
     return result
   })
 
+  // Before the press acts: an item another session took meanwhile takes no answer here.
   on('ui.press', { plugin: PLUGIN }, async ($, e, next) => {
-    live.lastPersonMs = await $.clock.now()
-    noteInput('press', live.lastPersonMs)
+    await pressed($)
 
     return next(e)
   })
 
   on('ui.input', { plugin: PLUGIN }, async ($, e, next) => {
     if (e.kind === 'submit') {
-      live.lastPersonMs = await $.clock.now()
-      noteInput('press', live.lastPersonMs)
+      await pressed($)
     }
 
     return next(e)
@@ -898,7 +1025,7 @@ export const register: Register = on => {
 
     // Some seats skip this mod's prompt.context and session.compact hooks, so
     // a line on every prompt is what reminds a Claude past a compaction.
-    const reminder = reminderOf(await read($, tasks), isHeld)
+    const reminder = reminderOf((await read($, tasks)).filter(one => !isAway(one)), isHeld)
     const context = [...(e.context ?? []), ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []), ...(reminder === undefined ? [] : [reminder])]
     const entered = { ...e, ...(isAnswer ? { text: messageOf(due) } : {}), ...(context.length > 0 ? { context } : {}) }
 
@@ -993,7 +1120,7 @@ export const register: Register = on => {
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
     const isKey = e.origin.kind === 'person' && e.pointer === undefined && e.by !== 0 && e.contentRows > e.bodyRows
     const view = isKey ? await paneView($, FIRST_SEAT) : undefined
-    const to = view !== undefined && screenOf(view) === 'list' ? arrowTargetOf(focusOrderOf(view.shown), live.ring, e.by) : undefined
+    const to = view !== undefined && screenOf(view) === 'list' ? arrowTargetOf(focusOrderOf(view.shown, view), live.ring, e.by) : undefined
 
     if (to === undefined) {
       return next(e)
@@ -1055,7 +1182,7 @@ export const register: Register = on => {
     const { shown } = view
 
     // The pane is closing: it asks for no rows, which would open it again.
-    if (shown.length === 0) {
+    if (shown.length === 0 && offerOf(view) === undefined) {
       return <Text dimColor>No items for you right now.</Text>
     }
 
@@ -1077,6 +1204,14 @@ export const register: Register = on => {
         <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => closePane($)} />
       </Box>
     )
+    const unsaved =
+      view.isSaveFailing === true ? (
+        <Box key="unsaved" flexShrink={0}>
+          <Text color="red" wrap="wrap">
+            {SAVE_FAILED}
+          </Text>
+        </Box>
+      ) : null
     const task = openTaskOf(view)
 
     if (task !== undefined) {
@@ -1112,6 +1247,7 @@ export const register: Register = on => {
       // it goes out of the item's indent, across the body's whole width.
       return (
         <Box flexDirection="column">
+          {unsaved}
           <Box key={`item-${task.id}`} flexDirection="column" flexShrink={0}>
             <Box flexDirection="row">
               {/* The glyph keeps its cells beside a title that wraps. */}
@@ -1200,6 +1336,10 @@ export const register: Register = on => {
     }
 
     const head = headlineOf(view)
+    const offered = offerOf(view)
+    const ownKey = keyOf(live.sessionId)
+    const drawnOffer = (await read($, offer)).filter(entry => entry.key !== ownKey)
+    const moving = movingOf(shown)
 
     // A row is one line, its title cut to fit: the item screen draws it whole.
     const row = (one: Task) => {
@@ -1216,12 +1356,30 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box key="head" flexDirection="row" flexShrink={0}>
-          <Text wrap="wrap">
-            <Text color={shown.some(waitsOnUser) ? 'yellow' : 'gray'}>{head.glyph}</Text>
-            <Text bold>{head.headline}</Text>
-          </Text>
-        </Box>
+        {unsaved}
+        {offered === undefined ? null : (
+          <Box key="offer" flexDirection="column" flexShrink={0}>
+            <Text wrap="wrap">{offered}</Text>
+            <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+              {OFFER_BUTTONS.map(button => (
+                <Button
+                  key={button.key}
+                  plain
+                  label={button.label}
+                  onPress={() => (button.key === 'take' ? takeLeft($, drawnOffer) : dismissLeft($, drawnOffer))}
+                />
+              ))}
+            </Box>
+          </Box>
+        )}
+        {!shown.some(isActive) ? null : (
+          <Box key="head" flexDirection="row" flexShrink={0}>
+            <Text wrap="wrap">
+              <Text color={shown.some(waitsOnUser) ? 'yellow' : 'gray'}>{head.glyph}</Text>
+              <Text bold>{head.headline}</Text>
+            </Text>
+          </Box>
+        )}
         {groupsOf(shown).map(group => (
           <Box key={`section-${group.label}`} flexDirection="column" flexShrink={0}>
             <Text bold color="yellow">
@@ -1232,6 +1390,28 @@ export const register: Register = on => {
             </Box>
           </Box>
         ))}
+        {moving.length === 0 ? null : (
+          <Box key="moving" flexDirection="column" flexShrink={0}>
+            <Text bold color="yellow">
+              {MOVING_LABEL}
+            </Text>
+            <Box flexDirection="column" paddingLeft={ROW_INDENT}>
+              {moving.map(one => (
+                <Box key={`moving-${one.id}`}>
+                  <Text dimColor>{movingRowOf(one, columns)}</Text>
+                </Box>
+              ))}
+              {view.isUnclaimed !== true ? null : (
+                <Box key="unclaimed" flexDirection="column">
+                  <Text wrap="wrap">{UNCLAIMED_NOTE}</Text>
+                  <Box flexShrink={0}>
+                    <Button key={TAKE_BACK.key} plain label={TAKE_BACK.label} onPress={() => takeBack($)} />
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        )}
         <Box key="foot" flexDirection="row" columnGap={BUTTON_GAP} flexShrink={0}>
           {hint}
           {hide}
@@ -1243,8 +1423,9 @@ export const register: Register = on => {
 
 /**
  * Goes on as the session /clear started after `endingId`: it has no saved
- * items to read. One the engine never names starts empty and saves nothing:
- * its writes would go over the ended session's key.
+ * items to read, and is offered at once those the ended one left. One the
+ * engine never names starts empty and saves nothing: its writes would go
+ * over the ended session's key.
  */
 async function startCleared($: EngineInterface, endingId: string) {
   const sessionId = await newIdAfter($, endingId)
@@ -1253,6 +1434,7 @@ async function startCleared($: EngineInterface, endingId: string) {
 
   if (sessionId !== undefined) {
     await update($, restoredFor, () => sessionId)
+    await scan($)
   }
 }
 
@@ -1305,10 +1487,14 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.wasStopped = false
   live.unreadAppend = []
   const cwd = await $.session.cwd().catch(() => undefined)
+  const nowMs = await $.clock.now()
   await update($, folder, known => cwd ?? known)
   await update($, restoredFor, () => null)
   await update($, tasks, () => [])
   await update($, nextId, () => 1)
+  await update($, header, (): Header => ({ lastActiveMs: nowMs, taken: [] }))
+  await update($, offer, (): Offer => [])
+  await update($, saveFailing, () => false)
   await update($, screen, () => LIST_SCREEN)
   await update($, held, () => null)
   await refresh($)
@@ -1316,10 +1502,10 @@ async function switchTo($: EngineInterface, sessionId: string) {
 
 /**
  * Takes up the items this session saved, when its key has them (a resumed
- * session), and deletes the keys of sessions saved more than `KEEP_MS` ago.
- * Until the read settles, the tools refuse: an item Claude added meanwhile
- * would go under the items read. A store slow to answer holds up the start
- * 5 seconds at most.
+ * session), and deletes the keys of sessions saved more than `KEEP_MS` ago;
+ * then acts on what other sessions did (see `scan`). Until the read settles,
+ * the tools refuse: an item Claude added meanwhile would go under the items
+ * read. A store slow to answer holds up the start 5 seconds at most.
  */
 async function restore($: EngineInterface) {
   const sessionId = await $.session.id()
@@ -1341,9 +1527,23 @@ async function restore($: EngineInterface) {
     }
   })
   const cleaned = queued(() => dropExpired($)).catch(() => undefined)
+  const scanned = Promise.all([restored, cleaned]).then(async ([isKept, all]) => {
+    if (live.ends !== ends || live.sessionId !== sessionId) {
+      return false
+    }
+
+    // A resumed session's key says at once that it runs again, so no other session offers its items.
+    if (isKept) {
+      void persist($).catch(() => undefined)
+    }
+
+    await scan($, all)
+
+    return isKept
+  })
 
   // The pane opens for what was read, unless the session has ended since.
-  const shown = restored
+  const shown = scanned
     .then(async isKept => {
       if (isKept && (await refresh($)) && live.ends === ends) {
         await show($, false)
@@ -1351,7 +1551,7 @@ async function restore($: EngineInterface) {
     })
     .catch(() => undefined)
 
-  await awaited($, Promise.allSettled([restored, cleaned]))
+  await awaited($, Promise.allSettled([restored, cleaned, scanned]))
   await redrawn($, shown)
 }
 
@@ -1382,6 +1582,14 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
     if (saved.folder !== '') {
       await update($, folder, () => saved.folder)
     }
+
+    // Taken up, an ended session runs again; one that ended while its key was read stays ended.
+    await update($, header, (now): Header => ({
+      lastActiveMs: nowMs,
+      taken: saved.taken,
+      ...(saved.handoff === undefined ? {} : { handoff: saved.handoff }),
+      ...(now.endedMs === undefined ? {} : { endedMs: now.endedMs }),
+    }))
   }
 
   await update($, restoredFor, () => sessionId)
@@ -1389,19 +1597,32 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   return isKept
 }
 
-/** Deletes every saved key that has expired or holds no saved session: all of them share the store's one file. */
-async function dropExpired($: EngineInterface) {
+/**
+ * Deletes every saved key that has expired or holds no saved session: all of
+ * them share the store's one file. Resolves the keys left, as `readAll` does.
+ */
+async function dropExpired($: EngineInterface): Promise<Record<string, unknown>> {
   const nowMs = await $.clock.now()
-  const keys = (await $.store.keys()).filter(isSavedKey)
-  const values = await Promise.all(keys.map(key => $.store.get(key)))
+  const all = await readAll($)
 
-  for (const [i, key] of keys.entries()) {
-    const saved = savedIn(values[i])
+  for (const [key, raw] of Object.entries(all)) {
+    const saved = savedIn(raw)
 
     if (saved === undefined || isExpired(saved, nowMs)) {
       await $.store.delete(key)
+      delete all[key]
     }
   }
+
+  return all
+}
+
+/** Every session's key in the store, as stored, by key. */
+async function readAll($: EngineInterface): Promise<Record<string, unknown>> {
+  const keys = (await $.store.keys()).filter(isSavedKey)
+  const values = await Promise.all(keys.map(key => $.store.get(key)))
+
+  return Object.fromEntries(keys.map((key, i) => [key, values[i]]))
 }
 
 /** `writeSaved` once the store work asked for before is done, from the state as it stands then. */
@@ -1410,23 +1631,42 @@ function persist($: EngineInterface): Promise<void> {
 }
 
 /**
- * Writes the session's items, as `trimmed` keeps them, and its count under
- * its key. Nothing before its first item (most sessions never hold one), nor
- * before the session has read its key, which the write would go over: one
- * whose start read failed reads it here, and writes only where none is saved.
+ * Writes the session's items, as `trimmed` keeps them, its count and its
+ * header under its key. Nothing before its first item (most sessions never
+ * hold one), nor before the session has read its key, which the write would
+ * go over: one whose start read failed reads it here, and writes only where
+ * none is saved. A write that fails is shown until one succeeds.
  */
 async function writeSaved($: EngineInterface) {
   // Read at one moment: a switch to another session never falls between them.
   const sessionId = live.sessionId
-  const [restored, list, count, started] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId), read($, folder)])
+  const [restored, list, count, started, head] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId), read($, folder), read($, header)])
 
   if ((list.length === 0 && count === 1) || (restored !== sessionId && !(await isUnsaved($, sessionId)))) {
     return
   }
 
   const nowMs = await $.clock.now()
-  const saved: Saved = { version: 2, tasks: list, nextId: count, savedMs: nowMs, lastActiveMs: nowMs, folder: started ?? '', taken: [] }
-  await $.store.set(keyOf(sessionId), trimmed(saved, nowMs))
+  const saved: Saved = { version: 2, tasks: list, nextId: count, savedMs: nowMs, ...head, folder: started ?? '' }
+
+  try {
+    await $.store.set(keyOf(sessionId), trimmed(saved, nowMs))
+  } catch (error) {
+    await noteSaved($, false)
+    throw error
+  }
+
+  await noteSaved($, true)
+}
+
+/** Shows that the session's last write failed, or no more once one succeeds. */
+async function noteSaved($: EngineInterface, isSaved: boolean) {
+  if ((await read($, saveFailing)) !== isSaved) {
+    return
+  }
+
+  await update($, saveFailing, () => !isSaved)
+  await refresh($)
 }
 
 /**
@@ -1550,9 +1790,10 @@ async function change($: EngineInterface, fn: (list: readonly Task[]) => readonl
  * Marks the updates Claude has not heard delivered (every one, or those
  * `isWanted`), in one change of the task list, and resolves them: the path
  * that claims them sends them, and no other finds them waiting meanwhile.
+ * One on an item away to another session is that session's to hear.
  */
 async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () => true): Promise<readonly Task[]> {
-  const isDue = (task: Task) => task.update === 'pending' && isWanted(task)
+  const isDue = (task: Task) => task.update === 'pending' && !isAway(task) && isWanted(task)
   let due: readonly Task[] = []
 
   if (!(await read($, tasks)).some(isDue)) {
@@ -1586,18 +1827,19 @@ async function present($: EngineInterface, task: Task, nowMs: number, words: { t
 
 /**
  * Keeps the status line in step with the items, and closes the pane once
- * nothing is left in it. Resolves whether anything is shown.
+ * nothing is left in it, no item and no offer. Resolves whether anything is shown.
  */
 async function refresh($: EngineInterface): Promise<boolean> {
   const shown = (await read($, tasks)).filter(isShown)
+  const isShowing = shown.length > 0 || (await read($, offer)).length > 0
 
-  $.ui.status(statusOf(shown))
+  $.ui.status(statusOf(shown, await read($, saveFailing)))
 
-  if (shown.length === 0) {
+  if (!isShowing) {
     await closePane($).catch(() => undefined)
   }
 
-  return shown.length > 0
+  return isShowing
 }
 
 /** Closes the Open items pane, and has a re-size under way leave it closed. */
@@ -1644,15 +1886,26 @@ async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promi
 
 /** What the pane draws from: the session's state, and what only the surface knows. */
 async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 'isFocused'>): Promise<PaneView> {
+  const ownKey = keyOf(live.sessionId)
   const state = {
     shown: (await read($, tasks)).filter(isShown),
     held: await read($, held),
     screen: await read($, screen),
     nowMs: await $.clock.now(),
+    ...offeredOf(await read($, offer), ownKey),
+    isSaveFailing: await read($, saveFailing),
   }
   const task = openTaskOf(state)
 
   return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? '') }, surface)
+}
+
+/** What the pane draws of `entries`: how many items other sessions left, and whether this session's own hand-off waits unclaimed. */
+function offeredOf(entries: Offer, ownKey: string): Pick<PaneView, 'offered' | 'isUnclaimed'> {
+  return {
+    offered: entries.reduce((count, entry) => count + (entry.key === ownKey ? 0 : entry.ids.length), 0),
+    isUnclaimed: entries.some(entry => entry.key === ownKey),
+  }
 }
 
 /** The pane's `view` as a surface that `canType`, and holds the keys or not, draws it. */
@@ -2005,8 +2258,9 @@ async function respond($: EngineInterface, id: number, move: Move, typedText = '
 
   if (was === undefined || (!isActive(was) && !isRepeatOf(was, move))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
+    const why = was !== undefined && isAway(was) ? 'moved to a new session' : "isn't open any more"
 
-    $.ui.toast(`Item #${id} isn't open any more, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
+    $.ui.toast(`Item #${id} ${why}, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
   }
 
   return true
@@ -2166,8 +2420,25 @@ async function deliver($: EngineInterface, ids: readonly number[]) {
     return
   }
 
-  const text = messageOf(due)
   const which = due.map(task => task.id)
+
+  await handOver($, messageOf(due), due, which, inWords, `Sent your response to ${numbersOf(which)} to Claude`)
+}
+
+/**
+ * Hands Claude `text` about items `ids`, which carries the updates `due`
+ * claimed, as `isCarried` finds them: a row the running main turn reads at
+ * its next request, or else the user's prompt, which the engine runs once
+ * Claude is idle. A row that went in is followed by `notice`, for the user.
+ */
+async function handOver(
+  $: EngineInterface,
+  text: string,
+  due: readonly Task[],
+  ids: readonly number[],
+  isCarried: (entered: Entered, task: Task) => boolean,
+  notice?: string,
+) {
   const isTaken =
     isMainTurnRunning() === true &&
     (await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).then(
@@ -2176,25 +2447,302 @@ async function deliver($: EngineInterface, ids: readonly number[]) {
     ))
 
   if (!isTaken) {
-    await passOn($, due, inWords, 'why', () => $.prompt.submit({ text, asUser: true })).catch(() => undefined)
+    await passOn($, due, isCarried, 'why', () => $.prompt.submit({ text, asUser: true })).catch(() => undefined)
     return
   }
 
   if (isMainTurnRunning() === true) {
-    live.unreadAppend = [...new Set([...live.unreadAppend, ...which])]
+    live.unreadAppend = [...new Set([...live.unreadAppend, ...ids])]
   } else if (!live.wasStopped) {
     // The turn ended while the row went in.
     wakeUp($)
   }
 
-  // The notice is for the user's eyes only; Claude has the answer either way.
-  await $.session
-    .append({ message: { type: 'system', content: [{ type: 'text', text: `Sent your response to ${numbersOf(which)} to Claude` }] } })
-    .catch(() => undefined)
+  if (notice !== undefined) {
+    await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: notice }] } }).catch(() => undefined)
+  }
 }
 
 /** Starts a turn for the answers that joined the main turn after its last request. */
 function wakeUp($: EngineInterface) {
   live.unreadAppend = []
   void $.prompt.submit({ text: WAKE_UP, asUser: true }).catch(() => undefined)
+}
+
+/** The user or Claude is at work in the session: other sessions do not offer its items. */
+async function noteActive($: EngineInterface) {
+  const nowMs = await $.clock.now()
+
+  await update($, header, now => ({ ...now, lastActiveMs: nowMs }))
+}
+
+/** A press or a reply in the pane: the user is here, and what other sessions did is read before it acts. */
+async function pressed($: EngineInterface) {
+  live.lastPersonMs = await $.clock.now()
+  noteInput('press', live.lastPersonMs)
+  await noteActive($)
+  await awaited($, scan($))
+}
+
+/**
+ * Reads every session's key, or takes `all` read just now, and acts on what
+ * other sessions did: this session's items another took are moved, and the
+ * items left to take are offered. No timer runs it: the start, each main turn
+ * and each press do. A store that fails leaves things as they are.
+ */
+async function scan($: EngineInterface, all?: Record<string, unknown>) {
+  const sessionId = live.sessionId
+  const stored = all ?? (await readAll($).catch(() => undefined))
+
+  if (stored === undefined || live.sessionId !== sessionId) {
+    return
+  }
+
+  await noteMoved($, stored, sessionId)
+  await offerLeftovers($, stored, sessionId)
+}
+
+/** Marks moved this session's items another session took, by number or by its hand-off code, and says so. */
+async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
+  const { handoff } = await read($, header)
+  const taken = takenFrom(all, keyOf(sessionId), handoff)
+
+  if ((taken.ids.size === 0 && !taken.isCodeTaken) || live.sessionId !== sessionId) {
+    return
+  }
+
+  const isTaken = (task: Task) => isShown(task) && (taken.ids.has(task.id) || (taken.isCodeTaken && task.state === 'handing-off'))
+  const nowMs = await $.clock.now()
+  let moved: number[] = []
+
+  if (taken.isCodeTaken) {
+    await update($, header, now => ({ ...now, handoff: undefined }))
+  }
+
+  await change($, list => {
+    moved = list.filter(isTaken).map(task => task.id)
+
+    return moved.length === 0 ? list : list.map(task => (isTaken(task) ? { ...task, state: 'moved', update: 'none', isWaitingForClaude: false, updatedMs: nowMs } : task))
+  })
+
+  if (moved.length === 0) {
+    return
+  }
+
+  for (const id of moved) {
+    await settle($, id)
+  }
+
+  $.ui.toast(`${plural(moved.length, 'item')} moved to a new session`)
+}
+
+/**
+ * Offers the items other sessions in the folder left, and this session's
+ * own hand-off when no session took it in time; opens the pane for an offer
+ * that grew.
+ */
+async function offerLeftovers($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
+  const ownKey = keyOf(sessionId)
+  const nowMs = await $.clock.now()
+  const left = leftoversIn(all, (await read($, folder)) ?? '', ownKey, nowMs).map(({ key, saved }) => ({ key, ids: saved.tasks.map(task => task.id) }))
+  const { handoff } = await read($, header)
+  const own = isUnclaimed(handoff, takenCodes(all), nowMs) ? (await read($, tasks)).filter(task => task.state === 'handing-off').map(task => task.id) : []
+  const next: Offer = [...left, ...(own.length === 0 ? [] : [{ key: ownKey, ids: own }])]
+  const was = await read($, offer)
+
+  if (live.sessionId !== sessionId || JSON.stringify(was) === JSON.stringify(next)) {
+    return
+  }
+
+  await update($, offer, () => next)
+  const isGrown = next.some(entry => entry.ids.some(id => !was.some(one => one.key === entry.key && one.ids.includes(id))))
+
+  if ((await refresh($)) && isGrown && !(await show($, false))) {
+    const count = left.reduce((sum, entry) => sum + entry.ids.length, 0)
+
+    $.ui.toast(`${count === 0 ? 'No session took the items you handed off' : offerOf({ offered: count })}. See /open-items`)
+  }
+}
+
+/** A hand-off code no key in `all` holds. */
+function newCode(all: Record<string, unknown>): string {
+  const used = new Set([...takenCodes(all), ...Object.values(all).flatMap(raw => savedIn(raw)?.handoff?.code ?? [])])
+  let code = randomCode()
+
+  while (used.has(code)) {
+    code = randomCode()
+  }
+
+  return code
+}
+
+/** CODE_LENGTH characters of CODE_CHARS from the runtime's random source, which no other session can guess. */
+function randomCode(): string {
+  // A byte past the last whole run of the characters would favour the first ones.
+  const fair = 256 - (256 % CODE_CHARS.length)
+  let code = ''
+
+  while (code.length < CODE_LENGTH) {
+    const [byte = fair] = crypto.getRandomValues(new Uint8Array(1))
+
+    if (byte < fair) {
+      code += CODE_CHARS.charAt(byte % CODE_CHARS.length)
+    }
+  }
+
+  return code
+}
+
+/** `task` marked for the next session; `isUnread` when its answer joined a turn no model request read, so it goes on as not heard. */
+function handedOff(task: Task, isUnread: boolean, atMs: number): Task {
+  return { ...task, state: 'handing-off', updatedMs: atMs, ...(isUnread ? { update: 'pending', heardMs: undefined } : {}) }
+}
+
+/**
+ * Moves the items of `sources` into this session's key, each numbered by
+ * `numbersFor` and made as `make` has it once it arrives (see `arrivedAs`),
+ * with a record of what came from which key. Resolves each as it arrived, as
+ * made, and with the number it had.
+ */
+async function takeIn($: EngineInterface, sources: readonly Source[], make: (arrived: Task) => Task): Promise<{ arrived: Task; task: Task; was: number }[]> {
+  const nowMs = await $.clock.now()
+  const incoming = sources.flatMap(source => source.tasks)
+  const held = (await read($, tasks)).map(task => task.id)
+  let numbers: readonly { was: number; now: number }[] = []
+
+  await update($, nextId, count => {
+    numbers = numbersFor(held, count, incoming.map(task => task.id))
+
+    return Math.max(count, ...numbers.map(({ now }) => now + 1))
+  })
+
+  const came = incoming.map((task, i) => {
+    const arrived = arrivedAs(task, numbers[i]?.now ?? task.id, nowMs)
+
+    return { arrived, task: make(arrived), was: task.id }
+  })
+  const records: Taken[] = []
+  let at = 0
+
+  for (const { key, code, tasks: taking } of sources) {
+    records.push({ code, fromKey: key, ids: numbers.slice(at, at + taking.length) })
+    at += taking.length
+  }
+
+  // The items before the record of them: a crash between two writes leaves an item in two keys, never in none.
+  await update($, tasks, list => [...list, ...came.map(one => one.task)])
+  await update($, header, now => ({ ...now, taken: [...now.taken, ...records] }))
+  await awaited($, persist($))
+  await refresh($)
+
+  return came
+}
+
+/** Drops from the offer the items of `sources`, which this session took or dismissed. */
+async function dropOffered($: EngineInterface, sources: readonly Source[]) {
+  await update($, offer, entries =>
+    entries.flatMap(entry => {
+      const gone = sources.find(source => source.key === entry.key)?.tasks.map(task => task.id) ?? []
+      const ids = entry.ids.filter(id => !gone.includes(id))
+
+      return ids.length === 0 ? [] : [{ ...entry, ids }]
+    }),
+  )
+  await refresh($)
+}
+
+/**
+ * The items of the offer as the pane drew it (`drawn`) that are still left to
+ * take, from the store as it is now. Taken by their hand-off code when they
+ * are its items still handing off; else by none. Undefined, and the user
+ * told, when nothing is left or the store cannot be read.
+ */
+async function stillOffered($: EngineInterface, drawn: Offer): Promise<Source[] | undefined> {
+  const all = await readAll($).catch(() => undefined)
+  const left = all === undefined ? [] : leftoversIn(all, (await read($, folder)) ?? '', keyOf(live.sessionId), await $.clock.now())
+  const sources = left.flatMap(({ key, saved }) => {
+    const ids = drawn.find(entry => entry.key === key)?.ids ?? []
+    const taking = saved.tasks.filter(task => ids.includes(task.id))
+    const code = taking.some(task => task.state === 'handing-off') ? (saved.handoff?.code ?? '') : ''
+
+    return taking.length === 0 ? [] : [{ key, code, tasks: taking }]
+  })
+
+  if (sources.length === 0) {
+    await notOffered($, all === undefined)
+    return undefined
+  }
+
+  return sources
+}
+
+/** The user's Take on items other sessions left: they move here, and Claude is told of them. */
+async function takeLeft($: EngineInterface, drawn: Offer) {
+  const sources = await stillOffered($, drawn)
+
+  if (sources === undefined) {
+    return
+  }
+
+  const nowMs = await $.clock.now()
+  const came = await takeIn($, sources, arrived => tookBy(arrived, 'user', nowMs))
+  const ids = came.map(({ task }) => task.id)
+
+  await dropOffered($, sources)
+  const due = await claim($, task => ids.includes(task.id))
+  await handOver($, leftTakenOf(came, nowMs), due, ids, inNews)
+}
+
+/** The user's Dismiss on items other sessions left: they close here, as no other session is offered them again, and Claude hears nothing. */
+async function dismissLeft($: EngineInterface, drawn: Offer) {
+  const sources = await stillOffered($, drawn)
+
+  if (sources === undefined) {
+    return
+  }
+
+  await takeIn($, sources, arrived => ({ ...arrived, state: 'withdrawn', note: 'dismissed', update: 'none', isWaitingForClaude: false, hasNewReply: false }))
+  await dropOffered($, sources)
+}
+
+/** Says a Take or Dismiss found nothing to act on (`isStoreDown`: it could not read the store), and offers what is left. */
+async function notOffered($: EngineInterface, isStoreDown: boolean) {
+  $.ui.toast(isStoreDown ? STORE_DOWN : 'Those items are no longer offered, so nothing changed.', { timeoutMs: 8000 })
+  await scan($)
+}
+
+/** The user's Take on this session's own hand-off no session took: the items are theirs and Claude's again. */
+async function takeBack($: EngineInterface) {
+  const ownKey = keyOf(live.sessionId)
+
+  // Pressed on a drawing from before Claude handed them off again, or before a session took them.
+  if (!(await read($, offer)).some(entry => entry.key === ownKey)) {
+    await notOffered($, false)
+    return
+  }
+
+  const nowMs = await $.clock.now()
+  let back: number[] = []
+
+  await update($, header, now => ({ ...now, handoff: undefined }))
+  await change($, list => {
+    back = list.filter(task => task.state === 'handing-off').map(task => task.id)
+
+    return back.length === 0 ? list : list.map(task => (task.state === 'handing-off' ? { ...task, state: stateBefore(task), updatedMs: nowMs } : task))
+  })
+  await update($, offer, entries => entries.filter(entry => entry.key !== ownKey))
+  await refresh($)
+
+  if (back.length === 0) {
+    return
+  }
+
+  const items = (await read($, tasks)).filter(task => back.includes(task.id))
+  const due = await claim($, task => back.includes(task.id))
+  await handOver($, takenBackOf(items.map(task => ({ task, was: task.id })), nowMs), due, back, inNews)
+}
+
+/** Whether a prompt that entered carries an update in its words as its news (`#5 open: <title>.`), read as `inWords` reads them. */
+function inNews(entered: Entered, task: Task): boolean {
+  return entered.text.includes(newsHeadOf(task))
 }

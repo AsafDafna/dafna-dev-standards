@@ -23,7 +23,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-from screen import Claude, pane_body, placement, run, wait_for  # noqa: E402
+from screen import Claude, has_pane, pane_body, placement, run, wait_for  # noqa: E402
 
 ROOT = os.environ.get('PLUGIN_DIR') or os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 # Framed, then each side of where the pane docks (110), and past where the
@@ -266,6 +266,29 @@ class List(Live):
 
                 self.assertIn('#2 Which branch holds the fix?', [row.strip() for row in body], context)
                 self.assertTrue(joined(body).startswith('1 decision · 1 question · 1 info · 1 later'), context)
+
+    def test_items_moving_to_a_new_session_are_drawn_read_only_under_their_own_label(self):
+        items = [
+            {'id': 1, 'title': 'Add the key to the env file', 'detail': 'The test needs it.'},
+            {'id': 2, 'title': 'Which branch holds the fix?', 'detail': 'Two candidates.', 'kind': 'question', 'state': 'handing-off'},
+            {'id': 3, 'title': LONG, 'detail': 'It leaked.', 'state': 'handing-off'},
+        ]
+        for columns in (64, 144):
+            with self.subTest(columns=columns), self.opened(items, columns) as claude:
+                body, context = self.look(claude, columns)
+                rows = [row.strip() for row in body]
+                text = joined(body)
+
+                self.assert_fits(body, context, columns)
+                positions = [text.index(word) for word in ('ACTIONS', '#1', 'Moving to a new session', '#2', '#3')]
+                self.assertEqual(positions, sorted(positions), context)
+                self.assertIn('#2 Which branch holds the fix?', rows, context)
+                # One line each, a long title cut short.
+                self.assertTrue(any(row.startswith('#3 Rotate the deploy key') and row.endswith('…') for row in rows), context)
+
+                # No press there could reach the Claude they go to: the ring passes them by.
+                claude.press('Down', 'Down', 'Down')
+                self.assertFalse(any('#2' in run or '#3' in run for run in claude.ring()), context)
 
     def test_the_rows_the_unit_test_counts_for_three_kinds_are_the_rows_drawn(self):
         three = [{'id': n, 'title': f'Item number {n}', 'detail': 'A reason.', 'kind': kind} for n, kind in ((1, 'info'), (2, 'question'), (3, 'decision'))]
@@ -599,23 +622,29 @@ class Field(Live):
 
 
 class Store(unittest.TestCase):
-    def test_clear_starts_a_session_with_no_items_and_the_old_one_stays_saved(self):
+    def test_clear_starts_a_session_with_no_items_and_offers_the_ones_it_left(self):
         claude = Claude(ROOT)
         try:
             claude.seed(TASKS[:1])
             claude.start(100, 40, '--session-id', claude.session_id)
             wait_for(claude.session, lambda s: 'open-items: ☐' in s)
             claude.command('/clear')
-            screen = wait_for(claude.session, lambda s: 'open-items:' not in s)
+            wait_for(claude.session, lambda s: 'open-items:' not in s)
+            claude.command('/open-items')
+            wait_for(claude.session, has_pane)
+            screen = claude.read('test_clear_starts_a_session_with_no_items_and_offers_the_ones_it_left')
+            body = joined(pane_body(screen))
             with open(claude.store_file()) as f:
                 store = json.load(f)
         finally:
             claude.close()
         key = f'session:{claude.session_id}'
 
-        # The session /clear started holds nothing, so it saved nothing.
+        # The session /clear started holds nothing, so it saved nothing; the one it ended is offered, not moved.
         self.assertEqual(list(store), [key], screen)
         self.assertEqual([task['id'] for task in store[key]['tasks']], [1], screen)
+        self.assertIn('endedMs', store[key], screen)
+        self.assertTrue(body.startswith('1 item left by an earlier session Take Dismiss'), body)
 
     def test_a_session_v01_saved_comes_back_with_its_open_items_and_keeps_its_unsent_answer(self):
         claude = Claude(ROOT)

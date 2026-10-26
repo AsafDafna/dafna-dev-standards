@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { savedIn, trimmed } from '../hooks/saved'
+import { leftoversIn, savedIn, takenCodes, trimmed } from '../hooks/saved'
 import { isOpenAsk, parseAsk, parseReply } from '../hooks/tasks'
 import type { Message, Saved, Task } from '../types'
 
@@ -140,6 +140,43 @@ describe('the item model', () => {
       [why, { from: 'user', text: 'Two failures', atMs: 5 }],
       [why, { from: 'user', text: '', event: 'seen', atMs: 5 }],
     ])
+  })
+
+  test('savedIn keeps a key whose taken list holds a malformed entry, without it, and drops only a malformed hand-off', () => {
+    const good = { code: 'k3x9q2', fromKey: 'session:a', ids: [{ was: 1, now: 2 }] }
+    const raw = { ...saved([item()]), handoff: { code: 7 }, taken: [good, { code: 'x' }, { ...good, ids: [{ was: 'one' }] }] }
+
+    expect(savedIn(raw)).toEqual({ ...saved([item()]), taken: [good] })
+  })
+
+  test('leftoversIn offers the items of an ended or stale session in the folder, and a hand-off nobody took in 30 minutes, never an item another key took', () => {
+    const MINUTE = 60_000
+    const at = (fields: Partial<Saved>, tasks: readonly Task[] = [item({ id: 1 })]): Saved => ({ ...saved(tasks), ...fields })
+    const handingOff = (id: number) => item({ id, state: 'handing-off' })
+    const all: Record<string, unknown> = {
+      'session:ended': at({ endedMs: NOW - MINUTE }, [item({ id: 1 }), item({ id: 2, state: 'later' }), item({ id: 3, state: 'resolved' }), item({ id: 4 })]),
+      'session:live': at({ lastActiveMs: NOW - 5 * MINUTE }),
+      'session:stale': at({ lastActiveMs: NOW - 13 * 60 * MINUTE }),
+      'session:elsewhere': at({ folder: '/other', endedMs: NOW - MINUTE }),
+      'session:v01': { tasks: [], nextId: 1, savedMs: NOW },
+      'session:handed': at({ handoff: { code: 'aaaaaa', atMs: NOW - 31 * MINUTE } }, [handingOff(1), item({ id: 2 })]),
+      'session:fresh': at({ handoff: { code: 'bbbbbb', atMs: NOW - 5 * MINUTE }, endedMs: NOW - MINUTE }, [handingOff(1)]),
+      'session:claimed': at({ handoff: { code: 'cccccc', atMs: NOW - 120 * MINUTE }, endedMs: NOW - MINUTE }, [handingOff(1), handingOff(2)]),
+      'session:taker': at({
+        taken: [
+          { code: 'cccccc', fromKey: 'session:claimed', ids: [{ was: 1, now: 1 }] },
+          { code: '', fromKey: 'session:ended', ids: [{ was: 4, now: 2 }] },
+        ],
+      }),
+      'session:mine': at({ endedMs: NOW - MINUTE }),
+    }
+
+    expect(leftoversIn(all, '/repo', 'session:mine', NOW).map(({ key, saved: one }) => [key, one.tasks.map(task => task.id)])).toEqual([
+      ['session:ended', [1, 2]],
+      ['session:stale', [1]],
+      ['session:handed', [1]],
+    ])
+    expect(takenCodes(all)).toEqual(new Set(['cccccc']))
   })
 
   test('trimmed keeps a resolved item\'s thread while its update is pending, strips it once delivered, drops it after 7 days, and keeps an open one of any age', () => {

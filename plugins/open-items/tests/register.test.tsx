@@ -4,10 +4,10 @@ import type { Engine, Mounted } from 'claude-code/testing'
 
 import { arrowTargetOf, fieldRowsOf, focusOrderOf, rowBackTo, rowsFor } from '../hooks/pane'
 import { register } from '../hooks/register'
-import { savedIn } from '../hooks/saved'
+import { leftoversIn, savedIn } from '../hooks/saved'
 import { DONE as DONE_PRESS, movedBy } from '../hooks/tasks'
 import { cellsOf, rowsOf, wrapRows } from '../hooks/text'
-import type { Message, Task, TaskKind } from '../types'
+import type { Message, Saved, Task, TaskKind } from '../types'
 
 const ADD = 'mcp__open-items__add_item'
 const LIST = 'mcp__open-items__list_items'
@@ -2576,7 +2576,7 @@ describe('responding', () => {
     await pressed
 
     // The press that found it answered changed nothing, so wrote nothing.
-    expect(world.ops).toEqual(['set session:session-1'])
+    expect(world.ops.filter(op => op.startsWith('set'))).toEqual(['set session:session-1'])
 
     await clock.advance(300)
 
@@ -3223,15 +3223,6 @@ describe('the mod\'s own tools', () => {
     expect(listed.result).toContain('#1 open')
   })
 
-  test('handoff_items and take_items are not ready yet', async ($, on) => {
-    seat(on)
-    await start($)
-
-    for (const call of [{ tool: HANDOFF }, { tool: TAKE, code: 'abc123' }] as const) {
-      expect(((await $.tool.call(call)) as { deny?: string }).deny).toBe('Not ready yet.')
-    }
-  })
-
   test('every tool description is at most 4096 characters', async ($, on) => {
     const { world } = seat(on)
     await start($)
@@ -3414,7 +3405,7 @@ describe('saving', () => {
     await $.tool.call(XCODE_TASK)
     await start($)
 
-    expect(world.status).toBe('☐ 1 question · 1 action · /open-items')
+    expect(world.status).toBe('could not save · ☐ 1 question · 1 action · /open-items')
   })
 
   test('a stuck store holds a tool call 5 s at most', async ($, on) => {
@@ -3522,7 +3513,7 @@ describe('saving', () => {
     expect(world.opens).toEqual([])
   })
 
-  test('after /clear the pane is empty and the first item is #1', async ($, on) => {
+  test('after /clear the pane holds no item and the first item is #1', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
@@ -3534,7 +3525,7 @@ describe('saving', () => {
     await clock.advance(1)
 
     expect(world.status).toBeUndefined()
-    expect(world.isPaneOpen).toBe(false)
+    expect(world.items).toEqual([])
 
     const added = await $.tool.call(PAGING_TASK)
 
@@ -3545,6 +3536,7 @@ describe('saving', () => {
       nextId: 3,
       savedMs: NOW,
       lastActiveMs: NOW,
+      endedMs: NOW,
       folder: '/repo',
       taken: [],
     })
@@ -3553,7 +3545,8 @@ describe('saving', () => {
       tasks: [expect.objectContaining({ id: 1, title: PAGING_TASK.title })],
       nextId: 2,
       savedMs: NOW + 1,
-      lastActiveMs: NOW + 1,
+      // The session /clear started was last active as it started.
+      lastActiveMs: NOW,
       folder: '/repo',
       taken: [],
     })
@@ -3573,6 +3566,7 @@ describe('saving', () => {
         nextId: 2,
         savedMs: NOW,
         lastActiveMs: NOW,
+        endedMs: NOW,
         folder: '/repo',
         taken: [],
       }
@@ -3624,7 +3618,7 @@ describe('saving', () => {
     expect(savedIdsOf(world)).toEqual([7, 8])
   })
 
-  test('a resume into a session with no saved key shows nothing', async ($, on) => {
+  test('a resume into a session with no saved key holds no item', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
@@ -3634,7 +3628,7 @@ describe('saving', () => {
     await clock.advance(1)
 
     expect(world.status).toBeUndefined()
-    expect(world.isPaneOpen).toBe(false)
+    expect(world.items).toEqual([])
     expect(world.store['session:session-2']).toBeUndefined()
 
     const added = await $.tool.call(XCODE_TASK)
@@ -3748,6 +3742,515 @@ describe('saving', () => {
       }),
       expect.objectContaining({ id: 2, state: 'open' }),
     ])
+  })
+
+  test('a failed store write shows "open-items: could not save" until a write succeeds', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    world.isWriteFailing = true
+    await $.tool.call(KEY_TASK)
+    const ui = await $.ui.mount(PANE)
+
+    expect(await textOf(ui, 'unsaved')).toBe('open-items: could not save')
+    expect(world.status).toBe('could not save · ☐ 1 action · /open-items')
+
+    world.isWriteFailing = false
+    await $.tool.call(XCODE_TASK)
+
+    expect(await ui.find({ key: 'unsaved' })).toBeUndefined()
+    expect(world.status).toBe('☐ 1 question · 1 action · /open-items')
+  })
+})
+
+const OLD = 'session:session-old'
+const NEW = 'session:session-new'
+const OWN = 'session:session-1'
+const HOUR_MS = 60 * 60_000
+const CODE = 'k3x9q2'
+
+/** An item a session saved, as v0.2 holds it. */
+function savedItem(id: number, fields: Partial<Task> = {}): Task {
+  return {
+    id,
+    kind: 'action',
+    title: `Rotate deploy key number ${id}`,
+    thread: [{ from: 'claude', text: 'Needed before the release.', atMs: NOW - 240_000 }],
+    state: 'open',
+    isWaitingForClaude: false,
+    hasNewReply: false,
+    update: 'none',
+    createdMs: NOW - 240_000,
+    updatedMs: NOW - 240_000,
+    ...fields,
+  }
+}
+
+/** The key another session saved for `tasks` in /repo, active now unless `fields` say otherwise. */
+function keyed(tasks: readonly Task[], fields: Partial<Saved> = {}): Saved {
+  return {
+    version: 2,
+    tasks,
+    nextId: Math.max(0, ...tasks.map(task => task.id)) + 1,
+    savedMs: NOW,
+    lastActiveMs: NOW,
+    folder: '/repo',
+    taken: [],
+    ...fields,
+  }
+}
+
+/** `handoff_items`'s code, read from its result. */
+function codeIn(result: string | undefined): string {
+  return /Hand-off code: ([a-z0-9]{6})\./.exec(result ?? '')?.[1] ?? ''
+}
+
+function answerOf(call: unknown) {
+  return call as { result?: string; deny?: string }
+}
+
+async function buttonsOf(ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>): Promise<(string | undefined)[]> {
+  return (await ui.findAll({ type: 'Button' })).map(button => button.key)
+}
+
+describe('hand-off', () => {
+  /** A decision and a question another session handed off with CODE a minute ago; the question was put off for later. */
+  const HANDED = keyed(
+    [
+      savedItem(5, { kind: 'decision', title: 'Merge PR 787 with the override label?', options: ['Merge', 'Wait'], state: 'handing-off' }),
+      savedItem(8, {
+        kind: 'question',
+        title: 'Which cloud project holds the uploader?',
+        state: 'handing-off',
+        thread: [
+          { from: 'claude', text: 'The deploy needs its name.', atMs: NOW - 240_000 },
+          { from: 'user', text: '', event: 'later', atMs: NOW - 120_000 },
+        ],
+      }),
+    ],
+    { handoff: { code: CODE, atMs: NOW - 60_000 } },
+  )
+
+  test('handoff_items marks open and Later items, returns a code, and the pane shows "Moving to a new session" with no buttons', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(KEY_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-2' })
+    await ui.press({ key: 'later' })
+    await ui.press({ key: 'row-3' })
+    await ui.press({ key: 'done' })
+
+    const handed = answerOf(await $.tool.call({ tool: HANDOFF }))
+    const code = codeIn(handed.result)
+
+    expect(code).toMatch(/^[a-z0-9]{6}$/)
+    expect(handed.result).toBe(`Marked 2 items for the next session. Hand-off code: ${code}. Put the code in the successor's prompt; it calls take_items with it.`)
+    expect([1, 2, 3].map(id => itemOf(world, id)?.state)).toEqual(['handing-off', 'handing-off', 'resolved'])
+    expect(world.store[OWN]).toEqual(expect.objectContaining({ handoff: { code, atMs: NOW } }))
+    expect(await textOf(ui, 'moving')).toContain('Moving to a new session')
+    expect(await textOf(ui, 'moving')).toContain(PAGING_TASK.title)
+    expect(await buttonsOf(ui)).toEqual(['hide'])
+    expect(world.status).toBeUndefined()
+
+    // A later write keeps the hand-off: an item added after it stays this session's own.
+    await $.tool.call({ tool: ADD, title: 'Renew the TLS certificate', detail: 'It expires on Friday.', kind: 'action' })
+    expect(world.store[OWN]).toEqual(expect.objectContaining({ handoff: { code, atMs: NOW } }))
+    expect(itemOf(world, 4)?.state).toBe('open')
+  })
+
+  test("an answer appended after Claude's last model request moves with the item as unread", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    await ui.input({ key: 'reply-1', text: 'Two failures' })
+    await clock.advance(1000)
+    expect(world.appended.filter(row => row.type === 'user')).toHaveLength(1)
+
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+
+    // The old Claude is not woken for an answer that moved on.
+    expect(world.submitted).toEqual([])
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'handing-off', update: 'pending' }))
+
+    // The successor, simulated by the session /clear starts, takes the answer as unread.
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code }))
+
+    expect(taken.result).toContain(`#1 open: ${XCODE_TASK.title}. The user replied`)
+    expect(taken.result).toContain('Two failures')
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', update: 'delivered', isWaitingForClaude: true }))
+  })
+
+  test('reply_item on an item handed off says the new session answers it, not to add it again', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call({ tool: HANDOFF })
+    const refused = answerOf(await $.tool.call({ tool: REPLY, id: 1, text: 'Which test file?' }))
+
+    expect(refused.deny).toBe('Item #1 went to a new session; that session answers it now.')
+  })
+
+  test('take_items moves the items with their numbers and says "N items moved from the previous session"', async ($, on) => {
+    const { world } = seat(on, { [OLD]: HANDED })
+    await start($)
+
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code: CODE }))
+
+    expect(taken.result).toContain(`Took 2 items from the previous session (hand-off code ${CODE}).`)
+    expect(taken.result).toContain('#5 open · decision')
+    expect(taken.result).toContain('#8 later · question')
+    expect(taken.result).toContain('The deploy needs its name.')
+    expect(taken.result).not.toContain('(was #')
+    expect(world.toasts).toContain('2 items moved from the previous session')
+    expect(world.items.map(task => [task.id, task.state])).toEqual([
+      [5, 'open'],
+      [8, 'later'],
+    ])
+    expect(itemOf(world, 5)?.thread.at(-1)).toEqual(expect.objectContaining({ event: 'took' }))
+    expect(world.store[OWN]).toEqual(
+      expect.objectContaining({
+        nextId: 9,
+        taken: [{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 5 }, { was: 8, now: 8 }] }],
+      }),
+    )
+    expect(world.store[OLD]).toEqual(HANDED)
+
+    const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'row-5')).toContain('Merge PR 787')
+    expect(await textOf(ui, 'row-8')).toContain('Which cloud project')
+  })
+
+  test('a number the successor already uses is renumbered, and the result maps old to new', async ($, on) => {
+    const mine = [1, 2, 3, 4, 5].map(id => savedItem(id, { title: `Check runner number ${id}` }))
+    const { world } = seat(on, { [OWN]: keyed(mine), [OLD]: HANDED })
+    await start($)
+
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code: CODE }))
+
+    expect(taken.result).toContain('#6 (was #5) open · decision')
+    expect(taken.result).toContain('#8 later · question')
+    expect(taken.result).not.toContain('#8 (was')
+    expect(itemOf(world, 6)?.title).toBe('Merge PR 787 with the override label?')
+    expect(itemOf(world, 5)?.title).toBe('Check runner number 5')
+
+    const added = answerOf(await $.tool.call(XCODE_TASK))
+
+    expect(added.result).toContain('Added item #9')
+    // Each write keeps what the key took.
+    expect((world.store[OWN] as Saved).taken).toEqual([{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 6 }, { was: 8, now: 8 }] }])
+  })
+
+  test('take_items with a wrong code takes nothing', async ($, on) => {
+    const { world } = seat(on, { [OLD]: HANDED })
+    await start($)
+
+    const refused = answerOf(await $.tool.call({ tool: TAKE, code: 'zzzzzz' }))
+
+    expect(refused.deny).toBe('No items to take with hand-off code zzzzzz.')
+    expect(world.items).toEqual([])
+    expect(world.store[OWN]).toBeUndefined()
+    expect(world.store[OLD]).toEqual(HANDED)
+  })
+
+  test('the old session shows its items as moved once another key took its code', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'moving')).toContain('Moving to a new session')
+
+    // The successor, another process, writes its own key only.
+    world.store[NEW] = keyed([savedItem(1), savedItem(2)], { taken: [{ code, fromKey: OWN, ids: [{ was: 1, now: 1 }, { was: 2, now: 2 }] }] })
+    await $.turn.start({ text: 'is it done?', turnId: 't1' })
+
+    expect(world.items.map(task => task.state)).toEqual(['moved', 'moved'])
+    expect(world.toasts).toContain('2 items moved to a new session')
+    expect(world.isPaneOpen).toBe(false)
+    expect(world.store[OWN]).toEqual(expect.objectContaining({ tasks: [expect.objectContaining({ id: 1, state: 'moved', thread: [] }), expect.objectContaining({ id: 2, state: 'moved', thread: [] })] }))
+    expect(world.store[OWN]).not.toHaveProperty('handoff')
+  })
+
+  test('a press on a moved item sends nothing and says it moved', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    // Another session took it as a leftover, while this one sat idle for 12 hours.
+    world.store[NEW] = keyed([savedItem(1)], { taken: [{ code: '', fromKey: OWN, ids: [{ was: 1, now: 1 }] }] })
+    await ui.press({ key: 'option-1' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.state).toBe('moved')
+    expect(world.submitted).toEqual([])
+    expect(world.appended).toEqual([])
+    expect(world.toasts.at(-1)).toBe("Item #1 moved to a new session, so your response wasn't saved.")
+  })
+
+  test('a press on an item drawn before the hand-off sends nothing and says it moved', async ($, on) => {
+    const { world, clock } = seat(on)
+    const held = holdingPresses(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    held.isOn = true
+    const pressed = ui.press({ key: 'option-1' })
+    await $.tool.call({ tool: HANDOFF })
+    held.letGo()
+    await pressed
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.state).toBe('handing-off')
+    expect(world.submitted).toEqual([])
+    expect(world.toasts.at(-1)).toBe("Item #1 moved to a new session, so your response wasn't saved.")
+  })
+
+  test('two sessions writing at once keep both keys whole', async ($, on) => {
+    const { world, clock } = seat(on, { [OLD]: HANDED })
+    await start($)
+
+    // The successor's write takes a minute; the old session writes its own key meanwhile.
+    world.setMs = 60_000
+    const taking = $.tool.call({ tool: TAKE, code: CODE })
+    await clock.advance(1)
+    const oldWrites = { ...HANDED, tasks: [...HANDED.tasks, savedItem(9, { title: 'Renew the TLS certificate' })], nextId: 10, savedMs: NOW + 1, lastActiveMs: NOW + 1 }
+    world.store[OLD] = oldWrites
+    await clock.advance(60_000)
+    await taking
+
+    expect(world.store[OLD]).toEqual(oldWrites)
+    expect(world.store[OWN]).toEqual(
+      expect.objectContaining({
+        tasks: [expect.objectContaining({ id: 5, state: 'open' }), expect.objectContaining({ id: 8, state: 'later' })],
+        taken: [{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 5 }, { was: 8, now: 8 }] }],
+      }),
+    )
+  })
+
+  test('a take whose items sit in two keys is not offered again', async ($, on) => {
+    // The old session ended before it learned of the take: its key still says handing-off.
+    const old = { ...HANDED, handoff: { code: CODE, atMs: NOW - 2 * HOUR_MS }, endedMs: NOW - HOUR_MS, lastActiveMs: NOW - HOUR_MS }
+    const successor = keyed([savedItem(5), savedItem(8)], { taken: [{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 5 }, { was: 8, now: 8 }] }] })
+    const { world } = seat(on, { [OLD]: old, [NEW]: successor })
+    await start($)
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+    expect(world.isPaneOpen).toBe(false)
+    expect(leftoversIn(world.store, '/repo', OWN, NOW)).toEqual([])
+    expect(answerOf(await $.tool.call({ tool: TAKE, code: CODE })).deny).toBe(`The items of hand-off code ${CODE} were taken already.`)
+  })
+
+  test('--resume of a session whose items moved does not bring them back', async ($, on) => {
+    const old = { ...HANDED, endedMs: NOW - 30_000 }
+    const successor = keyed([savedItem(5), savedItem(8)], { taken: [{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 5 }, { was: 8, now: 8 }] }] })
+    const { world, clock } = seat(on, { [OLD]: old, [NEW]: successor })
+    await start($)
+
+    await $.session.end({ reason: 'resume', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-old'
+    await clock.advance(1)
+    const ui = await $.ui.mount(PANE)
+
+    expect(world.items.map(task => task.state)).toEqual(['moved', 'moved'])
+    expect(world.status).toBeUndefined()
+    expect(await ui.find({ key: 'moving' })).toBeUndefined()
+    expect(await ui.find({ key: 'row-5' })).toBeUndefined()
+    expect(world.store[OLD]).toEqual(expect.objectContaining({ tasks: [expect.objectContaining({ id: 5, state: 'moved' }), expect.objectContaining({ id: 8, state: 'moved' })] }))
+    expect(world.store[OLD]).not.toHaveProperty('handoff')
+  })
+})
+
+describe('leftovers', () => {
+  test("a worker session in the same folder is not offered the live COO's items", async ($, on) => {
+    const { world } = seat(on, { [OLD]: keyed([savedItem(1), savedItem(2)], { lastActiveMs: NOW - 300_000 }) })
+    await start($)
+    await $.turn.start({ text: 'run the tests', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+    expect(world.isPaneOpen).toBe(false)
+  })
+
+  test('items of an ended session are offered with Take and Dismiss; Take moves them and tells Claude; Dismiss drops them for good', async ($, on) => {
+    const answered = savedItem(2, {
+      kind: 'question',
+      title: 'Which region holds the bucket?',
+      thread: [
+        { from: 'claude', text: 'The backup job needs it.', atMs: NOW - 240_000 },
+        { from: 'user', text: 'eu-west-1', atMs: NOW - 60_000 },
+      ],
+      isWaitingForClaude: true,
+      update: 'pending',
+    })
+    const ended = keyed([savedItem(1), answered], { endedMs: NOW - HOUR_MS, lastActiveMs: NOW - HOUR_MS })
+    const { world, clock } = seat(on, { [OLD]: ended })
+    await start($)
+    const ui = await $.ui.mount(PANE)
+
+    expect(world.isPaneOpen).toBe(true)
+    expect(await textOf(ui, 'offer')).toContain('2 items left by an earlier session')
+    expect(await buttonsOf(ui)).toEqual(['take', 'dismiss', 'hide'])
+
+    await ui.press({ key: 'take' })
+    await clock.settle()
+
+    expect(world.items.map(task => [task.id, task.state])).toEqual([
+      [1, 'open'],
+      [2, 'open'],
+    ])
+    expect(world.submitted).toHaveLength(1)
+    expect(world.submitted[0]).toContain('I took 2 items left by an earlier session')
+    expect(world.submitted[0]).toContain('Which region holds the bucket?')
+    expect(world.submitted[0]).toContain('eu-west-1')
+    expect(world.store[OLD]).toEqual(ended)
+    expect((world.store[OWN] as Saved).taken).toEqual([{ code: '', fromKey: OLD, ids: [{ was: 1, now: 1 }, { was: 2, now: 2 }] }])
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+
+    world.store['session:session-gone'] = keyed([savedItem(1, { title: 'Renew the TLS certificate' })], { endedMs: NOW })
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    expect(await textOf(ui, 'offer')).toContain('1 item left by an earlier session')
+
+    await ui.press({ key: 'dismiss' })
+    await clock.settle()
+
+    expect(itemOf(world, 3)).toEqual(expect.objectContaining({ title: 'Renew the TLS certificate', state: 'withdrawn', note: 'dismissed' }))
+    expect(world.submitted).toHaveLength(1)
+    expect(world.appended).toEqual([])
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.turn.start({ text: 'and now?', turnId: 't2' })
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+    // No other session in the folder is offered them either.
+    expect(leftoversIn(world.store, '/repo', 'session:session-9', NOW)).toEqual([])
+  })
+
+  test("after /clear the earlier conversation's items are offered at once, never moved on their own", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    await $.tool.call(XCODE_TASK)
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    const ui = await $.ui.mount(PANE)
+
+    expect(world.isPaneOpen).toBe(true)
+    expect(await textOf(ui, 'offer')).toContain('2 items left by an earlier session')
+    expect(world.items).toEqual([])
+    expect(world.store[OWN]).toEqual(
+      expect.objectContaining({ endedMs: NOW, tasks: [expect.objectContaining({ id: 1, state: 'open' }), expect.objectContaining({ id: 2, state: 'open' })] }),
+    )
+
+    await clock.advance(HOUR_MS)
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+
+    expect(world.items).toEqual([])
+    expect(world.store['session:session-2']).toBeUndefined()
+  })
+
+  test('--resume of an ended session clears endedMs, so its items are not offered elsewhere', async ($, on) => {
+    const { world, clock } = seat(on, { [OLD]: keyed([savedItem(1)], { endedMs: NOW - HOUR_MS, lastActiveMs: NOW - HOUR_MS }) })
+    await start($)
+    const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'offer')).toContain('1 item left by an earlier session')
+
+    await $.session.end({ reason: 'resume', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-old'
+    await clock.advance(1)
+
+    expect(world.store[OLD]).not.toHaveProperty('endedMs')
+    expect((world.store[OLD] as Saved).lastActiveMs).toBe(NOW)
+    expect(leftoversIn(world.store, '/repo', 'session:session-9', NOW + 1)).toEqual([])
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+    expect(await textOf(ui, 'row-1')).toContain('Rotate deploy key number 1')
+  })
+
+  test('an unclaimed hand-off becomes leftovers after 30 minutes', async ($, on) => {
+    const handed = keyed([savedItem(1, { state: 'handing-off' }), savedItem(2, { state: 'handing-off' })], { handoff: { code: CODE, atMs: NOW } })
+    const { clock } = seat(on, { [OLD]: handed })
+    await start($)
+    const ui = await $.ui.mount(PANE)
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+
+    await clock.advance(30 * 60_000)
+    // No timer: nothing is checked until the next turn.
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+
+    expect(await textOf(ui, 'offer')).toContain('2 items left by an earlier session')
+  })
+
+  test('a hand-off nobody took for 30 minutes is offered back to the old session; Take puts its items back and tells Claude', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-2' })
+    await ui.press({ key: 'later' })
+    await clock.advance(1000)
+    await clock.settle()
+    await $.tool.call({ tool: HANDOFF })
+    await clock.advance(30 * 60_000)
+    await $.turn.start({ text: 'did it move?', turnId: 't1' })
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+
+    expect(await textOf(ui, 'moving')).toContain('No session took them in 30 minutes.')
+
+    await ui.press({ key: 'take-back' })
+    await clock.settle()
+
+    expect(world.items.map(task => task.state)).toEqual(['open', 'later'])
+    expect(world.store[OWN]).not.toHaveProperty('handoff')
+    expect(world.submitted.at(-1)).toContain('so I took them back')
+    expect(await ui.find({ key: 'moving' })).toBeUndefined()
+  })
+
+  test('Take pressed on an unclaimed hand-off that Claude handed off again since takes nothing back', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    await clock.advance(30 * 60_000)
+    await $.turn.start({ text: 'did it move?', turnId: 't1' })
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'moving')).toContain('No session took them in 30 minutes.')
+
+    // A new successor is on its way with the same code.
+    await $.tool.call({ tool: HANDOFF })
+    await ui.press({ key: 'take-back' })
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.state).toBe('handing-off')
+    expect(world.store[OWN]).toEqual(expect.objectContaining({ handoff: { code, atMs: NOW + 30 * 60_000 } }))
+    expect(world.submitted).toEqual([])
   })
 })
 

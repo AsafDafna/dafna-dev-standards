@@ -50,6 +50,13 @@ export type Task = {
 }
 
 /**
+ * Items a session took or dismissed from another session's key: `code` is
+ * the hand-off code it took them by, '' for leftovers. Items keep their
+ * number `was` where `now` is free.
+ */
+export type Taken = { code: string; fromKey: string; ids: readonly { was: number; now: number }[] }
+
+/**
  * What a session keeps in the store under its own key, as one JSON file of
  * 4 MiB holds every session's key.
  */
@@ -62,9 +69,19 @@ export type Saved = {
   endedMs?: number
   /** The folder the session started in, read once then. */
   folder: string
+  /** The code its `handing-off` items wait under, and when `handoff_items` set them so. */
   handoff?: { code: string; atMs: number }
-  taken: readonly { code: string; fromKey: string; ids: readonly { was: number; now: number }[] }[]
+  taken: readonly Taken[]
 }
+
+/** What a session's key holds beside its items and its count. */
+export type Header = Pick<Saved, 'lastActiveMs' | 'endedMs' | 'handoff' | 'taken'>
+
+/**
+ * Items the pane offers to take, by the key that holds them: those another
+ * session left, or this session's own hand-off that no session took.
+ */
+export type Offer = readonly { key: string; ids: readonly number[] }[]
 
 /** A reply to item `id` the pane holds back in place of its field, as it looks like a secret. */
 export type Held = { id: number; text: string }
@@ -85,6 +102,11 @@ declare module 'claude-code' {
       folder: string | null
       /** The remote clients attached, by surface: two phones are two clients on one. */
       clients: Readonly<Partial<Record<RenderSurface, readonly string[]>>>
+      /** What the session's key holds beside its items: the end writes it with no read. */
+      header: Header
+      offer: Offer
+      /** The session's last store write failed: the pane and the status line say so until one succeeds. */
+      isSaveFailing: boolean
     }
   }
 }

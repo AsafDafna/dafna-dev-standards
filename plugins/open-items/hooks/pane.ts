@@ -1,7 +1,7 @@
 import type { Held, Message, Screen, Task, TaskKind } from '../types'
 import { DONE, LATER, MAX_DETAIL, MAX_OPTION, PRESSED, SEEN, choseOf, isActive, waitingOf } from './tasks'
 import type { Move } from './tasks'
-import { ago, cellsOf, clip, clipCells, linesRowsOf, printable, printableLines, rowsOf } from './text'
+import { ago, cellsOf, clip, clipCells, linesRowsOf, plural, printable, printableLines, rowsOf } from './text'
 
 /**
  * The longest title the pane and the transcript draw. `add_item` takes
@@ -39,6 +39,11 @@ export type PaneView = {
   isFocused: boolean
   /** The reply field has the keys: the terminal wraps what is typed there. */
   isTyping: boolean
+  /** How many items other sessions left that the pane offers to take; none when absent. */
+  offered?: number
+  /** No session took this session's hand-off in time: the pane offers its items back. */
+  isUnclaimed?: boolean
+  isSaveFailing?: boolean
 }
 
 const KIND_SECTIONS: readonly { kind: TaskKind; label: string }[] = [
@@ -59,9 +64,38 @@ export function groupsOf(shown: readonly Task[]): { label: string; tasks: Task[]
   ].filter(group => group.tasks.length > 0)
 }
 
-/** The keys the list's focus ring walks, in the order drawn: each row, then Hide. */
-export function focusOrderOf(shown: readonly Task[]): string[] {
-  return [...groupsOf(shown).flatMap(group => group.tasks.map(task => `row-${task.id}`)), 'hide']
+/** The items `handing-off`, oldest first: drawn read-only, as no press there could reach the Claude they go to. */
+export function movingOf(shown: readonly Task[]): Task[] {
+  return shown.filter(task => task.state === 'handing-off')
+}
+
+export const MOVING_LABEL = 'Moving to a new session'
+export const UNCLAIMED_NOTE = 'No session took them in 30 minutes.'
+export const TAKE_BACK = { key: 'take-back', label: 'Take' } as const
+export const OFFER_BUTTONS = [
+  { key: 'take', label: 'Take' },
+  { key: 'dismiss', label: 'Dismiss' },
+] as const
+export const SAVE_FAILED = 'open-items: could not save'
+
+/** `2 items left by an earlier session`; undefined when none are offered. */
+export function offerOf(view: Pick<PaneView, 'offered'>): string | undefined {
+  return view.offered === undefined || view.offered === 0 ? undefined : `${plural(view.offered, 'item')} left by an earlier session`
+}
+
+/** `#5 Merge #787…`: a moving item's row, cut to one line of `columns`. */
+export function movingRowOf(task: Task, columns: number): string {
+  return clipCells(`#${task.id} ${nameOf(task)}`, Math.max(1, columns - ROW_INDENT))
+}
+
+/** The keys the list's focus ring walks, in the order drawn: the offer's buttons, each row, Take for an unclaimed hand-off, then Hide. */
+export function focusOrderOf(shown: readonly Task[], view: Pick<PaneView, 'offered' | 'isUnclaimed'> = {}): string[] {
+  return [
+    ...(offerOf(view) === undefined ? [] : OFFER_BUTTONS.map(button => button.key)),
+    ...groupsOf(shown).flatMap(group => group.tasks.map(task => `row-${task.id}`)),
+    ...(view.isUnclaimed === true && movingOf(shown).length > 0 ? [TAKE_BACK.key] : []),
+    'hide',
+  ]
 }
 
 /**
@@ -379,17 +413,37 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
 
 function listRowsOf(view: PaneView, width: number): number {
   const head = headlineOf(view)
-  let rows = rowsOf(`${head.glyph}${head.headline}`, width)
+  const offer = offerOf(view)
+  const moving = movingOf(view.shown)
+  const indented = Math.max(1, width - ROW_INDENT)
+  let rows = savedRowsOf(view, width)
+
+  if (offer !== undefined) {
+    rows += rowsOf(offer, width) + buttonRowsOf(OFFER_BUTTONS.map(button => button.label), width)
+  }
+
+  if (view.shown.some(isActive)) {
+    rows += rowsOf(`${head.glyph}${head.headline}`, width)
+  }
 
   for (const group of groupsOf(view.shown)) {
     rows += 1
 
     for (const task of group.tasks) {
-      rows += rowsOf(rowTextOf(task, view, width), Math.max(1, width - ROW_INDENT))
+      rows += rowsOf(rowTextOf(task, view, width), indented)
     }
   }
 
+  if (moving.length > 0) {
+    rows += 1 + moving.length + (view.isUnclaimed === true ? rowsOf(UNCLAIMED_NOTE, indented) + 1 : 0)
+  }
+
   return rows + footRowsOf(view, width, [HIDE])
+}
+
+/** The rows the line saying the last store write failed takes, when it did. */
+function savedRowsOf(view: PaneView, width: number): number {
+  return view.isSaveFailing === true ? rowsOf(SAVE_FAILED, width) : 0
 }
 
 function itemRowsOf(task: Task, view: PaneView, width: number): number {
@@ -402,6 +456,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const buttons = [...actionsOf(task).map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
 
   return (
+    savedRowsOf(view, width) +
     rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner) +
     thread +
     (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), inner)) +

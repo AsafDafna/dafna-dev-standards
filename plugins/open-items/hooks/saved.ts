@@ -1,11 +1,17 @@
-import type { Message, Saved, Task, TaskKind } from '../types'
-import { KINDS } from './tasks'
+import type { Message, Saved, Taken, Task, TaskKind } from '../types'
+import { KINDS, isShown } from './tasks'
 
 /** How long a session's saved items wait for `claude --resume`: an older key is deleted at the next start. */
 export const KEEP_MS = 30 * 24 * 60 * 60_000
 
 /** How long a closed item stays in its session's key once Claude has heard of it. */
 const KEEP_CLOSED_MS = 7 * 24 * 60 * 60_000
+
+/** How long `handing-off` items wait for a session to take them by their code, before any session in the folder is offered them. */
+const UNCLAIMED_MS = 30 * 60_000
+
+/** How long a session that has not ended stays quiet before its items are offered to the next session in its folder. */
+const STALE_MS = 12 * 60 * 60_000
 
 const PREFIX = 'session:'
 
@@ -132,7 +138,7 @@ function itemFromV1(value: unknown): Task | undefined {
   }
 }
 
-function isTaken(value: unknown): boolean {
+function isTaken(value: unknown): value is Taken {
   return (
     isFields(value) &&
     isText(value['code']) &&
@@ -142,15 +148,16 @@ function isTaken(value: unknown): boolean {
   )
 }
 
-function isHandoff(value: unknown): value is Saved['handoff'] {
+function isHandoff(value: unknown): value is NonNullable<Saved['handoff']> {
   return isFields(value) && isText(value['code']) && isNumber(value['atMs'])
 }
 
 /**
- * A stored value as a session's saved items, less any entry that isn't an
- * item; nothing when it isn't one. A value v0.1 saved (it has no `version`)
- * keeps its open items and its answers not sent yet (see `itemFromV1`), and
- * no folder: only a resume of its session brings them back.
+ * A stored value as a session's saved items, less any item or `taken` entry
+ * that isn't one, and its hand-off when that isn't one; nothing when the
+ * value isn't a session's. A value v0.1 saved (it has no `version`) keeps its
+ * open items and its answers not sent yet (see `itemFromV1`), and no folder:
+ * only a resume of its session brings them back.
  */
 export function savedIn(raw: unknown): Saved | undefined {
   if (!isFields(raw)) {
@@ -167,15 +174,7 @@ export function savedIn(raw: unknown): Saved | undefined {
     return { version: 2, tasks: tasks.flatMap(task => itemFromV1(task) ?? []), nextId, savedMs, lastActiveMs: savedMs, folder: '', taken: [] }
   }
 
-  if (
-    raw['version'] !== 2 ||
-    !isNumber(lastActiveMs) ||
-    !isOptional(endedMs, isNumber) ||
-    !isText(folder) ||
-    !isOptional(handoff, isHandoff) ||
-    !Array.isArray(taken) ||
-    !taken.every(isTaken)
-  ) {
+  if (raw['version'] !== 2 || !isNumber(lastActiveMs) || !isOptional(endedMs, isNumber) || !isText(folder)) {
     return undefined
   }
 
@@ -187,8 +186,8 @@ export function savedIn(raw: unknown): Saved | undefined {
     lastActiveMs,
     ...(endedMs === undefined ? {} : { endedMs }),
     folder,
-    ...(handoff === undefined ? {} : { handoff }),
-    taken,
+    ...(isHandoff(handoff) ? { handoff } : {}),
+    taken: Array.isArray(taken) ? taken.filter(isTaken) : [],
   }
 }
 
@@ -211,4 +210,90 @@ export function trimmed(saved: Saved, nowMs: number): Saved {
   })
 
   return { ...saved, tasks }
+}
+
+/** The sessions saved in `all` (each stored value by its key), but the one under `except`. */
+function sessionsIn(all: Record<string, unknown>, except?: string): [string, Saved][] {
+  return Object.entries(all).flatMap(([key, raw]): [string, Saved][] => {
+    const saved = key === except || !isSavedKey(key) ? undefined : savedIn(raw)
+
+    return saved === undefined ? [] : [[key, saved]]
+  })
+}
+
+function codesIn(sessions: readonly [string, Saved][]): Set<string> {
+  return new Set(sessions.flatMap(([, saved]) => saved.taken.map(one => one.code)).filter(code => code !== ''))
+}
+
+/** Every hand-off code a session's key says it took items by. */
+export function takenCodes(all: Record<string, unknown>): Set<string> {
+  return codesIn(sessionsIn(all))
+}
+
+/** The numbers of `fromKey`'s items that another session's key says it took or dismissed. */
+function takenOf(sessions: readonly [string, Saved][], fromKey: string): Set<number> {
+  return new Set(
+    sessions.flatMap(([key, saved]) => (key === fromKey ? [] : saved.taken.filter(one => one.fromKey === fromKey).flatMap(one => one.ids.map(id => id.was)))),
+  )
+}
+
+/**
+ * What other sessions took of `ownKey`'s items: their numbers, and whether
+ * one took its hand-off code, which takes every item still `handing-off`.
+ */
+export function takenFrom(all: Record<string, unknown>, ownKey: string, handoff: Saved['handoff']): { ids: Set<number>; isCodeTaken: boolean } {
+  const sessions = sessionsIn(all, ownKey)
+
+  return { ids: takenOf(sessions, ownKey), isCodeTaken: handoff !== undefined && codesIn(sessions).has(handoff.code) }
+}
+
+/** Whether `handoff` has waited UNCLAIMED_MS and no session took its code (one of `codes`). */
+export function isUnclaimed(handoff: Saved['handoff'], codes: ReadonlySet<string>, nowMs: number): boolean {
+  return handoff !== undefined && nowMs - handoff.atMs >= UNCLAIMED_MS && !codes.has(handoff.code)
+}
+
+/**
+ * The items other sessions in `folder` left, each session's under its key:
+ * open, Later and `handing-off` items of one that ended or was quiet
+ * STALE_MS, and `handing-off` items whose hand-off is unclaimed (see
+ * `isUnclaimed`), of any session. Never an item another key took or
+ * dismissed, nor one whose hand-off code a key took.
+ */
+export function leftoversIn(all: Record<string, unknown>, folder: string, ownKey: string, nowMs: number): { key: string; saved: Saved }[] {
+  const sessions = sessionsIn(all)
+  const codes = codesIn(sessions)
+
+  return sessions.flatMap(([key, saved]) => {
+    if (key === ownKey || folder === '' || saved.folder !== folder || isExpired(saved, nowMs)) {
+      return []
+    }
+
+    const taken = takenOf(sessions, key)
+    const isLeft = saved.endedMs !== undefined || nowMs - saved.lastActiveMs >= STALE_MS
+    const tasks = saved.tasks.filter(task => {
+      if (taken.has(task.id) || !isShown(task)) {
+        return false
+      }
+
+      return task.state === 'handing-off' && saved.handoff !== undefined ? isUnclaimed(saved.handoff, codes, nowMs) : isLeft
+    })
+
+    return tasks.length === 0 ? [] : [{ key, saved: { ...saved, tasks } }]
+  })
+}
+
+/** The items still `handing-off` under hand-off code `code` in a key but `ownKey`'s, less those a key took; undefined when there are none. */
+export function handedOffIn(all: Record<string, unknown>, code: string, ownKey: string): { key: string; saved: Saved } | undefined {
+  const sessions = sessionsIn(all)
+  const found = sessions.find(([key, saved]) => key !== ownKey && saved.handoff?.code === code)
+
+  if (found === undefined) {
+    return undefined
+  }
+
+  const [key, saved] = found
+  const taken = takenOf(sessions, key)
+  const tasks = saved.tasks.filter(task => task.state === 'handing-off' && !taken.has(task.id))
+
+  return tasks.length === 0 ? undefined : { key, saved: { ...saved, tasks } }
 }

@@ -34,6 +34,61 @@ export function isShown(task: Task): boolean {
   return isActive(task) || task.state === 'handing-off'
 }
 
+/** Marked for another session, or taken by one: this session's Claude is told nothing more of it. */
+export function isAway(task: Task): boolean {
+  return task.state === 'handing-off' || task.state === 'moved'
+}
+
+/** The state `task` had before it was handed off: only the user's Later makes an item `later`, and nothing makes it open again. */
+export function stateBefore(task: Task): 'open' | 'later' {
+  return task.state === 'later' || task.thread.some(message => message.from === 'user' && message.event === 'later') ? 'later' : 'open'
+}
+
+/**
+ * The numbers items taken from other sessions get, numbered `incoming` there,
+ * where this session holds `held` and counts on from `nextId`: each keeps its
+ * own unless this session uses it, else gets the next free number. A number
+ * past the highest held and below `nextId` is in use: an item added meanwhile has it.
+ */
+export function numbersFor(held: readonly number[], nextId: number, incoming: readonly number[]): { was: number; now: number }[] {
+  const used = new Set(held)
+
+  for (let id = Math.max(0, ...held) + 1; id < nextId; id += 1) {
+    used.add(id)
+  }
+
+  const kept = incoming.map(was => {
+    const isFree = !used.has(was)
+    used.add(was)
+    return isFree
+  })
+  let next = nextId
+
+  return incoming.map((was, i) => {
+    if (kept[i]) {
+      return { was, now: was }
+    }
+
+    while (used.has(next)) {
+      next += 1
+    }
+
+    used.add(next)
+
+    return { was, now: next }
+  })
+}
+
+/** `task` as it arrives in this session as #`id` at `atMs`: open or Later as it was before the hand-off, its old number noted when it changed. */
+export function arrivedAs(task: Task, id: number, atMs: number): Task {
+  return { ...task, id, state: stateBefore(task), updatedMs: atMs, ...(id === task.id ? {} : { note: `was #${task.id} in the session it moved from` }) }
+}
+
+/** `task` with the event that it moved here at `atMs`, by Claude's take (`claude`) or the user's. */
+export function tookBy(task: Task, from: Message['from'], atMs: number): Task {
+  return { ...task, thread: [...task.thread, { from, text: '', event: 'took', atMs }] }
+}
+
 /** A title as two near-identical asks compare equal. */
 export function sameAsk(a: string, b: string): boolean {
   const norm = (s: string) => oneLine(s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' '))
@@ -202,6 +257,10 @@ export function parseReply(args: Record<string, unknown>): Reply | { error: stri
 /** Why Claude's `reply` cannot go on `task`; undefined when it can. */
 export function replyErrorOf(task: Task, reply: Reply): string | undefined {
   const change = reply.change ?? {}
+
+  if (isAway(task)) {
+    return `Item #${task.id} went to a new session; that session answers it now.`
+  }
 
   if (!isActive(task)) {
     return `Item #${task.id} is already ${task.state}; add a new item if you need more from the user.`
@@ -517,6 +576,40 @@ export function listOf(tasks: readonly Task[], nowMs: number, isWhole = false): 
   return tasks.length === 0 ? 'No items match.' : tasks.map(task => listedOf(task, nowMs, isWhole)).join('\n\n')
 }
 
+/** What tells Claude what to do with items it takes from another session. */
+const YOURS = 'answer in each with reply_item, and close each with close_item once it is resolved.'
+
+/** `take_items`'s answer: the items taken by hand-off code `code`, as `tookOf` gives them. */
+export function takenByCodeOf(code: string, items: readonly { task: Task; was: number }[], nowMs: number): string {
+  return tookOf(`Took ${plural(items.length, 'item')} from the previous session (hand-off code ${code}). They are yours now: ${YOURS}`, items, nowMs)
+}
+
+/** What the user's Take sends Claude: the items another session left, as `tookOf` gives them. */
+export function leftTakenOf(items: readonly { task: Task; was: number }[], nowMs: number): string {
+  return tookOf(`I took ${plural(items.length, 'item')} left by an earlier session (Open items). They are yours now: ${YOURS}`, items, nowMs)
+}
+
+/** What the user's Take sends Claude for the items it handed off that no session took. */
+export function takenBackOf(items: readonly { task: Task; was: number }[], nowMs: number): string {
+  return tookOf(`No new session took ${plural(items.length, 'item')} you handed off, so I took them back (Open items). They are yours again: ${YOURS}`, items, nowMs)
+}
+
+/**
+ * `head`, then each item taken whole, as `list_items` gives one, with its
+ * number in the session it came from where that differs (`was`), and what the
+ * user did that Claude has not heard.
+ */
+function tookOf(head: string, items: readonly { task: Task; was: number }[], nowMs: number): string {
+  const each = items.map(({ task, was }) => {
+    const listed = listedOf(task, nowMs, true)
+    const numbered = was === task.id ? listed : listed.replace(`#${task.id} `, `#${task.id} (was #${was}) `)
+
+    return hasNewsIn(task) ? `${numbered}\n  Not heard yet: ${newsOf(task).split('\n').join('\n  ')}` : numbered
+  })
+
+  return [head, ...each].join('\n\n')
+}
+
 /** `add_item`'s answer. */
 export function addedOf(task: Task): string {
   if (task.kind === 'info') {
@@ -533,15 +626,16 @@ export function addedOf(task: Task): string {
   ].join(' ')
 }
 
-/** The status line under the prompt: what waits on the user; nothing when nothing does. */
-export function statusOf(shown: readonly Task[]): string | undefined {
-  if (!shown.some(waitsOnUser)) {
-    return undefined
-  }
+/**
+ * The status line under the prompt: that the last store write failed, and
+ * what waits on the user; nothing when neither. The engine heads it with the
+ * plugin's name: `open-items: could not save`.
+ */
+export function statusOf(shown: readonly Task[], isSaveFailing = false): string | undefined {
+  const waiting = shown.some(waitsOnUser) ? waitingOf(shown) : undefined
+  const parts = [...(isSaveFailing ? ['could not save'] : []), ...(waiting === undefined ? [] : [`${waiting.glyph}${waiting.headline} · /open-items`])]
 
-  const { glyph, headline } = waitingOf(shown)
-
-  return `${glyph}${headline} · /open-items`
+  return parts.length === 0 ? undefined : parts.join(' · ')
 }
 
 /**
