@@ -211,7 +211,7 @@ const TOOLS: readonly ToolSpec[] = [
       '- The detail keeps its line breaks, up to 4000 characters. If you can publish artifact pages, put tables, diffs and long step lists on the one artifact page of the session, and give the URL of its section in link.',
       '- For a secret, ask the user to put it where it belongs and to mark the item done. Never ask them to paste it.',
       '',
-      'Before the session ends, resolve, record or hand off every open and Later item. To record an item, write it and its state in the hand-off file or in the final summary of the session, then close it with close_item as withdrawn, with the note "recorded in <where>". To give the items to a new session, use handoff_items.',
+      'Before the session ends, resolve, record or hand off every open and Later item. To record an item, write it and its state in the hand-off file or in the final summary of the session, then close it with close_item as withdrawn, with the note "recorded in <where>". To give the items to a new session, use handoff_items; the new session calls take_items. If they are not callable yet, load handoff_items and take_items with ToolSearch.',
       '',
       'If an Open items tool call fails, ask in the chat.',
     ].join('\n'),
@@ -392,8 +392,12 @@ const live = {
   mainTurn: undefined as boolean | undefined,
   /** The main loop's last turn ended by the user's interrupt: an answer that joined it waits for the next prompt. */
   wasStopped: false,
-  /** The items whose answers joined the running main turn as a row no model request has read yet. */
-  unreadAppend: [] as readonly number[],
+  /**
+   * The items whose answers joined the running main turn as a row no model
+   * request has read yet, each as it stood before that row claimed its update
+   * (undefined when the row claimed none): see `handedOff`.
+   */
+  unreadAppend: new Map<number, Task | undefined>(),
   /** What the user has typed in each reply field so far, by `replyKeyOf`. */
   drafts: new Map<string, string>(),
   /**
@@ -695,7 +699,8 @@ export const register: Register = on => {
       return { deny: error }
     }
 
-    const title = printable(found.title, MAX_TITLE)
+    // `found` is the item before the reply, which may rename it.
+    const title = printable(reply.change?.title ?? found.title, MAX_TITLE)
     await present($, found, await $.clock.now(), { toast: `Claude replied on an item: ${title}. See /open-items`, notice: `Claude replied: ${title}` })
     const unheard = found.update === 'pending' ? `\nThe user had already responded on it, which you had not heard:\n${newsOf(found)}` : ''
 
@@ -793,14 +798,14 @@ export const register: Register = on => {
     const { handoff } = await read($, header)
     // A second call keeps the code a successor may hold already.
     const code = handoff !== undefined && !takenCodes(all).has(handoff.code) ? handoff.code : newCode(all)
-    const unread = new Set(live.unreadAppend)
+    const unread = new Map(live.unreadAppend)
     let handed: number[] = []
 
     await update($, header, now => ({ ...now, handoff: { code, atMs: nowMs } }))
     await change($, list => {
       handed = list.filter(isActive).map(task => task.id)
 
-      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(task, unread.has(task.id), nowMs) : task))
+      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(task, unread, nowMs) : task))
     })
 
     if (handed.length === 0) {
@@ -808,7 +813,9 @@ export const register: Register = on => {
     }
 
     // Read by no model request, those answers go with their items: the old Claude is not woken for them.
-    live.unreadAppend = live.unreadAppend.filter(id => !handed.includes(id))
+    for (const id of handed) {
+      live.unreadAppend.delete(id)
+    }
 
     for (const id of handed) {
       await settle($, id)
@@ -867,12 +874,14 @@ export const register: Register = on => {
   // Observes only: the mod hooks no tool of Claude Code's own, so it reads a background start from the main
   // loop's result row. A subagent's background work counts while the subagent runs (`$.agent.list()`).
   on('session.append', { door: 'tool-result' }, async ($, e, next) => {
-    try {
-      if (e.agentId === undefined && e.origin.kind === 'tool') {
-        noteStart(e.origin.tool, resultTextOf(e.message.content))
+    const tool = e.origin.kind === 'tool' ? e.origin.tool : undefined
+
+    if (e.agentId === undefined && (tool === 'Bash' || tool === 'Monitor')) {
+      try {
+        noteStart(tool, resultTextOf(e.message.content))
+      } catch {
+        live.background = null
       }
-    } catch {
-      live.background = null
     }
 
     return next(e)
@@ -885,7 +894,7 @@ export const register: Register = on => {
       live.alertedTurn = false
       live.mainTurn = true
       live.wasStopped = false
-      live.unreadAppend = []
+      live.unreadAppend.clear()
       await noteActive($)
       await awaited($, Promise.all([scan($), persist($)]))
     }
@@ -895,7 +904,7 @@ export const register: Register = on => {
 
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
-      live.unreadAppend = []
+      live.unreadAppend.clear()
     }
 
     return yield* next(e)
@@ -911,11 +920,11 @@ export const register: Register = on => {
 
       // A row that joined the turn during its last request has no step left to read it. After the
       // user's Esc the next prompt reads it: a wake-up would start the turn they just stopped.
-      if (live.unreadAppend.length > 0 && !live.wasStopped) {
+      if (live.unreadAppend.size > 0 && !live.wasStopped) {
         wakeUp($)
       }
 
-      live.unreadAppend = []
+      live.unreadAppend.clear()
     }
 
     return result
@@ -943,10 +952,14 @@ export const register: Register = on => {
 
     const bridged = answerIn(e.text)
 
-    // A prompt from the Remote Control bridge (a phone) is one the user typed in the chat too.
+    // A prompt from the Remote Control bridge (a phone) is one the user typed in the chat too. A slash
+    // command is no back-and-forth with Claude, so the live-chat gate does not count it.
     if (e.origin.kind === 'composer' || e.origin.kind === 'bridge') {
       live.lastPersonMs = await $.clock.now()
-      noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
+
+      if (e.command === undefined) {
+        noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
+      }
     }
 
     if (e.origin.kind === 'task-notification') {
@@ -1497,8 +1510,9 @@ async function switchTo($: EngineInterface, sessionId: string) {
   cancelBatch()
   live.mainTurn = undefined
   live.wasStopped = false
-  live.unreadAppend = []
+  live.unreadAppend.clear()
   live.moved.clear()
+  live.inputs = []
   const cwd = await $.session.cwd().catch(() => undefined)
   const nowMs = await $.clock.now()
   await update($, folder, known => cwd ?? known)
@@ -2497,7 +2511,11 @@ async function handOver(
   }
 
   if (live.mainTurn === true) {
-    live.unreadAppend = [...new Set([...live.unreadAppend, ...ids])]
+    for (const id of ids) {
+      if (!live.unreadAppend.has(id)) {
+        live.unreadAppend.set(id, due.find(task => task.id === id))
+      }
+    }
   } else if (!live.wasStopped) {
     // The turn ended while the row went in.
     wakeUp($)
@@ -2510,7 +2528,7 @@ async function handOver(
 
 /** Starts a turn for the answers that joined the main turn after its last request. */
 function wakeUp($: EngineInterface) {
-  live.unreadAppend = []
+  live.unreadAppend.clear()
   void $.prompt.submit({ text: WAKE_UP, asUser: true }).catch(() => undefined)
 }
 
@@ -2657,9 +2675,19 @@ function randomCode(): string {
   return code
 }
 
-/** `task` marked for the next session; `isUnread` when its answer joined a turn no model request read, so it goes on as not heard. */
-function handedOff(task: Task, isUnread: boolean, atMs: number): Task {
-  return { ...task, state: 'handing-off', updatedMs: atMs, ...(isUnread ? { update: 'pending', heardMs: undefined } : {}) }
+/**
+ * `task` marked for the next session. One whose answer joined a turn no model
+ * request read (in `unread`) goes on with that answer not heard; what Claude
+ * heard before stays heard.
+ */
+function handedOff(task: Task, unread: ReadonlyMap<number, Task | undefined>, atMs: number): Task {
+  const handed: Task = { ...task, state: 'handing-off', updatedMs: atMs }
+
+  if (!unread.has(task.id)) {
+    return handed
+  }
+
+  return { ...handed, update: 'pending', heardMs: (unread.get(task.id) ?? task).heardMs }
 }
 
 /**

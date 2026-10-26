@@ -3239,6 +3239,7 @@ describe('the mod\'s own tools', () => {
 
     expect(descriptionOf(world, 'add_item')).toContain('live chat')
     expect(descriptionOf(world, 'add_item')).toContain('Before the session ends')
+    expect(descriptionOf(world, 'add_item')).toContain('load handoff_items and take_items with ToolSearch')
   })
 
   test('reply_item and close_item carry the rule for an answer in the chat, and handoff_items says how to pass the code', async ($, on) => {
@@ -3893,6 +3894,33 @@ describe('hand-off', () => {
     expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', update: 'delivered', isWaitingForClaude: true }))
   })
 
+  test('an unread answer moves with the item, and the moves the old Claude heard are not told again', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    await ui.press({ key: 'later' })
+    await clock.advance(1000)
+    // A model request reads the Later.
+    await step($, 't1')
+    await ui.press({ key: 'row-1' })
+    await ui.input({ key: 'reply-1', text: 'Two failures' })
+    await clock.advance(1000)
+
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    const unheard = answerOf(await $.tool.call({ tool: TAKE, code })).result?.split('Not heard yet:')[1] ?? ''
+
+    expect(unheard).toContain('Two failures')
+    expect(unheard).not.toContain('pressed Later')
+  })
+
   test('reply_item on an item handed off says the new session answers it, not to add it again', async ($, on) => {
     seat(on)
     await start($)
@@ -4176,6 +4204,7 @@ describe('leftovers', () => {
     ])
     expect(world.submitted).toHaveLength(1)
     expect(world.submitted[0]).toContain('I took 2 items left by an earlier session')
+    expect(world.submitted[0]).toContain('once it is resolved.\n\nTheir threads, as the pane recorded them:\n\n#1 open')
     expect(world.submitted[0]).toContain('Which region holds the bucket?')
     expect(world.submitted[0]).toContain('eu-west-1')
     expect(world.store[OLD]).toEqual(ended)
@@ -4259,6 +4288,29 @@ describe('leftovers', () => {
 
     expect(world.items).toEqual([])
     expect(world.store['session:session-2']).toBeUndefined()
+  })
+
+  test('a resume does not offer, before its key is read, the items that key took', async ($, on) => {
+    const ended = keyed([savedItem(1), savedItem(2)], { endedMs: NOW - HOUR_MS, lastActiveMs: NOW - HOUR_MS })
+    const resumed = keyed([savedItem(1), savedItem(2)], { taken: [{ code: '', fromKey: OLD, ids: [{ was: 1, now: 1 }, { was: 2, now: 2 }] }] })
+    const { world, clock } = seat(on, { [OLD]: ended, [NEW]: resumed })
+    await start($)
+
+    await $.session.end({ reason: 'resume', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-new'
+    world.isStuck = true
+    world.ops = []
+    await clock.advance(1)
+    const turn = $.turn.start({ text: 'go on', turnId: 't1' })
+    await clock.advance(5000)
+    await turn
+    const ui = await $.ui.mount(PANE)
+
+    expect(world.ops[0]).toBe(`get ${NEW}`)
+    expect(await ui.find({ key: 'offer' })).toBeUndefined()
+
+    world.unstick?.()
+    await clock.settle()
   })
 
   test('--resume of an ended session clears endedMs, so its items are not offered elsewhere', async ($, on) => {
@@ -4964,6 +5016,22 @@ describe('the alert', () => {
 
     expect(world.notices).toHaveLength(2)
   })
+
+  test('a Claude reply that renames the item toasts and alerts with the new title', async ($, on) => {
+    const { world, clock } = seat(on)
+    world.isNarrow = true
+    await start($)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await $.tool.call(QUESTION)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.turn.start({ text: 'go on', turnId: 't2' })
+    await $.tool.call({ tool: REPLY, id: 1, title: 'Which tag is the release cut from' })
+    await clock.settle()
+
+    expect(world.toasts.at(-1)).toBe('Claude replied on an item: Which tag is the release cut from. See /open-items')
+    expect(world.notices.map(one => one.text)).toEqual([QUESTION.title, 'Claude replied: Which tag is the release cut from'])
+  })
 })
 
 describe('threads', () => {
@@ -5200,6 +5268,14 @@ describe('the live-chat gate', () => {
     await $.prompt.submit(typed('I like the short ones'))
   }
 
+  /** A slash command as the engine raises it at `prompt.submit`. */
+  const slashed = (name: string, args = ''): PromptSubmitInput => ({
+    text: args === '' ? `/${name}` : `/${name} ${args}`,
+    wait: false,
+    origin: { kind: 'composer' },
+    command: { name, args },
+  })
+
   test('a brainstorm: an add after the second typed prompt, no agent running, is refused; 5 minutes on, it is added', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
@@ -5214,15 +5290,30 @@ describe('the live-chat gate', () => {
     expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
   })
 
-  test('a COO first turn: an add before the first agent is allowed', async ($, on) => {
+  test('a COO first turn: an add after /coo and /open-items, before the first agent, is allowed', async ($, on) => {
     seat(on)
     await start($)
 
-    await $.prompt.submit(typed('/coo run the release checklist'))
+    await $.prompt.submit(slashed('coo', 'run the release checklist'))
+    await $.prompt.submit(slashed('open-items'))
     const added = resultOf(await $.tool.call(XCODE_TASK))
 
     expect(added.result).toContain('Added item #1')
     expect(added.result).not.toContain(NOTE)
+  })
+
+  test('after /clear, the prompts typed before it no longer count', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await twoTyped($)
+    await $.prompt.submit(slashed('clear'))
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    await $.prompt.submit(typed('Now the deploy script'))
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
   })
 
   test('a pane press, then an add with no agent running, is allowed', async ($, on) => {
@@ -5424,5 +5515,16 @@ describe('the live-chat gate', () => {
     const stored = await $.session.append(row)
 
     expect(stored).toEqual({ message: row.message, uuid: row.uuid })
+  })
+
+  test("another tool's result row of an odd shape leaves the gate able to refuse", async ($, on) => {
+    seat(on)
+    await start($)
+
+    const odd = { ...rowOf('Bash', ''), origin: { kind: 'tool', tool: 'Read' }, message: { type: 'user', role: 'user', content: 'not a list' } }
+    await $.session.append(odd as unknown as SessionAppendInput)
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).deny).toBe(LIVE)
   })
 })

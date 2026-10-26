@@ -194,9 +194,10 @@ export function isExpired(saved: Saved, nowMs: number): boolean {
 }
 
 /**
- * `saved` as its key keeps it: open, later and handing-off items whole; a
- * closed item without its thread once Claude has heard of it, and gone 7 days
- * after its last change. One Claude has not heard of yet stays whole.
+ * `saved` as its key keeps it: open, later and handing-off items whole. A
+ * closed item Claude has heard of keeps no thread, `doneWhen`, options,
+ * `recommended`, link or note, and is gone 7 days after its last change. One
+ * Claude has not heard of yet stays whole.
  */
 export function trimmed(saved: Saved, nowMs: number): Saved {
   const tasks = saved.tasks.flatMap(task => {
@@ -204,7 +205,9 @@ export function trimmed(saved: Saved, nowMs: number): Saved {
       return [task]
     }
 
-    return nowMs - task.updatedMs > KEEP_CLOSED_MS ? [] : [{ ...task, thread: [] }]
+    const { doneWhen, options, recommended, link, note, ...kept } = task
+
+    return nowMs - task.updatedMs > KEEP_CLOSED_MS ? [] : [{ ...kept, thread: [] }]
   })
 
   return { ...saved, tasks }
@@ -284,13 +287,20 @@ export function leftoversIn(all: Record<string, unknown>, folder: string, ownKey
 }
 
 /**
- * `all` with `key`'s `taken` records as given: what a session took counts
- * before its write lands, and though the write failed.
+ * `all` with `taken` joined to `key`'s stored `taken` records: what a session
+ * took counts before its write lands, though the write failed, and before a
+ * resumed session has read its own key.
  */
 export function withTaken(all: Record<string, unknown>, key: string, taken: Saved['taken']): Record<string, unknown> {
   const saved = savedIn(all[key]) ?? { version: 2, tasks: [], nextId: 1, savedMs: 0, lastActiveMs: 0, folder: '', taken: [] }
+  const isHeld = (fromKey: string, was: number) => taken.some(one => one.fromKey === fromKey && one.ids.some(id => id.was === was))
+  const stored = saved.taken.flatMap(one => {
+    const ids = one.ids.filter(id => !isHeld(one.fromKey, id.was))
 
-  return { ...all, [key]: { ...saved, taken } }
+    return ids.length === 0 ? [] : [{ ...one, ids }]
+  })
+
+  return { ...all, [key]: { ...saved, taken: [...stored, ...taken] } }
 }
 
 /** The items still `handing-off` under hand-off code `code` in a key but `ownKey`'s, less those a key took; undefined when there are none. */

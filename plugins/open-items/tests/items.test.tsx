@@ -70,6 +70,14 @@ describe('the item model', () => {
     )
   })
 
+  test('a link must start with https://', () => {
+    const LINK_ERROR = 'link must be a URL that starts with https://.'
+
+    expect(errorOf(parseAsk({ kind: 'action', title: 'Read the plan', detail: 'Two steps.', link: 'http://example.com/plan' }))).toBe(LINK_ERROR)
+    expect(errorOf(parseReply({ id: 3, link: 'http://example.com/plan' }))).toBe(LINK_ERROR)
+    expect(parseReply({ id: 3, link: 'https://example.com/plan' })).toEqual({ id: 3, change: { link: 'https://example.com/plan' } })
+  })
+
   test('parseReply needs text or a change', () => {
     expect(errorOf(parseReply({ id: 3 }))).toContain('text or a change')
     expect(parseReply({ id: 3, text: STEPS })).toEqual({ id: 3, text: STEPS })
@@ -181,7 +189,7 @@ describe('the item model', () => {
     expect(takenCodes(all)).toEqual(new Set(['cccccc']))
   })
 
-  test('trimmed keeps a resolved item\'s thread while its update is pending, strips it once delivered, drops it after 7 days, and keeps an open one of any age', () => {
+  test('trimmed keeps a resolved item\'s thread while its update is pending, strips it and its fields once delivered, drops it after 7 days, and keeps an open one of any age', () => {
     const old = { createdMs: NOW - 30 * DAY_MS, updatedMs: NOW - 30 * DAY_MS }
     const open = item({ id: 1, ...old })
     const later = item({ id: 2, state: 'later', ...old })
@@ -190,10 +198,11 @@ describe('the item model', () => {
 
     expect(trimmed(saved([open, later, resolved]), NOW).tasks).toEqual([open, later, resolved])
 
-    const delivered = { ...resolved, update: 'delivered' as const }
+    const delivered = { ...resolved, update: 'delivered' as const, recommended: 'Cursor', link: 'https://example.com/plan', doneWhen: 'It is merged.' }
     const withdrawn = item({ id: 4, state: 'withdrawn', update: 'delivered', note: 'answered in chat' })
+    const bare = (one: Task) => item({ id: one.id, kind: one.kind, state: one.state, update: one.update, thread: [] })
 
-    expect(trimmed(saved([open, delivered, withdrawn]), NOW).tasks).toEqual([open, { ...delivered, thread: [] }, { ...withdrawn, thread: [] }])
+    expect(trimmed(saved([open, delivered, withdrawn]), NOW).tasks).toEqual([open, bare(delivered), bare(withdrawn)])
     expect(trimmed(saved([open, later, delivered, withdrawn]), NOW + 7 * DAY_MS + 1).tasks).toEqual([open, later])
   })
 

@@ -106,7 +106,7 @@ export type Reply = {
 
 export type Close = { id: number; as: 'resolved' | 'withdrawn'; note?: string }
 
-const LINK = /^https?:\/\/\S+$/
+const LINK = /^https:\/\/\S+$/
 
 const ID_ERROR = "id is required: the item's number, a whole number."
 
@@ -580,9 +580,17 @@ export function takenByCodeOf(code: string, items: readonly { task: Task; was: n
   return tookOf(`Took ${plural(items.length, 'item')} from the previous session (hand-off code ${code}). They are yours now: ${YOURS}`, items, nowMs)
 }
 
-/** What the user's Take sends Claude: the items another session left, as `tookOf` gives them. */
+/**
+ * What the user's Take sends Claude: the items another session left, as
+ * `tookOf` gives them. It goes as the user's prompt, so a frame line marks the
+ * threads as the pane's record, not as new words of the user's.
+ */
 export function leftTakenOf(items: readonly { task: Task; was: number }[], nowMs: number): string {
-  return tookOf(`I took ${plural(items.length, 'item')} left by an earlier session (Open items). They are yours now: ${YOURS}`, items, nowMs)
+  return tookOf(
+    `I took ${plural(items.length, 'item')} left by an earlier session (Open items). They are yours now: ${YOURS}\n\nTheir threads, as the pane recorded them:`,
+    items,
+    nowMs,
+  )
 }
 
 /** What the user's Take sends Claude for the items it handed off that no session took. */

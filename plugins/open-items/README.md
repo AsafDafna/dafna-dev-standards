@@ -35,7 +35,7 @@ Before Claude starts a new session, it calls `handoff_items`. This marks every o
 
 When a session ends without a hand-off, the next session in the same folder offers the leftover items. **Take** moves them to the current session and tells Claude. **Dismiss** closes them, and Claude hears nothing.
 
-Items are kept per session. A resumed session gets its items back, `/clear` starts with an empty pane, and saved sessions are deleted after 30 days.
+Items are kept per session. A resumed session gets its items back. After `/clear`, the new conversation holds no items, and the pane at once offers the earlier conversation's open and Later items with **Take** and **Dismiss**. Saved sessions are deleted after 30 days.
 
 ## Answers
 
@@ -53,13 +53,13 @@ When Claude adds a decision, question or action and you have been quiet for two 
 - **One reminder line on each prompt you type,** while an item is open: `Open items: N open, M unread answers; call list_items.`
 - **One fixed line,** "I answered an item while you were finishing your reply; my answer is above.", when your answer arrived during Claude's final reply.
 
-The mod also reads every prompt you type. It turns a prompt that starts with `↳ Answer to #N:` into that item's answer.
+The mod also reads every prompt you type. It turns a prompt that starts with `↳ Answer to #N:` into that item's answer. It also counts your typed prompts for the live-chat gate. A live chat is one where your last two inputs were typed prompts, the last under five minutes ago. In a live chat with no agent or background work running, `add_item` refuses, so Claude asks in the chat. A slash command is not a typed prompt here.
 
 Nothing else from the conversation, your files or your machine goes into a prompt. The mod also adds four lines to the system prompt that tell Claude about items.
 
 ## Data and tools
 
-Items stay on your machine, in the session's state and in the plugin's own store. The mod uses no network and starts no process. It answers only calls to its own six tools: `add_item`, `reply_item`, `close_item`, `list_items`, `handoff_items` and `take_items`.
+Items stay on your machine, in the session's state and in the plugin's own store. The mod uses no network and starts no process. It answers only calls to its own six tools: `add_item`, `reply_item`, `close_item`, `list_items`, `handoff_items` and `take_items`. It also reads the result rows of Bash and Monitor calls and task-notification prompts, only so the live-chat gate knows whether background work runs.
 
 ## License
 
