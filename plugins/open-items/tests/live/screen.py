@@ -3,8 +3,9 @@
 The test kit checks the tree the plugin returns, never how a terminal lays it
 out. This runs the real engine instead: a throwaway config folder, the store
 seeded with the items a session saved, that session started again, `/open-items`,
-and `tmux capture-pane` at the width asked for. No model is called, so a dummy
-API key does.
+keys sent with `tmux send-keys`, and `tmux capture-pane` at the width asked for.
+No model is called, so a dummy API key does: a reply sent as a prompt ends at
+the API's refusal.
 """
 
 import hashlib
@@ -17,6 +18,8 @@ import sys
 import tempfile
 import time
 import uuid
+
+from renders import SGR, apply, text_of
 
 KEY = 'render-check-not-a-real-key'
 
@@ -64,15 +67,15 @@ def snapshot(session, name=None):
     return '\n'.join(line.rstrip(' ') for line in ESCAPES.sub('', styled).split('\n'))
 
 
-def wait_for(session, predicate, timeout=30.0):
+def wait_for(session, predicate, timeout=30.0, escapes=False):
     end = time.time() + timeout
     screen = ''
     while time.time() < end:
-        screen = capture(session)
+        screen = capture(session, escapes)
         if predicate(screen):
             return screen
         time.sleep(0.25)
-    raise TimeoutError(f'timed out; the screen was:\n{screen}')
+    raise TimeoutError(f'timed out; the screen was:\n{ESCAPES.sub("", screen)}')
 
 
 class Claude:
@@ -158,38 +161,63 @@ class Claude:
         digest = hashlib.sha256(b'open-items@inline').hexdigest()[:12]
         return os.path.join(self.config, 'plugins', 'store', f'open-items_inline-{digest}.json')
 
-    def seed(self, tasks):
-        """Leaves `tasks` in the store as the session saved them, for `pane` to start it again with them."""
+    def seed(self, items):
+        """Leaves `items` in the store as the session saved them, for `pane` to start it again with them.
+
+        Each is an item's fields over an open action's, with `detail` for
+        Claude's first message, `thread` for the messages after it (an
+        `agoMs` in place of `atMs`), and `ageMs` for how long ago Claude added it.
+        """
         now_ms = int(time.time() * 1000)
-        saved = {
-            'tasks': [
+        tasks = []
+        for item in items:
+            created = now_ms - item.get('ageMs', 180_000)
+            later = [{k: v for k, v in message.items() if k != 'agoMs'} | {'atMs': now_ms - message.get('agoMs', 60_000)} for message in item.get('thread', ())]
+            tasks.append(
                 {
+                    'kind': 'action',
                     'state': 'open',
                     'update': 'none',
-                    'kind': 'action',
-                    'sessionId': self.session_id,
-                    'createdMs': now_ms - task.get('ageMs', 180_000),
-                    'updatedMs': now_ms - task.get('ageMs', 180_000),
-                    **{k: v for k, v in task.items() if k != 'ageMs'},
+                    'isWaitingForClaude': False,
+                    'hasNewReply': False,
+                    'createdMs': created,
+                    'updatedMs': created,
+                    'thread': [{'from': 'claude', 'text': item.get('detail', ''), 'atMs': created}, *later],
+                    **{k: v for k, v in item.items() if k not in ('ageMs', 'detail', 'thread')},
                 }
-                for task in tasks
-            ],
-            'nextId': max(task['id'] for task in tasks) + 1,
-            'savedMs': now_ms,
-        }
+            )
+        self.store(
+            {
+                'version': 2,
+                'tasks': tasks,
+                'nextId': max(task['id'] for task in tasks) + 1,
+                'savedMs': now_ms,
+                'lastActiveMs': now_ms,
+                'folder': self.project,
+                'taken': [],
+            }
+        )
+
+    def store(self, saved):
+        """Leaves `saved` in the store under the session's key, in the shape a version of the plugin wrote."""
         path = self.store_file()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         # No session runs yet to write over it.
         with open(path, 'w') as f:
             json.dump({f'session:{self.session_id}': saved}, f)
 
-    def pane(self, columns, rows, keys=(), name=None):
-        """The screen with the pane opened by /open-items, after `keys`; kept as `name` when given."""
+    def saved(self):
+        """What the session left under its key in the store, once it has ended."""
+        with open(self.store_file()) as f:
+            return json.load(f)[f'session:{self.session_id}']
+
+    def open_pane(self, columns, rows):
+        """Starts the seeded session again in a terminal `columns` by `rows`, and opens the pane with /open-items."""
         self.start(columns, rows, '--session-id', self.session_id)
         # The session restores the items as it starts; the status line counts
         # them once it has. /open-items typed before that finds none.
         try:
-            wait_for(self.session, lambda s: 'open-items: ☐' in s or 'open-items: ✓' in s)
+            wait_for(self.session, lambda s: re.search('open-items: [☐✓⋯]', s))
         except TimeoutError as error:
             # The engine names the store's file; the seed goes where store_file() says it does.
             raise RuntimeError(
@@ -198,20 +226,53 @@ class Claude:
             ) from error
         self.command('/open-items')
         wait_for(self.session, has_pane)
-        if keys:
-            # The pane takes the keys when the prompt lets it; else ctrl+x tab hands them over.
-            try:
-                wait_for(self.session, lambda s: 'Esc: back to the prompt' in s, timeout=3)
-            except TimeoutError:
-                run('tmux', 'send-keys', '-t', self.session, 'C-x', 'Tab')
-                wait_for(self.session, lambda s: 'Esc: back to the prompt' in s, timeout=10)
+        self.has_keys = False
+
+    def take_keys(self):
+        """Has the pane hold the keys, once after it opens."""
+        if self.has_keys:
+            return
+        # The pane takes the keys when the prompt lets it; else ctrl+x tab hands them over.
+        try:
+            wait_for(self.session, holds_keys, timeout=3, escapes=True)
+        except TimeoutError:
+            run('tmux', 'send-keys', '-t', self.session, 'C-x', 'Tab')
+            wait_for(self.session, holds_keys, timeout=10, escapes=True)
+        self.has_keys = True
+
+    def press(self, *keys, pause=0.5):
+        """Sends `keys` to the pane, `pause` seconds apart: a key by its tmux name, any other text as typed."""
+        self.take_keys()
         for key in keys:
             run('tmux', 'send-keys', '-t', self.session, key)
-            time.sleep(0.5)
+            time.sleep(pause)
+
+    def read(self, name=None):
+        """The screen once the pane is drawn and has settled; kept as `name` when given."""
         # Keys that close the pane and open it again leave it to come back.
         wait_for(self.session, has_pane)
         time.sleep(1.0)
         return snapshot(self.session, name)
+
+    def ring(self):
+        """The text the focus ring is on in the pane, as the engine draws it inverse: one entry for each run of it."""
+        return ring_of(capture(self.session, escapes=True))
+
+    def wait_ring(self, wanted, timeout=5.0):
+        """The ring once it is on `wanted`, or where it is when `timeout` seconds pass first."""
+        end = time.time() + timeout
+        while True:
+            found = self.ring()
+            if found == wanted or time.time() > end:
+                return found
+            time.sleep(0.1)
+
+    def pane(self, columns, rows, keys=(), name=None):
+        """The screen with the pane opened by /open-items, after `keys`; kept as `name` when given."""
+        self.open_pane(columns, rows)
+        if keys:
+            self.press(*keys)
+        return self.read(name)
 
     def transcript(self, columns, rows, tool_input, name=None):
         """The screen of a session resumed from a transcript where Claude called add_item; kept as `name` when given."""
@@ -253,11 +314,60 @@ class Claude:
 
 
 def has_pane(screen):
-    """Whether the pane is drawn whole, around its head or a task, which lead with ☐ or ✓ as the status line does not: framed above the prompt, or docked beside the transcript."""
+    """Whether the pane is drawn, a row of it in view: framed above the prompt, or docked beside the transcript."""
     try:
-        return any(row.startswith(('☐', '✓')) for row in pane_body(screen))
+        return any(row.strip() for row in pane_body(screen))
     except StopIteration:
         return False
+
+
+def holds_keys(styled):
+    """Whether the pane has the keys: the engine draws its frame, or a docked pane's rule, dim while the prompt has them."""
+    lines = styled.split('\n')
+    plain = [text_of(line) for line in lines]
+    top = frame_top(plain)
+    if top is not None:
+        row, column = top, plain[top].index('╭')
+    else:
+        column = rule_of(plain)
+        if column is None:
+            return False
+        row = next(i for i, line in enumerate(plain) if len(line) > column and line[column] == '│')
+    return not styles_of(lines[row])[column].get('dim')
+
+
+def styles_of(line):
+    """The style each character of a captured row is drawn in, in the order of its characters."""
+    styles, style, at = [], {}, 0
+    for match in [*SGR.finditer(line), None]:
+        styles += [dict(style)] * len(text_of(line[at : len(line) if match is None else match.start()]))
+        if match is not None:
+            apply(style, match.group(1))
+            at = match.end()
+    return styles
+
+
+def ring_of(styled):
+    """The runs of text drawn inverse in the pane's body, each stripped: where the engine draws the focus ring."""
+    lines = styled.split('\n')
+    plain = [text_of(line) for line in lines]
+    top = frame_top(plain)
+    if top is None:
+        column = rule_of(plain)
+        rows = [] if column is None else [(i, column + 1) for i, line in enumerate(plain) if len(line) > column and line[column] == '│']
+    else:
+        bottom = next((i for i, line in enumerate(plain) if i > top and line.lstrip().startswith('╰')), len(plain))
+        rows = [(i, 0) for i in range(top + 1, bottom)]
+    runs = []
+    for i, start in rows:
+        inverse = ''
+        for character, style in list(zip(plain[i], styles_of(lines[i])))[start:] + [('', {})]:
+            if style.get('inverse'):
+                inverse += character
+            elif inverse:
+                runs.append(inverse.strip())
+                inverse = ''
+    return [one for one in runs if one]
 
 
 def placement(screen):
@@ -280,11 +390,17 @@ def pane_body(screen):
     return [line.strip()[1:-1].rstrip()[1:] if line.strip().startswith('│') else line for line in lines[top + 1 : bottom]]
 
 
-def dock_body(lines):
-    """The rows right of the rule a docked pane draws down the screen's height, its close mark's row gone."""
+def rule_of(lines):
+    """The column of the rule a docked pane draws down the screen's height, or None."""
     columns = [{i for i, c in enumerate(line) if c == '│'} for line in lines]
     rule = max(set().union(*columns), key=lambda i: sum(i in found for found in columns), default=None)
-    if rule is None or sum(rule in found for found in columns) < len(lines) // 2:
+    return None if rule is None or sum(rule in found for found in columns) < len(lines) // 2 else rule
+
+
+def dock_body(lines):
+    """The rows right of the rule a docked pane draws down the screen's height, its close mark's row gone."""
+    rule = rule_of(lines)
+    if rule is None:
         raise StopIteration
     return [line[rule + 1 :].rstrip() for line in lines if len(line) > rule and line[rule] == '│'][1:]
 
