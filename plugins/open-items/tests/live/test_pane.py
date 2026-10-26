@@ -347,9 +347,7 @@ class Arrows(Live):
                 self.assertEqual(claude.wait_ring([list_row(40)]), [list_row(40)], context)
 
     # The engine sums the arrows that come while the pane's scroll hook still
-    # answers one into a single move of `by` rows, which the hook passes on as
-    # a scroll of the body: the ring moves one row for the five.
-    @unittest.expectedFailure
+    # answers one into a single move of `by` rows.
     def test_arrows_that_reach_the_engine_at_once_move_the_ring_a_row_for_each(self):
         forty = [{'id': n, 'title': f'Action number {n}', 'detail': 'A reason.'} for n in range(1, 41)]
         with self.opened(forty, *INLINE) as claude:

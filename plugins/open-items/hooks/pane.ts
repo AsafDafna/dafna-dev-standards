@@ -65,14 +65,15 @@ export function focusOrderOf(shown: readonly Task[]): string[] {
 }
 
 /**
- * Where an arrow moves the ring from `current` over `keys`, `by` 1 down and
- * -1 up: the next or previous key, none past the first or the last, and
- * the first when the ring is on none of them.
+ * Where `by` arrows move the ring from `current` over `keys`, down when
+ * positive: `|by|` keys on, no further than the first or the last; none
+ * when the ring is there already; the first when it is on none of them.
  */
-export function arrowTargetOf(keys: readonly string[], current: string | undefined, by: 1 | -1): string | undefined {
+export function arrowTargetOf(keys: readonly string[], current: string | undefined, by: number): string | undefined {
   const at = current === undefined ? -1 : keys.indexOf(current)
+  const to = Math.min(keys.length - 1, Math.max(0, at + by))
 
-  return at === -1 ? keys[0] : keys[at + by]
+  return at === -1 ? keys[0] : to === at ? undefined : keys[to]
 }
 
 /**

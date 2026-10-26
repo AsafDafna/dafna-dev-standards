@@ -988,10 +988,12 @@ export const register: Register = on => {
   // In a list longer than the pane, the engine spends an arrow on scrolling
   // the body, so no row would take the ring: the arrow moves the ring a row
   // instead, and the window follows it. Past the first or last row, the body scrolls.
+  // The engine sums the arrows that come while this hook runs into one `by`,
+  // and a page key is `bodyRows`: each moves the ring as many rows.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
-    const isArrow = e.origin.kind === 'person' && e.pointer === undefined && Math.abs(e.by) === 1 && e.contentRows > e.bodyRows
-    const view = isArrow ? await paneView($, FIRST_SEAT) : undefined
-    const to = view !== undefined && screenOf(view) === 'list' ? arrowTargetOf(focusOrderOf(view.shown), live.ring, e.by > 0 ? 1 : -1) : undefined
+    const isKey = e.origin.kind === 'person' && e.pointer === undefined && e.by !== 0 && e.contentRows > e.bodyRows
+    const view = isKey ? await paneView($, FIRST_SEAT) : undefined
+    const to = view !== undefined && screenOf(view) === 'list' ? arrowTargetOf(focusOrderOf(view.shown), live.ring, e.by) : undefined
 
     if (to === undefined) {
       return next(e)

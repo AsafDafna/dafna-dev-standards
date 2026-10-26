@@ -1388,6 +1388,16 @@ describe('the list screen', () => {
     expect(arrowTargetOf(order, 'reply-1', -1)).toBe('row-2')
   })
 
+  test('arrows the engine sums into one move take the ring a row for each, as far as the first or last row', () => {
+    const rows = ['row-1', 'row-2', 'row-3', 'row-4', 'row-5', 'row-6']
+
+    expect(arrowTargetOf(rows, 'row-1', 4)).toBe('row-5')
+    expect(arrowTargetOf(rows, 'row-5', -2)).toBe('row-3')
+    expect(arrowTargetOf(rows, 'row-5', 4)).toBe('row-6')
+    expect(arrowTargetOf(rows, 'row-2', -4)).toBe('row-1')
+    expect(arrowTargetOf(rows, 'row-6', 4)).toBeUndefined()
+  })
+
   test('arrows in a long list that come before the ring has moved each move on from the last target', async ($, on) => {
     seat(on, earlierItems(LONG_LIST))
     await start($)
@@ -1419,6 +1429,9 @@ describe('the list screen', () => {
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     await $.ui.focus(ringTo('row-2'))
     expect((await $.ui.scroll(arrow(-1))).deny).toBeDefined()
+    // Arrows the engine summed while it waited on this hook.
+    await $.ui.focus(ringTo('row-1'))
+    expect((await $.ui.scroll({ ...arrow(1), by: 4 })).deny).toBeDefined()
     expect(world.scrolls).toEqual([])
 
     expect((await $.ui.scroll({ ...arrow(1), pointer: { column: 3, row: 4 } })).deny).toBeUndefined()
