@@ -67,7 +67,7 @@ export type Saved = {
 }
 
 /**
- * The selected item's answer field, when the pane shows it in place of its
+ * The open item's answer field, when the pane shows it in place of its
  * buttons. `held` is an answer held back because it looks like a secret.
  */
 export type Editing = {
@@ -76,12 +76,15 @@ export type Editing = {
   held?: string
 }
 
+/** What the Open items pane shows: the list of items, or one item. */
+export type Screen = { kind: 'list' } | { kind: 'item'; id: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'open-items': {
       tasks: readonly Task[]
       nextId: number
-      selectedId: number | null
+      screen: Screen
       editing: Editing | null
       /** The session whose saved key the state was read from: a reload of the code finds it read. */
       restoredFor: string | null

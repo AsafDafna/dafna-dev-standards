@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
-import type { Editing, Saved, Task } from '../types'
+import type { Editing, Saved, Screen, Task } from '../types'
 import {
   DONE,
   LATER,
@@ -45,24 +45,28 @@ import {
   ANSWER_BUTTONS,
   ANSWER_LABEL,
   ANSWER_PLACEHOLDER,
+  BACK,
   BUTTON_GAP,
   HELD,
   HIDE,
   MAX_SHOWN_TITLE,
+  ROW_INDENT,
   SUBMIT_LABEL,
   actionsOf as actionsFor,
   ageOf,
+  arrowTargetOf,
   detailOf,
   doneWhenOf,
   fieldKeyOf,
-  firstOf,
+  focusOrderOf,
   groupsOf,
   headlineOf,
   hintOf,
-  nameOf,
+  marksOf,
   placeholderOf,
+  rowTitleOf,
   rowsFor,
-  selectedOf,
+  screenOf,
   titleOf,
 } from './pane'
 import type { PaneView } from './pane'
@@ -129,6 +133,7 @@ const LOADING = "Open items is still loading this session's items. Try again in 
 const PANE = 'open-items'
 const PANE_TITLE = 'Open items'
 const MAX_PANE_ROWS = 18
+const LIST_SCREEN: Screen = { kind: 'list' }
 
 /** How a surface draws the pane: its body's width, whether it draws a field and holds the keys, and whether it seats the pane inline. */
 type Seat = Pick<PaneView, 'canType' | 'isFocused'> & { columns: number; isInline: boolean }
@@ -320,7 +325,7 @@ const TOOLS: readonly ToolSpec[] = [
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, [] as readonly Task[])
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, 1)
-const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, null as number | null)
+const screen = atom({ plugin: 'open-items', key: 'screen' } as const, LIST_SCREEN)
 const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
 const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
 const folder = atom({ plugin: 'open-items', key: 'folder' } as const, null as string | null)
@@ -603,8 +608,6 @@ export const register: Register = on => {
     }
 
     await change($, list => [...list, task])
-    await reselect($)
-    await update($, selectedId, chosen => chosen ?? id)
     const title = printable(task.title, MAX_TITLE)
     await present($, task, nowMs, { toast: `Claude added an item for you: ${title}. See /open-items`, notice: title })
 
@@ -977,6 +980,27 @@ export const register: Register = on => {
     return moved
   })
 
+  // In a list longer than the pane, the engine spends an arrow on scrolling
+  // the body, so no row would take the ring: the arrow moves the ring a row
+  // instead, and the window follows it. Past the first or last row, the body scrolls.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    const isArrow = e.origin.kind === 'person' && e.pointer === undefined && Math.abs(e.by) === 1 && e.contentRows > e.bodyRows
+    const view = isArrow ? await paneView($, FIRST_SEAT) : undefined
+    const to = view !== undefined && screenOf(view) === 'list' ? arrowTargetOf(focusOrderOf(view.shown), live.ring, e.by > 0 ? 1 : -1) : undefined
+
+    if (to === undefined) {
+      return next(e)
+    }
+
+    // Not awaited, as the live probe ran it (docs/superpowers/notes/2026-10-26-open-items-v0.2-probes.md, Step 2).
+    void $.ui
+      .focus({ requestId: PANE, key: to })
+      .then(() => $.ui.scroll({ in: PANE, to: { key: to } }))
+      .catch(() => undefined)
+
+    return { deny: 'An arrow moves the focus between the rows of the list.' }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const emptied = live.emptied.get(e.surface)
     const elements = $.ui.resolve(e)
@@ -1022,10 +1046,6 @@ export const register: Register = on => {
       }
     }
 
-    const groups = groupsOf(shown.filter(isActive))
-    const selected = selectedOf(view)
-    const head = headlineOf(view)
-
     // The glyph keeps its cells beside a title that wraps.
     const glyph = (
       <Box flexShrink={0}>
@@ -1035,9 +1055,9 @@ export const register: Register = on => {
 
     // The title and its age are one text, so a long title wraps under itself
     // and the age follows it, never squeezed into a column of its own.
-    const titleText = (task: Task, isBold: boolean) => (
+    const titleText = (task: Task) => (
       <Text wrap="wrap">
-        <Text bold={isBold}>{titleOf(task)}</Text>
+        <Text bold>{titleOf(task)}</Text>
         <Text dimColor>{ageOf(task, view)}</Text>
       </Text>
     )
@@ -1111,7 +1131,7 @@ export const register: Register = on => {
       ]
     }
 
-    const selectedRows = (task: Task) => {
+    const itemRows = (task: Task) => {
       // A field open on a surface that draws one: elsewhere the item keeps its buttons.
       const isEditing = view.canType && field !== null && field.id === task.id
       const [input, buttons]: Controls = isEditing ? answerField(task, field.held) : [null, actionsOf(task)]
@@ -1123,7 +1143,7 @@ export const register: Register = on => {
         <Box key={`task-${task.id}`} flexDirection="column" flexShrink={0}>
           <Box flexDirection="row">
             {glyph}
-            {titleText(task, true)}
+            {titleText(task)}
           </Box>
           <Box flexDirection="column" paddingLeft={2}>
             <Text wrap="wrap">{detailOf(task)}</Text>
@@ -1141,29 +1161,48 @@ export const register: Register = on => {
       )
     }
 
-    const itemRow = (task: Task) =>
-      task.id === selected?.id ? (
-        selectedRows(task)
-      ) : (
-        <Box key={`task-${task.id}`} flexDirection="row" flexShrink={0}>
-          {glyph}
-          <Box flexShrink={0}>
-            <Button key={`select-${task.id}`} plain dimColor label={`#${task.id}`} onPress={() => select($, task.id)} />
+    const hint = (
+      <Text dimColor wrap="wrap">
+        {hintOf(view)}
+      </Text>
+    )
+    const hide = (
+      <Box flexShrink={0}>
+        <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => closePane($)} />
+      </Box>
+    )
+    const open = screenOf(view)
+    const task = open === 'list' ? undefined : shown.find(one => one.id === open.id)
+
+    if (task !== undefined) {
+      return (
+        <Box flexDirection="column">
+          {itemRows(task)}
+          <Box key="foot" flexDirection="row" marginTop={1} columnGap={BUTTON_GAP} flexShrink={0}>
+            {hint}
+            <Box flexShrink={0}>
+              <Button key={BACK.key} plain hotkey={BACK.hotkey} label={BACK.label} onPress={() => toList($)} />
+            </Box>
+            {hide}
           </Box>
-          <Text dimColor wrap="wrap">
-            {` ${nameOf(task)}${ageOf(task, view)}`}
-          </Text>
         </Box>
       )
+    }
 
-    const sectionRows = groups.map((group, i) => (
-      <Box key={`section-${group.label}`} flexDirection="column" flexShrink={0} marginTop={i === 0 ? 0 : 1}>
-        <Text bold color="yellow">
-          {group.label}
-        </Text>
-        {group.tasks.map(itemRow)}
-      </Box>
-    ))
+    const head = headlineOf(view)
+
+    // A row is one line, its title cut to fit: the item screen draws it whole.
+    const row = (one: Task) => {
+      const { newReply, waiting } = marksOf(one)
+
+      return (
+        <Button key={`row-${one.id}`} plain onPress={() => openItem($, one.id)}>
+          {rowTitleOf(one, view, columns)}
+          {newReply === '' ? '' : <Text color="yellow">{newReply}</Text>}
+          {waiting === '' ? '' : <Text dimColor>{waiting}</Text>}
+        </Button>
+      )
+    }
 
     return (
       <Box flexDirection="column">
@@ -1173,16 +1212,19 @@ export const register: Register = on => {
             <Text bold>{head.headline}</Text>
           </Text>
         </Box>
-        <Box key="tasks" flexDirection="column" marginTop={1} flexShrink={0}>
-          {sectionRows}
-        </Box>
-        <Box key="foot" flexDirection="row" marginTop={1} columnGap={BUTTON_GAP} flexShrink={0}>
-          <Text dimColor wrap="wrap">
-            {hintOf(view)}
-          </Text>
-          <Box flexShrink={0}>
-            <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => closePane($)} />
+        {groupsOf(shown).map(group => (
+          <Box key={`section-${group.label}`} flexDirection="column" flexShrink={0}>
+            <Text bold color="yellow">
+              {group.label}
+            </Text>
+            <Box flexDirection="column" paddingLeft={ROW_INDENT}>
+              {group.tasks.map(row)}
+            </Box>
           </Box>
+        ))}
+        <Box key="foot" flexDirection="row" columnGap={BUTTON_GAP} flexShrink={0}>
+          {hint}
+          {hide}
         </Box>
       </Box>
     )
@@ -1257,7 +1299,7 @@ async function switchTo($: EngineInterface, sessionId: string) {
   await update($, restoredFor, () => null)
   await update($, tasks, () => [])
   await update($, nextId, () => 1)
-  await update($, selectedId, () => null)
+  await update($, screen, () => LIST_SCREEN)
   await update($, editing, () => null)
   await refresh($)
 }
@@ -1330,8 +1372,6 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
     if (saved.folder !== '') {
       await update($, folder, () => saved.folder)
     }
-
-    await reselect($)
   }
 
   await update($, restoredFor, () => sessionId)
@@ -1601,7 +1641,7 @@ async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 
     shown: (await read($, tasks)).filter(isShown),
     editing: field,
     draft: key === undefined ? '' : (live.drafts.get(key) ?? ''),
-    selectedId: await read($, selectedId),
+    screen: await read($, screen),
     nowMs: await $.clock.now(),
   }
 
@@ -1816,9 +1856,9 @@ async function undelivered($: EngineInterface, lost: readonly Task[]) {
 }
 
 /**
- * Keeps the selection on a task still open, and drops a field whose task is
- * gone, keeping what was typed for its answer for a press from a drawing
- * from before.
+ * After a move on task `id` or its end: drops its field, keeping what was
+ * typed for its answer for a press from a drawing from before, and leaves
+ * its screen once it is closed.
  */
 async function settle($: EngineInterface, id: number) {
   const key = fieldKeyOf({ id, field: 'answer' })
@@ -1832,33 +1872,27 @@ async function settle($: EngineInterface, id: number) {
   live.drafts.delete(key)
 
   await update($, editing, field => (field?.id === id ? null : field))
-  await reselect($)
-}
 
-/** After the user's move on selected item `id`, which a reply or Later leaves in the pane, selects the next that waits on them. */
-async function moveOn($: EngineInterface, id: number) {
-  const next = firstOf((await read($, tasks)).filter(task => task.id !== id && waitsOnUser(task)))
-
-  if (next !== undefined) {
-    await update($, selectedId, chosen => (chosen === id ? next.id : chosen))
+  if (!(await isOpenNow($, id))) {
+    await update($, screen, now => (now.kind === 'item' && now.id === id ? LIST_SCREEN : now))
   }
 }
 
-async function reselect($: EngineInterface) {
-  const active = (await read($, tasks)).filter(isActive)
-
-  await update($, selectedId, chosen => (active.some(task => task.id === chosen) ? chosen : (firstOf(active)?.id ?? null)))
-}
-
-async function select($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it leaves the pane as
-  // it is: a field open on another task stays open.
+async function openItem($: EngineInterface, id: number) {
+  // Pressed on a drawing from before its task closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
   }
 
-  await update($, selectedId, () => id)
+  await update($, screen, (): Screen => ({ kind: 'item', id }))
   await update($, editing, field => (field?.id === id ? field : null))
+  await fit($)
+}
+
+/** Back to the list; a draft stays with its item. */
+async function toList($: EngineInterface) {
+  await update($, screen, () => LIST_SCREEN)
+  await update($, editing, () => null)
   await fit($)
 }
 
@@ -1878,7 +1912,6 @@ async function resolve($: EngineInterface, id: number, move: Move) {
 
     // A move that changes nothing sends nothing new, and holds back no batch under way.
     if (isNew) {
-      await moveOn($, id)
       sendSoon($, id)
     }
 
@@ -1987,7 +2020,7 @@ async function startEditing($: EngineInterface, id: number) {
   // The field takes the ring as it opens: by the move below, or by its
   // autoFocus, whose `ui.focus` reaches none of this plugin's hooks.
   live.ring = key
-  await update($, selectedId, () => id)
+  await update($, screen, (): Screen => ({ kind: 'item', id }))
   await update($, editing, (): Editing => ({ id, field: 'answer' }))
   await fit($)
 

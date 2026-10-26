@@ -178,3 +178,26 @@ export function wrapRows(text: string, columns: number): string[] {
 export function rowsOf(text: string, columns: number): number {
   return wrapRows(text, columns).length
 }
+
+/** `text` cut to fit `columns` cells, the cut marked with `…`, as the terminal draws its characters. */
+export function clipCells(text: string, columns: number): string {
+  if (cellsOf(text) <= columns) {
+    return text
+  }
+
+  let kept = ''
+  let used = 0
+
+  for (const { segment } of GRAPHEMES.segment(text)) {
+    const cells = cellsOf(segment)
+
+    if (used + cells > columns - 1) {
+      break
+    }
+
+    kept += segment
+    used += cells
+  }
+
+  return `${kept.trimEnd()}…`
+}

@@ -1,6 +1,6 @@
-import type { Editing, Task, TaskKind } from '../types'
+import type { Editing, Screen, Task, TaskKind } from '../types'
 import { MAX_DETAIL, MAX_OPTION, isActive, waitingOf } from './tasks'
-import { ago, cellsOf, clip, printable, rowsOf } from './text'
+import { ago, cellsOf, clip, clipCells, printable, rowsOf } from './text'
 
 /**
  * The longest title the pane and the transcript draw. `add_item` takes
@@ -15,17 +15,20 @@ export const BUTTON_GAP = 3
 /** The cells before a task's text: its glyph, `☐ `. */
 const GLYPH_CELLS = 2
 
+/** The cells a list row is indented under its section's label. */
+export const ROW_INDENT = 2
+
 /** The fewest columns the terminal gives a focused field's text, however narrow the pane. */
 const MIN_FIELD_COLUMNS = 12
 
 /**
- * What the Open items pane draws from: the items, which is selected and which
- * field is open, and what each row's words depend on. The render hook and
+ * What the Open items pane draws from: the items, the screen and which field
+ * is open, and what each row's words depend on. The render hook and
  * `rowsFor` both read it, so the rows asked for are the rows drawn.
  */
 export type PaneView = {
   shown: readonly Task[]
-  selectedId: number | null
+  screen: Screen
   editing: Editing | null
   /** The draft in the open field. */
   draft: string
@@ -37,33 +40,48 @@ export type PaneView = {
   isTyping: boolean
 }
 
-/** The pane's sections, in the order they are drawn. */
-export const SECTIONS: readonly { kind: TaskKind; label: string }[] = [
+const KIND_SECTIONS: readonly { kind: TaskKind; label: string }[] = [
   { kind: 'decision', label: 'DECISIONS' },
   { kind: 'question', label: 'QUESTIONS' },
   { kind: 'action', label: 'ACTIONS' },
   { kind: 'info', label: 'INFO' },
 ]
 
-/** The open items `active` by section, in `SECTIONS` order, the empty ones left out, each oldest first. */
-export function groupsOf(active: readonly Task[]): { label: string; tasks: Task[] }[] {
-  return SECTIONS.map(({ kind, label }) => ({ label, tasks: active.filter(task => task.kind === kind) })).filter(
-    group => group.tasks.length > 0,
-  )
+/**
+ * The list's sections: the open items of `shown` by kind, then LATER, the
+ * empty ones left out, each oldest first. Each item is in one section only.
+ */
+export function groupsOf(shown: readonly Task[]): { label: string; tasks: Task[] }[] {
+  return [
+    ...KIND_SECTIONS.map(({ kind, label }) => ({ label, tasks: shown.filter(task => task.state === 'open' && task.kind === kind) })),
+    { label: 'LATER', tasks: shown.filter(task => task.state === 'later') },
+  ].filter(group => group.tasks.length > 0)
 }
 
-/** The item drawn first, and so selected when nothing else is: the first of the first section. */
-export function firstOf(active: readonly Task[]): Task | undefined {
-  return groupsOf(active)[0]?.tasks[0]
+/** The keys the list's focus ring walks, in the order drawn: each row, then Hide. */
+export function focusOrderOf(shown: readonly Task[]): string[] {
+  return [...groupsOf(shown).flatMap(group => group.tasks.map(task => `row-${task.id}`)), 'hide']
 }
 
-export function selectedOf(view: PaneView): Task | undefined {
-  const active = view.shown.filter(isActive)
+/**
+ * Where an arrow moves the ring from `current` over `keys`, `by` 1 down and
+ * -1 up: the next or previous key, none past the first or the last, and
+ * the first when the ring is on none of them.
+ */
+export function arrowTargetOf(keys: readonly string[], current: string | undefined, by: 1 | -1): string | undefined {
+  const at = current === undefined ? -1 : keys.indexOf(current)
 
-  return active.find(task => task.id === view.selectedId) ?? firstOf(active)
+  return at === -1 ? keys[0] : keys[at + by]
 }
 
-/** The pane's head: `☐ 1 decision · 2 questions`, or `⋯ 1 waiting for Claude`. */
+/** The item whose screen the pane shows, while it is the user's to act on; else the list. */
+export function screenOf(view: Pick<PaneView, 'shown' | 'screen'>): 'list' | { id: number } {
+  const { screen } = view
+
+  return screen.kind === 'item' && view.shown.some(task => task.id === screen.id && isActive(task)) ? { id: screen.id } : 'list'
+}
+
+/** The pane's head: `☐ 1 decision · 2 questions · ● 1 reply · 1 later`, or `⋯ 1 waiting for Claude`. */
 export function headlineOf(view: PaneView): { glyph: string; headline: string } {
   return waitingOf(view.shown)
 }
@@ -83,6 +101,33 @@ export function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
   return `  ${ago(view.nowMs - task.createdMs)}${task.isWaitingForClaude ? ' · waiting for Claude' : ''}`
 }
 
+const NEW_REPLY_MARK = '  ●'
+const WAITING_MARK = '  ⋯ waiting for Claude'
+
+/** What a list row draws after its title: a reply of Claude's the user has not opened, and whether the item waits for Claude. */
+export function marksOf(task: Task): { newReply: string; waiting: string } {
+  return { newReply: task.hasNewReply ? NEW_REPLY_MARK : '', waiting: task.isWaitingForClaude ? WAITING_MARK : '' }
+}
+
+/**
+ * `#5  Merge #787…`: a list row's number, as wide as the list's widest, and
+ * its title cut so the row, marks and all, takes one line of `columns`.
+ */
+export function rowTitleOf(task: Task, view: Pick<PaneView, 'shown'>, columns: number): string {
+  const widest = Math.max(...groupsOf(view.shown).flatMap(group => group.tasks.map(one => cellsOf(`#${one.id}`))))
+  const number = `#${task.id}`.padEnd(widest)
+  const { newReply, waiting } = marksOf(task)
+  const room = columns - ROW_INDENT - cellsOf(`${number} `) - cellsOf(newReply) - cellsOf(waiting)
+
+  return `${number} ${clipCells(nameOf(task), Math.max(1, room))}`
+}
+
+function rowTextOf(task: Task, view: Pick<PaneView, 'shown'>, columns: number): string {
+  const { newReply, waiting } = marksOf(task)
+
+  return `${rowTitleOf(task, view, columns)}${newReply}${waiting}`
+}
+
 export function detailOf(task: Task): string {
   return printable(task.thread[0]?.text ?? '', MAX_DETAIL)
 }
@@ -91,7 +136,7 @@ export function doneWhenOf(task: Task): string | undefined {
   return task.doneWhen === undefined ? undefined : `Done when: ${printable(task.doneWhen, MAX_DETAIL)}`
 }
 
-/** The selected item's buttons, as `hotkey` and `label`. */
+/** The open item's buttons, as `hotkey` and `label`. */
 export function actionsOf(task: Task, canType: boolean): { key: string; hotkey: string; label: string; option?: string }[] {
   if (task.kind === 'info') {
     return [{ key: 'seen', hotkey: 'd', label: 'Seen' }]
@@ -178,10 +223,17 @@ export function fieldRowsOf(label: string, submitLabel: string, text: string, is
 }
 
 export function hintOf(view: PaneView): string {
-  return view.isFocused ? 'Esc: back to the prompt' : 'Click, or press ctrl+x tab to use the keys'
+  if (!view.isFocused) {
+    return 'Click, or press ctrl+x tab to use the keys'
+  }
+
+  return screenOf(view) === 'list' ? '↵ open · ↑↓ move · Esc: back to the prompt' : 'Esc: back to the prompt'
 }
 
 export const HIDE = 'Hide'
+
+/** The item screen's way back to the list: Esc is the engine's. */
+export const BACK = { key: 'back', hotkey: 'b', label: 'Back' } as const
 
 /** The rows a row of buttons takes in `columns`, wrapping between buttons. */
 export function buttonRowsOf(labels: readonly string[], columns: number): number {
@@ -204,40 +256,51 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
 
 /**
  * The rows the Open items pane's body takes at `columns` cells across, each
- * text wrapped as the pane draws it: the head, a header row for each section
- * and a blank row between sections, the selected item whole, a row (or more,
- * for a long title) for every other item, and the foot; at most `max`.
+ * text wrapped as the pane draws it, at most `max`. The list: the head, each
+ * section's label and a row for each of its items, and the foot. An item:
+ * its title, detail and controls, a blank row, and the foot.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
-  const inner = Math.max(1, width - GLYPH_CELLS)
-  const groups = groupsOf(view.shown.filter(isActive))
-  const selected = selectedOf(view)
-  const head = headlineOf(view)
-  let rows = rowsOf(`${head.glyph}${head.headline}`, width) + 1
+  const screen = screenOf(view)
+  const task = screen === 'list' ? undefined : view.shown.find(one => one.id === screen.id)
 
-  rows += Math.max(0, groups.length * 2 - 1)
-
-  for (const task of groups.flatMap(group => group.tasks)) {
-    if (task !== selected) {
-      // `#2` is the button that selects it; the title wraps beside it.
-      rows += rowsOf(` ${nameOf(task)}${ageOf(task, view)}`, Math.max(1, inner - cellsOf(`#${task.id}`)))
-      continue
-    }
-
-    rows += rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner)
-    rows += rowsOf(detailOf(task), inner)
-    const doneWhen = doneWhenOf(task)
-    rows += doneWhen === undefined ? 0 : rowsOf(doneWhen, inner)
-    rows += controlRowsOf(task, view, width, inner)
-  }
-
-  rows += 1 + rowsOf(hintOf(view), Math.max(1, width - BUTTON_GAP - cellsOf(HIDE)))
-
-  return Math.min(max, rows)
+  return Math.min(max, task === undefined ? listRowsOf(view, width) : itemRowsOf(task, view, width))
 }
 
-/** The rows under the selected task: its buttons, or its field across the body (`width`) and the buttons under it. */
+function listRowsOf(view: PaneView, width: number): number {
+  const head = headlineOf(view)
+  let rows = rowsOf(`${head.glyph}${head.headline}`, width)
+
+  for (const group of groupsOf(view.shown)) {
+    rows += 1
+
+    for (const task of group.tasks) {
+      rows += rowsOf(rowTextOf(task, view, width), Math.max(1, width - ROW_INDENT))
+    }
+  }
+
+  return rows + footRowsOf(view, width, [HIDE])
+}
+
+function itemRowsOf(task: Task, view: PaneView, width: number): number {
+  const inner = Math.max(1, width - GLYPH_CELLS)
+  const doneWhen = doneWhenOf(task)
+  const rows =
+    rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner) +
+    rowsOf(detailOf(task), inner) +
+    (doneWhen === undefined ? 0 : rowsOf(doneWhen, inner)) +
+    controlRowsOf(task, view, width, inner)
+
+  return rows + 1 + footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])
+}
+
+/** The rows the foot takes: the hint, wrapped beside the `buttons`. */
+function footRowsOf(view: PaneView, width: number, buttons: readonly string[]): number {
+  return rowsOf(hintOf(view), Math.max(1, width - buttons.reduce((cells, label) => cells + BUTTON_GAP + cellsOf(label), 0)))
+}
+
+/** The rows under the open task: its buttons, or its field across the body (`width`) and the buttons under it. */
 function controlRowsOf(task: Task, view: PaneView, width: number, inner: number): number {
   const field = view.editing !== null && view.editing.id === task.id ? view.editing : null
 

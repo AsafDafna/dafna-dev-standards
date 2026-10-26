@@ -527,7 +527,7 @@ export function addedOf(task: Task): string {
   ].join(' ')
 }
 
-/** The status line under the prompt: what waits on the user, by kind; nothing when nothing does. */
+/** The status line under the prompt: what waits on the user; nothing when nothing does. */
 export function statusOf(shown: readonly Task[]): string | undefined {
   if (!shown.some(waitsOnUser)) {
     return undefined
@@ -540,20 +540,29 @@ export function statusOf(shown: readonly Task[]): string | undefined {
 
 /**
  * What waits among `shown`, as the pane's head and the status line lead with
- * it: `☐ 1 decision · 2 questions` (what waits on the user, by kind), or
- * `⋯ 1 waiting for Claude` with only replies Claude has not answered.
+ * it: `☐ 2 decisions · 1 question · ● 1 reply · 1 later` (the open items that
+ * wait on the user by kind, Claude's replies they have not opened, and the
+ * items put off), or `⋯ 1 waiting for Claude` with only replies Claude has
+ * not answered.
  */
 export function waitingOf(shown: readonly Task[]): { glyph: string; headline: string } {
   const asks = shown.filter(waitsOnUser)
 
   if (asks.length > 0) {
+    const open = asks.filter(task => task.state === 'open')
     // "info" keeps its form for any count.
-    const kinds = KINDS.map(kind => ({ kind, count: asks.filter(task => task.kind === kind).length }))
+    const kinds = KINDS.map(kind => ({ kind, count: open.filter(task => task.kind === kind).length }))
       .filter(({ count }) => count > 0)
       .map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind)))
-      .join(' · ')
+    const replies = asks.filter(task => task.hasNewReply).length
+    const later = asks.filter(task => task.state === 'later').length
+    const parts = [
+      ...kinds,
+      ...(replies > 0 ? [`● ${replies} ${replies === 1 ? 'reply' : 'replies'}`] : []),
+      ...(later > 0 ? [`${later} later`] : []),
+    ]
 
-    return { glyph: '☐ ', headline: kinds }
+    return { glyph: '☐ ', headline: parts.join(' · ') }
   }
 
   return { glyph: '⋯ ', headline: `${shown.filter(isActive).length} waiting for Claude` }
