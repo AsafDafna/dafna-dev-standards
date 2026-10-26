@@ -1,60 +1,103 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
+import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
-import type { Editing, Task } from '../types'
+import type { Header, Held, Offer, Saved, Screen, Taken, Task } from '../types'
 import {
-  MAX_INFO,
-  MAX_OPEN,
+  DONE,
+  MAX_NOTE,
   MAX_TITLE,
-  answerIn,
+  SEEN,
   addedOf,
+  answerIn,
+  arrivedAs,
   bridgeOf,
-  contextOf,
+  closedAs,
   digestOf,
+  hasAnswerIn,
+  hasNewsIn,
   isActive,
-  isAsk,
+  isAway,
+  isOpenAsk,
+  isRepeatOf,
   isShown,
+  isStale,
+  leftTakenOf,
   listOf,
   looksSecret,
   messageOf,
+  movedBy,
   newsHeadOf,
+  newsOf,
+  numbersFor,
+  overLimitOf,
   ownHeadOf,
   parseAsk,
+  parseClose,
+  parseReply,
+  reminderOf,
+  repliedBy,
+  replyErrorOf,
+  replyOf,
   sameAsk,
+  stateBefore,
   statusOf,
+  takenBackOf,
+  takenByCodeOf,
+  toldOf,
+  tookBy,
+  waitingOf,
+  waitsOnUser,
 } from './tasks'
+import type { Move } from './tasks'
 import {
-  ANSWER_LABEL,
+  BACK,
   BUTTON_GAP,
-  HELD,
+  HELD_BUTTONS,
   HIDE,
+  LINK_LABEL,
+  LONG_ANSWER,
   MAX_SHOWN_TITLE,
-  REASON_LABEL,
-  REASON_PLACEHOLDER,
-  actionsOf as actionsFor,
+  MOVED_LABEL,
+  MOVING_LABEL,
+  OFFER_BUTTONS,
+  REPLY_LABEL,
+  REPLY_PLACEHOLDER,
+  ROW_INDENT,
+  SAVE_FAILED,
+  SUBMIT_LABEL,
+  TAKE_BACK,
+  UNCLAIMED_NOTE,
+  actionsOf,
   ageOf,
-  answerButtonsOf,
-  answerPlaceholderOf,
+  arrivedOf,
+  arrowTargetOf,
   doneWhenOf,
-  fieldKeyOf,
-  firstOf,
+  entriesOf,
+  focusOrderOf,
   groupsOf,
-  headlineOf,
+  hasReplyField,
+  heldNoticeOf,
+  heldOf,
+  hiddenOf,
   hintOf,
-  nameOf,
+  insteadOf,
+  linkOf,
+  marksOf,
+  movingOf,
+  numberCellsOf,
+  offerOf,
+  openTaskOf,
   placeholderOf,
+  readOnlyRowOf,
+  replyKeyOf,
+  rowBackTo,
+  rowTitleOf,
   rowsFor,
-  savedOf,
-  selectedOf,
-  sendNowOf,
-  submitLabelOf,
   titleOf,
-  whyOf,
 } from './pane'
-import type { PaneView } from './pane'
-import { isExpired, isSavedKey, keyOf, savedIn } from './saved'
-import type { Saved } from './saved'
-import { numbersOf, oneLine, printable } from './text'
+import type { Entry, PaneView } from './pane'
+import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed, withTaken } from './saved'
+import { numbersOf, plural, printable } from './text'
 
 const PLUGIN = 'open-items'
 
@@ -62,22 +105,42 @@ const PLUGIN = 'open-items'
 const ALERT_QUIET_MS = 120_000
 
 const ADD = 'mcp__open-items__add_item'
+const REPLY = 'mcp__open-items__reply_item'
+const CLOSE = 'mcp__open-items__close_item'
 const LIST = 'mcp__open-items__list_items'
-const WITHDRAW = 'mcp__open-items__withdraw_item'
+const HANDOFF = 'mcp__open-items__handoff_items'
+const TAKE = 'mcp__open-items__take_items'
+
+/** The hand-off pair waits behind ToolSearch: the hand-off steps load it. */
+const DEFERRED: readonly string[] = [HANDOFF, TAKE]
+
+/** The states of an agent whose work has not ended: `pending` has not started, and `waiting` waits on background work of its own. */
+const AT_WORK: readonly AgentStatus[] = ['pending', 'running', 'waiting']
+
+/** How recent the user's last typed prompt is in a live chat. */
+const LIVE_CHAT_MS = 300_000
+
+const LIVE_CHAT = 'live chat: ask in the chat'
+
+/** Ends `add_item`'s result when the live-chat gate cannot tell whether background work runs. */
+const LIVE_CHAT_NOTE = 'This looks like a live chat: if the user is here and replying, withdraw it with close_item and ask in the chat.'
 
 /**
- * The end of the system prompt, said as what to do. It also covers the
- * person answering in chat, and background agents running.
+ * A short copy of the rules the tool descriptions carry, at the end of the
+ * system prompt where it loads: on some seats only the descriptions reach Claude.
  */
 const STEERING = [
-  'When you need something from the user, add it with mcp__open-items__add_item so it stays in their Open items pane until they resolve it: a decision that is theirs, a question only they can answer, an action only they can do, or info they must see (a failure, a finding that changes their plan).',
-  'Add it even when you also ask in your reply. When they answer in chat instead, withdraw the item with reason "answered in chat".',
-  'While background agents run, add the item and write no chat text about it until the batch ends.',
-  'If add_item fails, ask in chat.',
+  'Open items: while background agents, shell commands or monitors run, or after the user went quiet, put every ask for the user in their Open items pane with mcp__open-items__add_item. In a live chat, ask in the chat only.',
+  'One item per ask: answer the user and change the item with reply_item, and close it with close_item when it is resolved. When the user answers in the chat instead, close it as withdrawn with the note "answered in chat".',
+  'Before the session ends, resolve, record or hand off every open and Later item.',
+  'If an Open items tool call fails, ask in the chat.',
 ].join('\n')
 
 /** Resolutions pressed this close together go to Claude as one message. */
 const BATCH_MS = 800
+
+/** The prompt that wakes Claude for an answer its turn ended without reading. */
+const WAKE_UP = 'I answered an item while you were finishing your reply; my answer is above.'
 
 /** The longest a person, or Claude, waits on the store: what it doesn't answer by then finishes on its own. */
 const STORE_WAIT_MS = 5000
@@ -89,19 +152,23 @@ const STORE_WAIT_MS = 5000
 const NEW_ID_READS = 3
 const NEW_ID_GAP_MS = 100
 
-/** What a tool answers while the session's saved items are still being read at its start. */
 const LOADING = "Open items is still loading this session's items. Try again in a moment."
+
+const CODE_LENGTH = 6
+const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
+const CODE_SHAPE = new RegExp(`^[${CODE_CHARS}]{${CODE_LENGTH}}$`)
+
+/** What a tool answers when the store cannot be read, which a hand-off needs. */
+const STORE_DOWN = 'Open items could not read the store, so nothing changed. Try again in a moment.'
 
 /** The pane the items wait in, and the command that opens it. */
 const PANE = 'open-items'
 const PANE_TITLE = 'Open items'
 const MAX_PANE_ROWS = 18
+const LIST_SCREEN: Screen = { kind: 'list' }
 
 /** How a surface draws the pane: its body's width, whether it draws a field and holds the keys, and whether it seats the pane inline. */
 type Seat = Pick<PaneView, 'canType' | 'isFocused'> & { columns: number; isInline: boolean }
-
-/** What goes under the selected item: an open field, across the pane's body, and the buttons, in the item's indent. */
-type Controls = readonly [field: RenderElement | null, buttons: RenderElement | null]
 
 /** An 80-column terminal's main screen: the pane's seat until a surface draws it. */
 const FIRST_SEAT: Seat = { columns: 76, canType: true, isFocused: false, isInline: true }
@@ -121,40 +188,49 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'add_item',
     description: [
-      'Put an item in front of the user and keep it in their Open items pane until they resolve it.',
-      'There are four kinds. decision: they pick one of 2 to 4 options, and you mark the one you suggest with recommended.',
-      'question: you need their words (an error, a log, test results).',
-      'action: they do something on their machine or on an account you cannot reach, then mark it done.',
-      'info: something they should see (a failure, a finding that changes their plan); it asks nothing and sends you no response.',
-      'Add it even when you also ask in your reply: the user may be busy with other things, and the item keeps the ask in front of them.',
-      'An item does not block: you keep working while it waits, and the response reaches you whenever the user gets to it.',
-      'AskUserQuestion is the blocking kind: it waits for the answer, so it suits what you need before you can go on.',
-      'One item per need: list_items shows what is already open.',
-      'Write the title as an imperative the user can act on without scrolling back.',
-      'For a secret, ask the user to put it where it belongs and mark the item done, rather than paste it.',
-      'The user sees open items in their Open items pane, or opens it with /open-items.',
-      'Their response reaches you as a message, or when you call list_items.',
-    ].join(' '),
+      "Put an item in the user's Open items pane. It stays there until the user acts on it. Their response reaches you as a message, or when you call list_items. An item does not block: you keep working while it waits.",
+      '',
+      'Kinds:',
+      '- decision: the user picks one of 2 to 4 options. Mark the option you suggest with recommended.',
+      "- question: you need the user's words (an error, a log, test results).",
+      '- action: the user does something on their machine or on an account you cannot reach, then marks it done.',
+      '- info: something the user must see (a failure, a finding that changes their plan). It asks nothing, and no response reaches you.',
+      '',
+      'When to add an item:',
+      '- Add an item for every ask while background agents, shell commands or monitors run, or after the user went quiet. While background work runs, add the item and write no chat text about it until the batch ends.',
+      '- In a live chat, ask in the chat only. A live chat is a back-and-forth: the user typed their last two prompts in the chat, the last one a short time ago, and no background work runs. There, add_item refuses with "live chat: ask in the chat".',
+      "- Add only what is the user's: a decision that is theirs, a question only they can answer, an action only they can do, or a finding they must see. Ask no unnecessary questions.",
+      '- One item per ask. Never add the same ask again: change the item in place with reply_item. list_items shows what is open.',
+      '- When only the user\'s consent is missing (for example, to run a command), add a decision with options such as "Run it" and "Don\'t", not an action. Then one press lets you go on.',
+      '- AskUserQuestion is the blocking kind: use it only for what you need before you can go on.',
+      '',
+      'How to write an item:',
+      '- Write the title and the detail in plain, simple English. Make them self-contained, so the user understands them without the chat. Use no internal IDs.',
+      '- Write the title as an imperative of under 80 characters. Put the rest in the detail.',
+      '- Write numbers that are not item numbers without "#": "PR 787", not "#787". "#5" always means item 5.',
+      '- The detail keeps its line breaks, up to 4000 characters. If you can publish artifact pages, put tables, diffs and long step lists on the one artifact page of the session, and give the URL of its section in link.',
+      '- For a secret, ask the user to put it where it belongs and to mark the item done. Never ask them to paste it.',
+      '',
+      'Before the session ends, resolve, record or hand off every open and Later item. To record an item, write it and its state in the hand-off file or in the final summary of the session, then close it with close_item as withdrawn, with the note "recorded in <where>". To give the items to a new session, use handoff_items; the new session calls take_items. If they are not callable yet, load handoff_items and take_items with ToolSearch.',
+      '',
+      'If an Open items tool call fails, ask in the chat.',
+    ].join('\n'),
     inputSchema: {
       type: 'object',
       properties: {
-        title: {
-          type: 'string',
-          description: 'What the user should do, as an imperative they can act on without scrolling back. Under 80 characters.',
-        },
-        why: {
-          type: 'string',
-          description: 'One sentence: what it unblocks, or why only the user can do it.',
-        },
-        done_when: {
-          type: 'string',
-          description: "Optional, for action only: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
-        },
         kind: {
           type: 'string',
           enum: ['decision', 'question', 'action', 'info'],
           description:
-            'decision: they pick one of options. question: you need their words (an error, a log, test results). action: the user does something and marks it done. info: something for them to see; it asks nothing and sends you no response.',
+            "decision: the user picks one of the options. question: you need the user's words. action: the user does something and marks it done. info: something the user must see; it asks nothing.",
+        },
+        title: {
+          type: 'string',
+          description: 'What the user should do, as an imperative in plain English that is clear without the chat. Under 80 characters.',
+        },
+        detail: {
+          type: 'string',
+          description: 'What you need from the user and why, in full and self-contained. It keeps its line breaks, up to 4000 characters.',
         },
         options: {
           type: 'array',
@@ -167,15 +243,78 @@ const TOOLS: readonly ToolSpec[] = [
           type: 'string',
           description: 'For decision only: the option you suggest, spelled exactly as in options.',
         },
+        done_when: {
+          type: 'string',
+          description: "Optional, for action only: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
+        },
+        link: {
+          type: 'string',
+          description: 'Optional: the URL of the section of the session\'s artifact page that holds the long detail.',
+        },
       },
-      required: ['title', 'why', 'kind'],
+      required: ['kind', 'title', 'detail'],
+    },
+  },
+  {
+    name: 'reply_item',
+    description: [
+      "Add your message to the thread of an item, change the item in place, or both. The item stays open: a reply never closes it. The user reads the thread in their Open items pane.",
+      '',
+      '- When the user replies on an item, answer in the item with reply_item, not in the chat.',
+      '- To change the ask, change the item in place: a new title, options, recommended option, done_when or link. Never add a new item for the same ask. Say in text why you changed it.',
+      '- When the user answers in the chat instead of in the item, close the item with close_item as withdrawn, with the note "answered in chat".',
+      '- When the user pressed Later, go on without the item. It stays in the pane until they act on it, and you can still reply on it.',
+      '- Close the item with close_item when it is resolved.',
+      '- Write in plain, simple English, self-contained, with no internal IDs. Write numbers that are not item numbers without "#".',
+      '- text keeps its line breaks, up to 4000 characters. Put tables, diffs and long step lists on the artifact page of the session and give its URL in link.',
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: "The item's number." },
+        text: { type: 'string', description: 'Your message to the user, up to 4000 characters. It keeps its line breaks.' },
+        title: { type: 'string', description: 'A new title, under 80 characters.' },
+        options: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 4,
+          description: 'For a decision only: new options, 2 to 4. A recommended option that is not among them is dropped.',
+        },
+        recommended: { type: 'string', description: 'For a decision only: the option you suggest, spelled exactly as in its options.' },
+        link: { type: 'string', description: 'A new URL for the long detail.' },
+        done_when: { type: 'string', description: 'For an action: what counts as done, now.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'close_item',
+    description: [
+      "Close an item, so it leaves the user's Open items pane. The user sees your note.",
+      '',
+      '- as "resolved": the answer of the user in the thread settles the item. You can resolve an item only after the user wrote in its thread.',
+      '- as "withdrawn": you no longer need the item (you found another way, or the plan changed), the user answered in the chat (note "answered in chat"), or you recorded it before the session ends (note "recorded in <where>").',
+      '- When the user pressed an option or Done, the item is closed already. Do not close it again.',
+      '- When the user replies, answer in the item with reply_item. Close the item when nothing more is needed: do not leave a settled item open.',
+      '- When the user answers in the chat instead of in the item, close it as withdrawn with the note "answered in chat".',
+      '- Before the session ends, resolve, record or hand off every open and Later item.',
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: "The item's number." },
+        as: { type: 'string', enum: ['resolved', 'withdrawn'], description: 'resolved: the user answered it. withdrawn: you no longer need it.' },
+        note: { type: 'string', description: 'One short line the user sees, up to 200 characters: "answered in chat", "recorded in <where>", or why.' },
+      },
+      required: ['id', 'as'],
     },
   },
   {
     name: 'list_items',
     description: [
-      'List the items you gave the user and what they did with them: done (with their answer or choice) or rejected (with their reason). It also lists open info items.',
-      'Call it when you are about to need an item\'s result, when told an answer is saved for you, or before adding, to avoid a duplicate.',
+      'List the items you gave the user: the state of each item, whether the user replied and waits for you, whether they opened your last reply, and the last 3 entries of its thread. With id, one item with its whole thread.',
+      'Call it when you need the result of an item, when told an answer is saved for you, or before you add an item, so you do not add the same ask twice.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -183,43 +322,53 @@ const TOOLS: readonly ToolSpec[] = [
         show: {
           type: 'string',
           enum: ['updates', 'open', 'all'],
-          description: 'updates (the default): open items and responses you have not seen. open: open items only. all: every item this session.',
+          description: 'updates (the default): open items and responses you have not seen. open: open and Later items only. all: every item of this session.',
         },
-        id: { type: 'number', description: 'One item, whole, by its number.' },
+        id: { type: 'number', description: 'One item, with its whole thread, by its number.' },
       },
     },
   },
   {
-    name: 'withdraw_item',
-    description: 'Take back an item you gave the user when you no longer need it: you found another way, or the plan changed. The user sees the reason.',
+    name: 'handoff_items',
+    description: [
+      'Mark every open and Later item for the session that takes over from this one. It returns how many items, and a short hand-off code.',
+      'Call it before you start the new session. Put the code in the prompt of the new session; its first step calls take_items with the code. Without the code, no session can take the items.',
+    ].join(' '),
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'take_items',
+    description: [
+      'Take the items a previous session handed off to this one, with the hand-off code from your prompt.',
+      'It moves the items, with their threads, to this session, and gives you the number, kind, title and thread of each item and the answers you have not read.',
+    ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'The item\'s number.' },
-        reason: { type: 'string', description: 'One short sentence the user sees.' },
+        code: { type: 'string', description: 'The hand-off code from your prompt.' },
       },
-      required: ['id'],
+      required: ['code'],
     },
   },
 ]
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, [] as readonly Task[])
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, 1)
-const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, null as number | null)
-const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
+const screen = atom({ plugin: 'open-items', key: 'screen' } as const, LIST_SCREEN)
+const held = atom({ plugin: 'open-items', key: 'held' } as const, null as Held | null)
 const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
-const isWorking = atom({ plugin: 'open-items', key: 'isWorking' } as const, false)
+const folder = atom({ plugin: 'open-items', key: 'folder' } as const, null as string | null)
 /** The remote clients attached, by surface, as the state's contract declares them. */
 type Roster = StateValue<'open-items', 'clients'>
 /** The roster, kept where a reload of the code finds it. */
 const clients = atom({ plugin: 'open-items', key: 'clients' } as const, {} as Roster)
+const header = atom({ plugin: 'open-items', key: 'header' } as const, { lastActiveMs: 0, taken: [] } as Header)
+const offer = atom({ plugin: 'open-items', key: 'offer' } as const, [] as Offer)
+const saveFailing = atom({ plugin: 'open-items', key: 'isSaveFailing' } as const, false)
+const arrived = atom({ plugin: 'open-items', key: 'arrived' } as const, [] as readonly number[])
 
-/**
- * Send now goes to Claude as a message (`auto` while it is idle), Save for
- * later waits (`auto` while it works) until its turn ends with every task
- * answered, a later answer while it is idle, or the user's next prompt.
- */
-type How = 'auto' | 'now' | 'later'
+/** Items another session's key holds, to take from it, and the hand-off code they go by ('' for leftovers). */
+type Source = { key: string; code: string; tasks: readonly Task[] }
 
 /**
  * What a toast says when a prompt carrying updates is dropped: why (`why`,
@@ -239,19 +388,25 @@ const live = {
   lastPersonMs: 0,
   /** An alert went out in the main loop's current turn; one per turn. */
   alertedTurn: false,
-  /** A Send now row joined the running turn and no step has read it yet. */
-  isUnread: false,
-  /** A Send now the running turn could not take: it goes once the turn ends. */
-  isSendingAtEnd: false,
-  /** What the user has typed in each field so far, by `fieldKeyOf`. */
+  /** Whether the main loop's turn runs: undefined until the mod has seen it begin or end. */
+  mainTurn: undefined as boolean | undefined,
+  /** The main loop's last turn ended by the user's interrupt: an answer that joined it waits for the next prompt. */
+  wasStopped: false,
+  /**
+   * The items whose answers joined the running main turn as a row no model
+   * request has read yet, each as it stood before that row claimed its update
+   * (undefined when the row claimed none): see `handedOff`.
+   */
+  unreadAppend: new Map<number, Task | undefined>(),
+  /** What the user has typed in each reply field so far, by `replyKeyOf`. */
   drafts: new Map<string, string>(),
   /**
-   * What was typed in each answer field as its task closed, by `fieldKeyOf`:
-   * a button pressed on a drawing from before the task closed answers with it.
+   * What was typed in each reply field as its item closed, by `replyKeyOf`:
+   * a button pressed on a drawing from before the item closed answers with it.
    */
   closed: new Map<string, string>(),
   /**
-   * What each surface draws each field with, by `fieldKeyOf`: the draft as
+   * What each surface draws each field with, by `replyKeyOf`: the draft as
    * the surface first drew it. It stays put while the field is typed in, as a
    * value drawn anew puts the field's text back to it, keys typed meanwhile
    * lost. A surface that forgets what its fields hold (the pane closed, or a
@@ -259,10 +414,12 @@ const live = {
    */
   drawn: new Map<RenderSurface, Map<string, string>>(),
   batch: null as Timer | null,
+  /** The items the batch under way sends: their updates go in the user's own words, which no other path takes. */
+  batchIds: new Set<number>(),
+  /** How many presses on each item are still writing, before they reach the batch: held as the batch's are. */
+  writing: new Map<number, number>(),
   /** How many sessions of the process have ended: a start read that lands after its session ended opens no pane. */
   ends: 0,
-  /** Responses a prompt entered without, by `updateKeyOf`: they go with Send now, the next prompt or another response, never alone as a turn ends. */
-  held: new Set<string>(),
   /** The session whose saved items are being read at its start: until the read settles, the tools refuse, as it replaces the items. */
   loading: null as string | null,
   /** The session whose start read failed: a write reads its key first, and writes only where none is saved. */
@@ -273,14 +430,6 @@ const live = {
   stalled: 0,
   /** The roster's writes asked for and not yet done: each waits for the one before (see `rostered`). */
   rosterQueue: Promise.resolve() as Promise<unknown>,
-  /**
-   * Turns begun and not yet ended. A loop other than main's (an engine side
-   * request, a teammate) may begin one whose `turn.complete` carries an agent
-   * id: each ends by its own id.
-   */
-  turns: new Set<string>(),
-  /** Whether a turn runs, in the engine's own word (the band's `isWorking`), once it has said. */
-  engineWorking: undefined as boolean | undefined,
   /**
    * How each surface drawing the pane draws it, by `e.surface`: as it last
    * did, or, drawn by two clients or more, every way since one came or went
@@ -299,11 +448,111 @@ const live = {
   closes: 0,
   /** The re-sizes keys and ring moves asked for and not yet done: each waits for the one before (see `refit`). */
   refitQueue: Promise.resolve() as Promise<unknown>,
+  /** The user's last two inputs, oldest first: what `isLiveChat` reads. */
+  inputs: [] as readonly UserInput[],
+  /**
+   * The ids of the main loop's background shell commands and monitors
+   * started and not yet ended; null when the mod cannot know them, as it did
+   * not see them all start.
+   */
+  background: null as Set<string> | null,
+  /** The items another session took while this process ran: the pane draws them where they went, and a reload or another session forgets them. */
+  moved: new Set<number>(),
 }
 
-/** Whether Claude is at work: the engine's word when it has given one, else the turns begun and not ended. */
-function working(): boolean {
-  return live.engineWorking ?? live.turns.size > 0
+/** `bridge`: a prompt that answers an item (`↳ Answer to #5:`, see `answerIn`), from any surface. */
+type UserInput = { kind: 'typed' | 'bridge' | 'press'; atMs: number }
+
+function noteInput(kind: UserInput['kind'], atMs: number) {
+  live.inputs = [...live.inputs, { kind, atMs }].slice(-2)
+}
+
+/**
+ * Whether the user chats live with Claude, so `add_item` refuses: their last
+ * two inputs were prompts typed in the chat, the last one under LIVE_CHAT_MS
+ * ago, no agent is at work (AT_WORK), and no background shell command or
+ * monitor runs. 'unknown' when the rest holds but what runs cannot be told.
+ */
+async function isLiveChat($: EngineInterface, nowMs: number): Promise<boolean | 'unknown'> {
+  const [before, last] = live.inputs
+
+  if (before?.kind !== 'typed' || last?.kind !== 'typed' || nowMs - last.atMs >= LIVE_CHAT_MS) {
+    return false
+  }
+
+  const agents = await $.agent.list().catch(() => undefined)
+
+  if (agents?.some(agent => AT_WORK.includes(agent.status))) {
+    return false
+  }
+
+  return agents === undefined || live.background === null ? 'unknown' : live.background.size === 0
+}
+
+/**
+ * Notes a background start that a Bash or Monitor result reports, in the
+ * words of Claude Code 2.1.310. A start whose id cannot be read leaves what
+ * runs unknown.
+ */
+function noteStart(tool: string, text: string | undefined) {
+  if (text === undefined || live.background === null) {
+    return
+  }
+
+  if (tool !== 'Monitor' && !(tool === 'Bash' && /^Command\b[^\n]*\bbackground/i.test(text))) {
+    return
+  }
+
+  const id = (tool === 'Monitor' ? /^Monitor started \(task ([\w-]+)/ : /(?:with ID: |\(ID: )([\w-]+)/).exec(text)?.[1]
+  live.background = id === undefined ? null : live.background.add(id)
+}
+
+/** Drops the tasks a notification reports ended: an end carries a status, a monitor's event none. */
+function noteEnds(text: string) {
+  for (const [, block = ''] of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const id = /<task-id>([^<]+)<\/task-id>/.exec(block)?.[1]
+
+    if (id !== undefined && block.includes('<status>')) {
+      live.background?.delete(id)
+    }
+  }
+}
+
+/** The text of a tool's result row, unless the tool failed. */
+function resultTextOf(content: readonly Record<string, unknown>[]): string | undefined {
+  const block = content.find(one => one['type'] === 'tool_result')
+  const inner = block?.['content']
+
+  if (block === undefined || block['is_error'] === true) {
+    return undefined
+  }
+
+  if (typeof inner === 'string') {
+    return inner
+  }
+
+  return Array.isArray(inner) ? inner.map(part => (typeof part?.text === 'string' ? part.text : '')).join('\n') : undefined
+}
+
+/** Whether the batch under way, or a press still writing, sends `task`'s update. */
+function isHeld(task: Task): boolean {
+  return live.batchIds.has(task.id) || live.writing.has(task.id)
+}
+
+/** What `list_items` gives: item `id`, or the items `show` names, `updates` when it names none. */
+function pickedOf(list: readonly Task[], id: number | undefined, show: unknown): readonly Task[] {
+  if (id !== undefined) {
+    return list.filter(task => task.id === id)
+  }
+
+  switch (show) {
+    case 'all':
+      return list
+    case 'open':
+      return list.filter(isActive)
+    default:
+      return list.filter(task => isShown(task) || task.update === 'pending')
+  }
 }
 
 export const register: Register = on => {
@@ -313,6 +562,14 @@ export const register: Register = on => {
     }
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
+    await update($, folder, known => known ?? e.cwd)
+    await noteActive($)
+    // Background tasks may have started unseen in a conversation with rows already (a resume, the mod
+    // loaded mid-session), or before a reload of the code, which finds the session read (see `takeUp`).
+    const isReload = (await read($, restoredFor)) === (await $.session.id())
+    const isFresh = !isReload && (await $.session.messages().then(rows => rows.length === 0, () => false))
+    live.background = isFresh ? new Set() : null
+    live.inputs = []
     await restore($)
 
     return next(e)
@@ -322,7 +579,11 @@ export const register: Register = on => {
   // more, for a change whose write failed. The exit's budget is short, and
   // the end waits for the write only through half of what is left.
   on('session.end', async ($, e, next) => {
+    // Its answers stay unsent in its key: a prompt sent now could reach the session /clear starts.
+    cancelBatch()
     live.ends += 1
+    const endedMs = await $.clock.now()
+    await update($, header, now => ({ ...now, endedMs }))
     const written = persist($).catch(() => undefined)
     const leftMs = next.budget.remainingMs
 
@@ -333,16 +594,16 @@ export const register: Register = on => {
     // After /clear or a resume the process goes on as another session, with
     // no session.start; the engine names it only once this hook is done.
     if (e.reason === 'clear') {
-      $.clock.after(0, () => void startCleared($, e.sessionId))
+      $.clock.after(0, () => void startCleared($, e.sessionId).catch(() => undefined))
     } else if (e.reason === 'resume') {
-      $.clock.after(0, () => void startResumed($, e.sessionId))
+      $.clock.after(0, () => void startResumed($, e.sessionId).catch(() => undefined))
     }
 
     return ended
   })
 
   on('command.run', { command: 'open-items' }, async $ => {
-    if ((await read($, tasks)).filter(isShown).length === 0) {
+    if (!(await hasPane($))) {
       return { text: 'No items for you right now.' }
     }
 
@@ -351,12 +612,11 @@ export const register: Register = on => {
     return {}
   })
 
-  // The tools stay in the prompt's list, descriptions and all, where an MCP
-  // tool would wait behind ToolSearch: the description is what steers Claude
-  // to add an item, so the ask stays in front of the user.
-  on('tool.describe', { tool: ADD }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
-  on('tool.describe', { tool: LIST }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
-  on('tool.describe', { tool: WITHDRAW }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
+  // The four tools of every turn stay in the prompt's list, where an MCP tool would wait behind ToolSearch:
+  // their descriptions carry the steering, the one prompt text that reaches Claude on every seat.
+  for (const tool of [ADD, REPLY, CLOSE, LIST, HANDOFF, TAKE]) {
+    on('tool.describe', { tool }, async ($, e, next) => ({ ...(await next(e)), isDeferred: DEFERRED.includes(tool) }))
+  }
 
   on('tool.call', { tool: ADD }, async ($, e) => {
     if (e.agentId !== undefined) {
@@ -373,6 +633,13 @@ export const register: Register = on => {
       return { deny: LOADING }
     }
 
+    const nowMs = await $.clock.now()
+    const isLive = await isLiveChat($, nowMs)
+
+    if (isLive === true) {
+      return { deny: LIVE_CHAT }
+    }
+
     const active = (await read($, tasks)).filter(isActive)
     const same = active.find(task => sameAsk(task.title, ask.title))
 
@@ -380,46 +647,108 @@ export const register: Register = on => {
       return { result: `Item #${same.id} already asks the user for this ("${same.title}"); nothing new was added.` }
     }
 
-    const isInfo = ask.kind === 'info'
-    const group = active.filter(task => (task.kind === 'info') === isInfo)
-
-    if (!isInfo && group.length >= MAX_OPEN) {
-      return {
-        deny: `The user already has ${MAX_OPEN} open items. Withdraw one you no longer need, or wait for them to act (list_items shows them).`,
-      }
-    }
-
     const id = (await update($, nextId, n => n + 1)) - 1
-    const nowMs = await $.clock.now()
+    const { detail, ...fields } = ask
     const task: Task = {
       id,
-      ...ask,
+      ...fields,
+      thread: [{ from: 'claude', text: detail, atMs: nowMs }],
       state: 'open',
+      isWaitingForClaude: false,
+      hasNewReply: false,
       update: 'none',
       createdMs: nowMs,
       updatedMs: nowMs,
     }
 
-    const dropped = isInfo ? group.slice(0, Math.max(0, group.length + 1 - MAX_INFO)) : []
+    await change($, list => [...list, task])
+    const title = printable(task.title, MAX_TITLE)
+    await present($, task, nowMs, { toast: `Claude added an item for you: ${title}. See /open-items`, notice: title })
 
-    await change($, list => [
-      ...list.map(one => (dropped.some(old => old.id === one.id) ? { ...one, state: 'seen' as const, updatedMs: nowMs } : one)),
-      task,
-    ])
-    await Promise.all(dropped.map(old => settle($, old.id)))
-    await reselect($)
-    await update($, selectedId, chosen => chosen ?? id)
+    return { result: isLive === 'unknown' ? `${addedOf(task)} ${LIVE_CHAT_NOTE}` : addedOf(task) }
+  })
 
-    if (!(await show($, false))) {
-      $.ui.toast(`Claude added an item for you: ${printable(task.title, MAX_TITLE)}. See /open-items`)
+  on('tool.call', { tool: REPLY }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent replies on items. Say what you need from the user in your result instead.' }
     }
 
-    if (!isInfo && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
-      live.alertedTurn = true
-      $.ui.notify(printable(task.title, MAX_TITLE), { title: 'Open items' }).catch(() => undefined)
+    const reply = parseReply(e as unknown as Record<string, unknown>)
+
+    if ('error' in reply) {
+      return { deny: reply.error }
     }
 
-    return { result: addedOf(task, group.length + 1 - dropped.length) }
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    // A move by the user that Claude has not heard is never sent once Claude's
+    // reply follows it in the thread, so this result tells Claude of it.
+    const found = await edit($, reply.id, (task, nowMs) =>
+      replyErrorOf(task, reply) === undefined ? repliedBy(task.update === 'pending' ? toldOf(task) : task, reply, nowMs) : task,
+    )
+
+    if (found === undefined) {
+      return { deny: `No item #${reply.id}.` }
+    }
+
+    const error = replyErrorOf(found, reply)
+
+    if (error !== undefined) {
+      return { deny: error }
+    }
+
+    // `found` is the item before the reply, which may rename it.
+    const title = printable(reply.change?.title ?? found.title, MAX_TITLE)
+    await present($, found, await $.clock.now(), { toast: `Claude replied on an item: ${title}. See /open-items`, notice: `Claude replied: ${title}` })
+    const unheard = found.update === 'pending' ? `\nThe user had already responded on it, which you had not heard:\n${newsOf(found)}` : ''
+
+    return {
+      result: `Added your reply to item #${found.id}. It stays open in the user's Open items pane; their response reaches you as a message, or through list_items.${unheard}`,
+    }
+  })
+
+  on('tool.call', { tool: CLOSE }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent closes items.' }
+    }
+
+    const close = parseClose(e as unknown as Record<string, unknown>)
+
+    if ('error' in close) {
+      return { deny: close.error }
+    }
+
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    const isRefused = (task: Task) => close.as === 'resolved' && !hasAnswerIn(task)
+    const found = await edit($, close.id, task => (isRefused(task) ? task : closedAs(task, close)))
+
+    if (found === undefined) {
+      return { deny: `No item #${close.id}.` }
+    }
+
+    if (!isActive(found)) {
+      return { deny: `Item #${found.id} is already ${found.state}; there is nothing to close.` }
+    }
+
+    if (isRefused(found)) {
+      return {
+        deny: `Item #${found.id} has no answer from the user yet, so it cannot be resolved. Wait for their answer, or close it as withdrawn if you no longer need it.`,
+      }
+    }
+
+    // Its fields go with it, and what was typed in them: put in the prompt
+    // box unasked, it would join whatever the user is writing there.
+    await settle($, found.id)
+    const why = close.note === undefined ? '' : `. ${printable(close.note, MAX_NOTE)}`
+    const action = close.as === 'resolved' ? 'Claude marked the item resolved' : 'Claude withdrew the item'
+    $.ui.toast(`${action}: ${printable(found.title, MAX_TITLE)}${why}`, { timeoutMs: 8000 })
+
+    return { result: `${close.as === 'resolved' ? 'Resolved' : 'Withdrew'} item #${found.id}; it is gone from the user's Open items pane.` }
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
@@ -429,87 +758,153 @@ export const register: Register = on => {
 
     const args = e as unknown as Record<string, unknown>
     const id = typeof args['id'] === 'number' ? args['id'] : undefined
-    const scope = args['show'] === 'open' || args['show'] === 'all' ? args['show'] : 'updates'
-    const list = await read($, tasks)
-
-    const picked =
-      id !== undefined
-        ? list.filter(task => task.id === id)
-        : scope === 'all'
-          ? list
-          : scope === 'open'
-            ? list.filter(isActive)
-            : list.filter(isShown)
+    const picked = pickedOf(await read($, tasks), id, args['show'])
 
     if (id !== undefined && picked.length === 0) {
       return { result: `No item #${id}.` }
     }
 
-    // A subagent's read tells the main agent nothing. Claude hears the
-    // responses this shows: one that came in after it read goes later.
+    // Only the main agent's read tells Claude the responses it shows, and not one held for the batch:
+    // the batch sends that one in the user's own words, which auto mode reads as their consent.
     if (e.agentId === undefined) {
-      await claim($, task => picked.some(one => one.id === task.id && one.update === 'pending'))
+      await claim($, task => !isHeld(task) && picked.some(one => one.id === task.id && one.update === 'pending'))
     }
 
-    return { result: listOf(picked, await $.clock.now()) }
+    return { result: listOf(picked, await $.clock.now(), id !== undefined) }
   })
 
-  on('tool.call', { tool: WITHDRAW }, async ($, e) => {
+  on('tool.call', { tool: HANDOFF }, async ($, e) => {
     if (e.agentId !== undefined) {
-      return { deny: 'Only the main agent withdraws items.' }
+      return { deny: 'Only the main agent hands items off.' }
     }
 
     if (live.loading !== null) {
       return { deny: LOADING }
     }
 
-    const args = e as unknown as Record<string, unknown>
-    const id = args['id']
-    const reason = typeof args['reason'] === 'string' ? oneLine(args['reason']) : ''
-    const task = (await read($, tasks)).find(one => one.id === id)
-    // Withdrawn only while it is open: an answer the user gave a moment before stands.
-    const found =
-      task === undefined || !isActive(task)
-        ? task
-        : await edit($, task.id, one => ({
-            ...one,
-            state: 'withdrawn',
-            update: 'delivered',
-            ...(reason === '' ? {} : { reason }),
-          }))
+    const all = await readStore($)
 
-    if (found === undefined) {
-      return { deny: `No item #${String(id)}.` }
+    if (all === undefined) {
+      return { deny: STORE_DOWN }
     }
 
-    if (!isActive(found)) {
-      return { deny: `Item #${found.id} is already ${found.state}; there is nothing to withdraw.` }
+    await noteMoved($, all, live.sessionId)
+
+    if (!(await read($, tasks)).some(task => isActive(task) || task.state === 'handing-off')) {
+      return { result: 'There are no open or Later items to hand off.' }
     }
 
-    // Its fields go with it, and what was typed in them: put in the prompt
-    // box unasked, it would join whatever the user is writing there.
-    await settle($, found.id)
-    const why = reason === '' ? '' : `. ${printable(reason, 200)}`
-    $.ui.toast(`Claude withdrew the item: ${printable(found.title, MAX_TITLE)}${why}`, { timeoutMs: 8000 })
+    const nowMs = await $.clock.now()
+    const { handoff } = await read($, header)
+    // A second call keeps the code a successor may hold already.
+    const code = handoff !== undefined && !takenCodes(all).has(handoff.code) ? handoff.code : newCode(all)
+    const unread = new Map(live.unreadAppend)
+    let handed: number[] = []
 
-    return { result: `Withdrew item #${found.id}; it is gone from the user's Open items pane.` }
+    await update($, header, now => ({ ...now, handoff: { code, atMs: nowMs } }))
+    await change($, list => {
+      handed = list.filter(isActive).map(task => task.id)
+
+      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(task, unread, nowMs) : task))
+    })
+
+    if (handed.length === 0) {
+      await awaited($, persist($))
+    }
+
+    // Read by no model request, those answers go with their items: the old Claude is not woken for them.
+    for (const id of handed) {
+      live.unreadAppend.delete(id)
+    }
+
+    for (const id of handed) {
+      await settle($, id)
+    }
+
+    const count = (await read($, tasks)).filter(task => task.state === 'handing-off').length
+
+    return {
+      result: `Marked ${plural(count, 'item')} for the next session. Hand-off code: ${code}. Put the code in the successor's prompt; it calls take_items with it.`,
+    }
   })
 
+  on('tool.call', { tool: TAKE }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent takes items.' }
+    }
+
+    const args = e as unknown as Record<string, unknown>
+    const code = typeof args['code'] === 'string' ? args['code'].trim().toLowerCase() : ''
+
+    if (!CODE_SHAPE.test(code)) {
+      return { deny: `code is required: the ${CODE_LENGTH}-character hand-off code from your prompt.` }
+    }
+
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    const all = await readStore($)
+
+    if (all === undefined) {
+      return { deny: STORE_DOWN }
+    }
+
+    const found = handedOffIn(all, code, keyOf(live.sessionId))
+
+    if (found === undefined) {
+      return { deny: takenCodes(all).has(code) ? `The items of hand-off code ${code} were taken already.` : `No items to take with hand-off code ${code}.` }
+    }
+
+    const nowMs = await $.clock.now()
+    const source = { key: found.key, code, tasks: found.saved.tasks }
+    // The result tells Claude what the user did that it has not heard.
+    const came = await takeIn($, [source], arrived => tookBy(arrived.update === 'pending' ? toldOf(arrived) : arrived, 'claude', nowMs))
+
+    await dropOffered($, [source])
+    await update($, arrived, () => came.map(({ task }) => task.id))
+
+    if (!(await show($, false))) {
+      $.ui.toast(`${plural(came.length, 'item')} moved from the previous session. See /open-items`)
+    }
+
+    return { result: takenByCodeOf(code, came.map(({ arrived, was }) => ({ task: arrived, was })), nowMs) }
+  })
+
+  // Observes only: the mod hooks no tool of Claude Code's own, so it reads a background start from the main
+  // loop's result row. A subagent's background work counts while the subagent runs (`$.agent.list()`).
+  on('session.append', { door: 'tool-result' }, async ($, e, next) => {
+    const tool = e.origin.kind === 'tool' ? e.origin.tool : undefined
+
+    if (e.agentId === undefined && (tool === 'Bash' || tool === 'Monitor')) {
+      try {
+        noteStart(tool, resultTextOf(e.message.content))
+      } catch {
+        live.background = null
+      }
+    }
+
+    return next(e)
+  })
+
+  // Only the main loop's events say whether Claude reads an appended row: a
+  // subagent's turns read their own conversation.
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       live.alertedTurn = false
+      live.mainTurn = true
+      live.wasStopped = false
+      live.unreadAppend.clear()
+      await noteActive($)
+      await awaited($, Promise.all([scan($), persist($)]))
     }
-
-    live.isUnread = false
-    live.turns.add(e.turnId)
-    await syncWorking($)
 
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
-      live.isUnread = false
+      live.unreadAppend.clear()
     }
 
     return yield* next(e)
@@ -518,61 +913,33 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
 
-    // Main's turn ending ends every turn; another loop's ends its own.
     if (e.agentId === undefined) {
       live.alertedTurn = false
-      live.turns.clear()
-      live.engineWorking = false
-    } else {
-      live.turns.delete(e.turnId)
-    }
+      live.mainTurn = false
+      live.wasStopped = e.reason === 'aborted'
 
-    await syncWorking($)
-
-    if (e.agentId === undefined) {
-      // Answers saved while Claude worked go now that it's free, unless an
-      // item that asks something is still open: then they go with that last
-      // answer, together.
-      // One a prompt entered without goes with them, but sends nothing alone.
-      const all = await read($, tasks)
-      const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isAsk)
-
-      if (live.isSendingAtEnd || isAllAnswered) {
-        live.isSendingAtEnd = false
-        // This message wakes Claude, which reads any row it missed above it.
-        live.isUnread = false
-        void send($, true)
-      } else if (live.isUnread) {
-        // A Send now that joined the turn during its final reply sits in the
-        // conversation with no step left to read it: wake Claude up for it.
-        live.isUnread = false
-        void $.prompt.submit({ text: 'I answered an item while you were finishing your reply; my answer is above.', asUser: true })
+      // A row that joined the turn during its last request has no step left to read it. After the
+      // user's Esc the next prompt reads it: a wake-up would start the turn they just stopped.
+      if (live.unreadAppend.size > 0 && !live.wasStopped) {
+        wakeUp($)
       }
+
+      live.unreadAppend.clear()
     }
 
     return result
   })
 
-  // Draws nothing and passes the band on: it only reads the engine's word on
-  // whether a turn runs, which no turn event gives for every loop.
-  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    if (live.engineWorking !== e.props.isWorking) {
-      live.engineWorking = e.props.isWorking
-      $.clock.after(0, () => void syncWorking($))
-    }
-
-    return next(e)
-  })
-
+  // Before the press acts: an item another session took meanwhile takes no answer here.
   on('ui.press', { plugin: PLUGIN }, async ($, e, next) => {
-    live.lastPersonMs = await $.clock.now()
+    await pressed($)
 
     return next(e)
   })
 
   on('ui.input', { plugin: PLUGIN }, async ($, e, next) => {
     if (e.kind === 'submit') {
-      live.lastPersonMs = await $.clock.now()
+      await pressed($)
     }
 
     return next(e)
@@ -583,45 +950,83 @@ export const register: Register = on => {
       return next(e)
     }
 
-    if (e.origin.kind === 'composer' || e.origin.kind === 'bridge') {
+    // A prompt from the Remote Control bridge (a phone) is one the user typed in the chat too. A slash
+    // command is no back-and-forth with Claude, so the live-chat gate does not count it.
+    const isPerson = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    const isTyped = isPerson && e.command === undefined
+    // Only the user's own prompt answers an item: from any other origin (a hand-back, a notification,
+    // another plugin) the move would reach Claude in the user's words, as their consent.
+    const bridged = isTyped ? answerIn(e.text) : null
+
+    if (isPerson) {
       live.lastPersonMs = await $.clock.now()
+
+      if (isTyped) {
+        noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
+      }
     }
 
-    const bridged = answerIn(e.text)
-    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isAsk(one))
+    if (e.origin.kind === 'task-notification') {
+      noteEnds(e.text)
+    }
+
+    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isOpenAsk(one))
     let isAnswered = false
 
     if (bridged !== null && task !== undefined) {
       if (looksSecret(bridged.answer)) {
         return {
-          drop: `This looks like a secret, so it wasn't sent. Put it where it belongs, then mark #${task.id} Done.`,
+          drop: `This looks like a secret, so it wasn't sent. Put it where it belongs, then ${insteadOf(task, true)}.`,
         }
       }
 
-      const given = bridged.answer === '' ? {} : { answer: bridged.answer }
+      const overLimit = overLimitOf(task.id, bridged.answer)
 
-      if (e.turnId === undefined) {
-        // Claude is idle: this prompt is the answer, sent with every other
-        // update Claude has not heard, those a batch was about to send among them.
+      if (overLimit !== undefined) {
+        return { drop: overLimit }
+      }
+
+      // While Claude is idle, this prompt is the answer, sent with every other update Claude has not
+      // heard, the batch's among them: the batch waits until the prompt is known to be one.
+      const isPaused = e.turnId === undefined && live.batch !== null
+
+      if (isPaused) {
         live.batch?.cancel()
         live.batch = null
       }
 
       // An item closed meanwhile (Claude withdrew it, say) keeps no answer:
-      // the prompt goes as typed.
-      const was = await resolve($, task.id, { state: 'done', ...given }, 'later')
+      // the prompt goes as typed. One with nothing after its head is Done.
+      const was = await resolve($, task.id, bridged.answer === '' ? DONE : replyOf(bridged.answer))
       isAnswered = was !== undefined && isActive(was)
 
+      // Typed over a running turn, the prompt may wait for the turn to end:
+      // the batch takes the answer into the turn instead.
       if (isAnswered && e.turnId !== undefined) {
-        const when = (await read($, tasks)).some(isAsk) ? 'with your other answers' : 'when this turn ends'
+        const now = (await read($, tasks)).find(one => one.id === task.id)
 
-        return {
-          drop: `Saved as your answer to #${task.id}. Claude gets it ${when}, or press Send now in /open-items.`,
+        if (now?.update !== 'pending') {
+          return { drop: `Your answer to #${task.id} already went to Claude.` }
         }
+
+        // The same answer again, after a send gave it back: no batch holds it.
+        if (!isHeld(now)) {
+          sendSoon($, task.id)
+        }
+
+        return { drop: `Your answer to #${task.id} goes to Claude now.` }
+      }
+
+      if (isAnswered) {
+        cancelBatch()
+      } else if (isPaused) {
+        armBatch($)
       }
     }
 
-    const due = await claim($)
+    // What the batch sends goes in the user's own words, not beside a prompt
+    // that is not theirs (a task notification, a hand-back).
+    const due = (await claim($, one => !isHeld(one))).filter(hasNewsIn)
     // An item still here has its answer in this prompt, or in another send
     // that took it as it was saved. One gone meanwhile (a /clear) leaves the
     // prompt as typed.
@@ -631,15 +1036,17 @@ export const register: Register = on => {
       return { drop: `Your answer to #${task.id} already went to Claude.` }
     }
 
+    // Some seats skip this mod's prompt.context and session.compact hooks, so
+    // a line on every prompt is what reminds a Claude past a compaction.
+    const reminder = reminderOf((await read($, tasks)).filter(one => !isAway(one)), isHeld)
+    const context = [...(e.context ?? []), ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []), ...(reminder === undefined ? [] : [reminder])]
+    const entered = { ...e, ...(isAnswer ? { text: messageOf(due) } : {}), ...(context.length > 0 ? { context } : {}) }
+
     if (due.length === 0) {
-      return next(e)
+      return next(entered)
     }
 
-    if (isAnswer) {
-      return passOn($, due, inWords, 'kept', () => next({ ...e, text: messageOf(due) }))
-    }
-
-    return passOn($, due, inDigest, 'nothing', () => next({ ...e, context: [...(e.context ?? []), digestOf(due)] }))
+    return isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered))
   })
 
   // The steering goes last, on the session's side of the cache boundary,
@@ -653,19 +1060,6 @@ export const register: Register = on => {
     }
 
     return { sections: [...composed.sections, { id: 'open-items:steering', text: STEERING, scope: 'session' }] }
-  })
-
-  // Read at a conversation's start and again after a compaction: what is
-  // still with the user, so Claude neither forgets nor adds it twice.
-  on('prompt.context', async ($, e, next) => {
-    const result = await next(e)
-    const shown = (await read($, tasks)).filter(task => isShown(task) && task.kind !== 'info')
-
-    if (shown.length === 0) {
-      return result
-    }
-
-    return { ...result, blocks: [...result.blocks, { name: 'openItems', text: contextOf(shown) }] }
   })
 
   on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {
@@ -718,7 +1112,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The ring on the open field lets the terminal wrap what is typed there:
+  // The ring on the reply field lets the terminal wrap what is typed there:
   // the pane asks for the rows that takes, and for one row once it leaves.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     const moved = await next(e)
@@ -731,13 +1125,44 @@ export const register: Register = on => {
     return moved
   })
 
+  // In a list longer than the pane, the engine spends an arrow on scrolling the body: here it moves the ring
+  // a row instead (arrows summed into one `by`, and a page key, as many rows), and the window follows.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    const isKey = e.origin.kind === 'person' && e.pointer === undefined && e.by !== 0 && e.contentRows > e.bodyRows
+    const view = isKey ? await paneView($, FIRST_SEAT) : undefined
+    const to = view !== undefined && openTaskOf(view) === undefined ? arrowTargetOf(focusOrderOf(view.shown, view), live.ring, e.by) : undefined
+
+    if (to === undefined) {
+      return next(e)
+    }
+
+    // Set before the move lands, so a held key's next arrow moves on from here; put back if the engine
+    // refuses the move and no later one came (a call that fails leaves it, as `toList` does).
+    const was = live.ring
+    live.ring = to
+
+    void $.ui
+      .focus({ requestId: PANE, key: to })
+      .then(moved => {
+        if (moved.deny === undefined) {
+          return $.ui.scroll({ in: PANE, to: { key: to } })
+        }
+
+        if (live.ring === to) {
+          live.ring = was
+        }
+      })
+      .catch(() => undefined)
+
+    return { deny: 'An arrow moves the focus between the rows of the list.' }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const emptied = live.emptied.get(e.surface)
     const elements = $.ui.resolve(e)
-    const { Box, Text, Button } = elements
-    // The mobile app draws no field yet: answers and reasons wait for a surface
-    // that does. The engine fills an element a surface lacks with one that draws
-    // nothing, so the surface says, not the table.
+    const { Box, Text, Button, Link } = elements
+    // The mobile app draws no field yet: replies wait for a surface that does. The engine fills an element
+    // a surface lacks with one that draws nothing, so the surface says, not the table.
     const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
     const view = await paneView($, { canType: Input !== undefined, isFocused: e.props.isFocused })
 
@@ -761,10 +1186,10 @@ export const register: Register = on => {
       live.seats.set(e.surface, isShared ? seatsWith(kept, seat) : [seat])
     }
 
-    const { shown, editing: field, isWorking: working } = view
+    const { shown, moved = [] } = view
 
     // The pane is closing: it asks for no rows, which would open it again.
-    if (shown.length === 0) {
+    if (shown.length === 0 && offerOf(view) === undefined && moved.length === 0) {
       return <Text dimColor>No items for you right now.</Text>
     }
 
@@ -776,236 +1201,260 @@ export const register: Register = on => {
       }
     }
 
-    const active = shown.filter(isActive)
-    const groups = groupsOf(active)
-    const saved = shown.filter(task => !isActive(task))
-    const selected = selectedOf(view)
-    const head = headlineOf(view)
-
-    // The glyph keeps its cells beside a title that wraps.
-    const glyph = (
-      <Box flexShrink={0}>
-        <Text color="yellow">{'☐ '}</Text>
-      </Box>
-    )
-
-    // The title and its age are one text, so a long title wraps under itself
-    // and the age follows it, never squeezed into a column of its own.
-    const titleText = (task: Task, isBold: boolean) => (
-      <Text wrap="wrap">
-        <Text bold={isBold}>{titleOf(task)}</Text>
-        <Text dimColor>{ageOf(task, view)}</Text>
+    const hint = (
+      <Text dimColor wrap="wrap">
+        {hintOf(view)}
       </Text>
     )
-
-    const actionsOf = (task: Task) => (
-      <Box key="actions" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-        {actionsFor(task, view.canType).map(action => (
-          <Button
-            key={action.key}
-            plain
-            hotkey={action.hotkey}
-            label={action.label}
-            onPress={() => {
-              if (action.option !== undefined) {
-                return respond($, task.id, { state: 'done', answer: action.option }, 'auto')
-              }
-
-              if (action.key === 'seen') {
-                return markSeen($, task.id)
-              }
-
-              if (action.key === 'done') {
-                return respond($, task.id, { state: 'done' }, 'auto')
-              }
-
-              if (action.key === 'answer') {
-                return startEditing($, task.id, 'answer')
-              }
-
-              return view.canType ? startEditing($, task.id, 'reason') : respond($, task.id, { state: 'rejected' }, 'auto')
-            }}
-          />
-        ))}
+    const hide = (
+      <Box flexShrink={0}>
+        <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => hidePane($)} />
       </Box>
     )
-
-    const answerField = (task: Task, held: string | undefined): Controls => {
-      if (Input === undefined) {
-        return [null, null]
-      }
-
-      if (held !== undefined) {
-        return [
-          null,
-          <Box key="held" flexDirection="column">
-            <Text color="yellow" wrap="wrap">
-              {HELD}
-            </Text>
-            <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-              <Button key="edit" plain label="Edit" onPress={() => startEditing($, task.id, 'answer')} />
-              <Button key="send-anyway" plain label="Send anyway" onPress={() => answer($, task.id, held, 'auto', true)} />
-            </Box>
-          </Box>,
-        ]
-      }
-
-      const key = fieldKeyOf({ id: task.id, field: 'answer' })
-      const submitLabel = submitLabelOf('answer', view)
-      const [otherWay, long, cancel] = answerButtonsOf(view)
-
-      return [
-        <Input
-          key={key}
-          label={ANSWER_LABEL}
-          placeholder={placeholderOf(answerPlaceholderOf(view), ANSWER_LABEL, submitLabel, columns)}
-          value={fieldValueOf(e.surface, key)}
-          submitLabel={submitLabel}
-          autoFocus
-          onInput={value => typed($, key, value)}
-          onSubmit={value => answer($, task.id, value, 'auto')}
-        />,
-        <Box key="buttons" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-          <Button key="other-way" plain label={otherWay} onPress={() => answerTyped($, task.id, working ? 'now' : 'later')} />
-          <Button key="long" plain label={long} onPress={() => longAnswer($, task.id)} />
-          <Button key="cancel" plain label={cancel} onPress={() => stopEditing($)} />
-        </Box>,
-      ]
-    }
-
-    const reasonField = (task: Task): Controls => {
-      if (Input === undefined) {
-        return [null, null]
-      }
-
-      const key = fieldKeyOf({ id: task.id, field: 'reason' })
-      const submitLabel = submitLabelOf('reason', view)
-
-      return [
-        <Input
-          key={key}
-          label={REASON_LABEL}
-          placeholder={placeholderOf(REASON_PLACEHOLDER, REASON_LABEL, submitLabel, columns)}
-          value={fieldValueOf(e.surface, key)}
-          submitLabel={submitLabel}
-          autoFocus
-          onInput={value => typed($, key, value)}
-          onSubmit={value => {
-            const reason = oneLine(value)
-            return respond($, task.id, { state: 'rejected', ...(reason === '' ? {} : { reason }) }, 'auto', reason)
-          }}
-        />,
-        <Button key="cancel" plain label="Cancel" onPress={() => stopEditing($)} />,
-      ]
-    }
-
-    const selectedRows = (task: Task) => {
-      // A field open on a surface that draws one: elsewhere the item keeps its buttons.
-      const isEditing = view.canType && field !== null && field.id === task.id
-      const [input, buttons]: Controls = !isEditing
-        ? [null, actionsOf(task)]
-        : field.field === 'answer'
-          ? answerField(task, field.held)
-          : reasonField(task)
-      const doneWhen = doneWhenOf(task)
-
-      // The terminal sizes a field by the pane's body, whatever box holds it:
-      // it goes out of the item's indent, across the body's whole width.
-      return (
-        <Box key={`task-${task.id}`} flexDirection="column" flexShrink={0}>
-          <Box flexDirection="row">
-            {glyph}
-            {titleText(task, true)}
-          </Box>
-          <Box flexDirection="column" paddingLeft={2}>
-            <Text wrap="wrap">{whyOf(task)}</Text>
-            {doneWhen === undefined ? null : (
-              <Text dimColor wrap="wrap">
-                {doneWhen}
-              </Text>
-            )}
-          </Box>
-          {input}
-          <Box flexDirection="column" paddingLeft={2}>
-            {buttons}
-          </Box>
-        </Box>
-      )
-    }
-
-    const itemRow = (task: Task) =>
-      task.id === selected?.id ? (
-        selectedRows(task)
-      ) : (
-        <Box key={`task-${task.id}`} flexDirection="row" flexShrink={0}>
-          {glyph}
-          <Box flexShrink={0}>
-            <Button key={`select-${task.id}`} plain dimColor label={`#${task.id}`} onPress={() => select($, task.id)} />
-          </Box>
-          <Text dimColor wrap="wrap">
-            {` ${nameOf(task)}${ageOf(task, view)}`}
+    const unsaved =
+      view.isSaveFailing === true ? (
+        <Box key="unsaved" flexShrink={0}>
+          <Text color="red" wrap="wrap">
+            {SAVE_FAILED}
           </Text>
         </Box>
-      )
+      ) : null
+    const task = openTaskOf(view)
 
-    const sectionRows = groups.map((group, i) => (
-      <Box key={`section-${group.label}`} flexDirection="column" flexShrink={0} marginTop={i === 0 ? 0 : 1}>
-        <Text bold color="yellow">
-          {group.label}
-        </Text>
-        {group.tasks.map(itemRow)}
-      </Box>
-    ))
+    if (task !== undefined) {
+      const key = replyKeyOf(task.id)
+      const link = linkOf(task)
+      const doneWhen = doneWhenOf(task)
+      const heldText = heldOf(task, view)
+      const thread = entriesOf(task, view.nowMs)
+      const [detail, ...newest] = thread.entries
+      const actions = actionsOf(task)
+      const isField = hasReplyField(task, view)
+      const drawn = focusOrderOf(shown)
 
-    const savedRows = saved.map((task, i) => (
-      <Box key={`saved-${task.id}`} flexDirection="row" flexShrink={0}>
-        <Box flexShrink={0}>{task.state === 'rejected' ? <Text color="red">{'✗ '}</Text> : <Text color="green">{'✓ '}</Text>}</Box>
-        <Text dimColor wrap="wrap">
-          {savedOf(task)}
-        </Text>
-        <Box flexShrink={0} marginLeft={2}>
-          <Button key={`send-${task.id}`} plain {...sendNowOf(i)} onPress={() => sendNow($)} />
+      // A Text keeps no key: each entry's Box holds it.
+      const entry = ({ i, head, text }: Entry) => [
+        ...(head === undefined
+          ? []
+          : [
+              <Box key={`head-${i}`} flexDirection="column">
+                <Text dimColor wrap="wrap">
+                  {head}
+                </Text>
+              </Box>,
+            ]),
+        <Box key={`msg-${i}`} flexDirection="column">
+          <Text dimColor={head === undefined} wrap="wrap">
+            {text}
+          </Text>
+        </Box>,
+      ]
+
+      return (
+        <Box flexDirection="column">
+          {unsaved}
+          <Box key={`item-${task.id}`} flexDirection="column" flexShrink={0}>
+            <Box flexDirection="row">
+              {/* The glyph keeps its cells beside a title that wraps. */}
+              <Box flexShrink={0}>
+                <Text color="yellow">{'☐ '}</Text>
+              </Box>
+              {/* One text, so a long title wraps under itself and the age follows it. */}
+              <Text wrap="wrap">
+                <Text bold>{titleOf(task)}</Text>
+                <Text dimColor>{ageOf(task, view)}</Text>
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingLeft={2}>
+              <Box key="thread" flexDirection="column">
+                {detail === undefined ? null : entry(detail)}
+                {thread.hidden === 0 ? null : (
+                  <Box key="earlier" flexDirection="column">
+                    <Text dimColor wrap="wrap">
+                      {hiddenOf(thread.hidden)}
+                    </Text>
+                  </Box>
+                )}
+                {newest.flatMap(entry)}
+              </Box>
+              {link === undefined ? null : (
+                <Box key="link" flexDirection="row">
+                  <Box flexShrink={0}>
+                    <Text dimColor>{LINK_LABEL}</Text>
+                  </Box>
+                  <Link href={link} />
+                </Box>
+              )}
+              {doneWhen === undefined ? null : (
+                <Text dimColor wrap="wrap">
+                  {doneWhen}
+                </Text>
+              )}
+              {actions.length === 0 && !isField ? null : (
+                <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+                  {actions.map(action => (
+                    <Button
+                      key={action.key}
+                      plain
+                      hotkey={action.hotkey}
+                      label={action.label}
+                      onPress={() => pressOn($, task.id, action.move, drawn)}
+                    />
+                  ))}
+                  {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
+                </Box>
+              )}
+              {heldText === undefined ? null : (
+                <Box key="held" flexDirection="column">
+                  <Text color="yellow" wrap="wrap">
+                    {heldNoticeOf(task)}
+                  </Text>
+                  <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+                    <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
+                    <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
+                  </Box>
+                </Box>
+              )}
+            </Box>
+            {/* The terminal sizes a field by the pane's body, whatever box holds it:
+                it goes out of the item's indent, across the body's whole width. */}
+            {!isField || Input === undefined ? null : (
+              <Input
+                key={key}
+                label={REPLY_LABEL}
+                placeholder={placeholderOf(REPLY_PLACEHOLDER, REPLY_LABEL, SUBMIT_LABEL, columns)}
+                value={fieldValueOf(e.surface, key)}
+                submitLabel={SUBMIT_LABEL}
+                onInput={value => typed($, key, value)}
+                onSubmit={value => answer($, task.id, value)}
+              />
+            )}
+          </Box>
+          {/* Tab from the reply field goes to Back, the field's next Button. */}
+          <Box key="foot" flexDirection="row" columnGap={BUTTON_GAP} flexShrink={0}>
+            {hint}
+            <Box flexShrink={0}>
+              <Button key={BACK.key} plain hotkey={BACK.hotkey} label={BACK.label} onPress={() => toList($, task.id, drawn)} />
+            </Box>
+            {hide}
+          </Box>
         </Box>
-      </Box>
-    ))
+      )
+    }
+
+    const head = waitingOf(shown)
+    const numberCells = numberCellsOf(shown)
+    const cameHere = arrivedOf(view)
+    const offered = offerOf(view)
+    const ownKey = keyOf(live.sessionId)
+    const drawnOffer = (await read($, offer)).filter(entry => entry.key !== ownKey)
+    const moving = movingOf(shown)
+    // A Text keeps no key: each row's Box holds it.
+    const readOnlyRows = (prefix: string, items: readonly Task[]) =>
+      items.map(one => (
+        <Box key={`${prefix}-${one.id}`}>
+          <Text dimColor>{readOnlyRowOf(one, columns)}</Text>
+        </Box>
+      ))
+
+    // A row is one line, its title cut to fit: the item screen draws it whole.
+    const row = (one: Task) => {
+      const { newReply, waiting } = marksOf(one)
+
+      return (
+        <Button key={`row-${one.id}`} plain onPress={() => openItem($, one.id, view.canType)}>
+          {rowTitleOf(one, numberCells, columns)}
+          {newReply === '' ? '' : <Text color="yellow">{newReply}</Text>}
+          {waiting === '' ? '' : <Text dimColor>{waiting}</Text>}
+        </Button>
+      )
+    }
 
     return (
       <Box flexDirection="column">
-        <Box key="head" flexDirection="row" flexShrink={0}>
-          <Text wrap="wrap">
-            <Text color={active.length > 0 ? 'yellow' : 'gray'}>{head.glyph}</Text>
-            <Text bold>{head.headline}</Text>
-            <Text dimColor>{head.note}</Text>
-          </Text>
-        </Box>
-        <Box key="tasks" flexDirection="column" marginTop={1} flexShrink={0}>
-          {sectionRows}
-          {savedRows}
-        </Box>
-        <Box key="foot" flexDirection="row" marginTop={1} columnGap={BUTTON_GAP} flexShrink={0}>
-          <Text dimColor wrap="wrap">
-            {hintOf(view)}
-          </Text>
-          <Box flexShrink={0}>
-            <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => closePane($)} />
+        {unsaved}
+        {cameHere === undefined ? null : (
+          <Box key="arrived" flexShrink={0}>
+            <Text dimColor wrap="wrap">
+              {cameHere}
+            </Text>
           </Box>
+        )}
+        {offered === undefined ? null : (
+          <Box key="offer" flexDirection="column" flexShrink={0}>
+            <Text wrap="wrap">{offered}</Text>
+            <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+              {OFFER_BUTTONS.map(button => (
+                <Button
+                  key={button.key}
+                  plain
+                  label={button.label}
+                  onPress={() => (button.key === 'take' ? takeLeft($, drawnOffer) : dismissLeft($, drawnOffer))}
+                />
+              ))}
+            </Box>
+          </Box>
+        )}
+        {!shown.some(isActive) ? null : (
+          <Box key="head" flexDirection="row" flexShrink={0}>
+            <Text wrap="wrap">
+              <Text color={shown.some(waitsOnUser) ? 'yellow' : 'gray'}>{head.glyph}</Text>
+              <Text bold>{head.headline}</Text>
+            </Text>
+          </Box>
+        )}
+        {groupsOf(shown).map(group => (
+          <Box key={`section-${group.label}`} flexDirection="column" flexShrink={0}>
+            <Text bold color="yellow">
+              {group.label}
+            </Text>
+            <Box flexDirection="column" paddingLeft={ROW_INDENT}>
+              {group.tasks.map(row)}
+            </Box>
+          </Box>
+        ))}
+        {moving.length === 0 ? null : (
+          <Box key="moving" flexDirection="column" flexShrink={0}>
+            <Text bold color="yellow">
+              {MOVING_LABEL}
+            </Text>
+            <Box flexDirection="column" paddingLeft={ROW_INDENT}>
+              {readOnlyRows('moving', moving)}
+              {view.isUnclaimed !== true ? null : (
+                <Box key="unclaimed" flexDirection="column">
+                  <Text wrap="wrap">{UNCLAIMED_NOTE}</Text>
+                  <Box flexShrink={0}>
+                    <Button key={TAKE_BACK.key} plain label={TAKE_BACK.label} onPress={() => takeBack($)} />
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        )}
+        {moved.length === 0 ? null : (
+          <Box key="moved" flexDirection="column" flexShrink={0}>
+            <Text bold color="yellow">
+              {MOVED_LABEL}
+            </Text>
+            <Box flexDirection="column" paddingLeft={ROW_INDENT}>
+              {readOnlyRows('moved', moved)}
+            </Box>
+          </Box>
+        )}
+        <Box key="foot" flexDirection="row" columnGap={BUTTON_GAP} flexShrink={0}>
+          {hint}
+          {hide}
         </Box>
       </Box>
     )
   })
 }
 
-/** Keeps the pane's word on whether Claude works (Enter sends, or saves) in step. */
-async function syncWorking($: EngineInterface) {
-  const now = working()
-
-  await update($, isWorking, () => now)
-}
-
 /**
  * Goes on as the session /clear started after `endingId`: it has no saved
- * items to read. One the engine never names starts empty and saves nothing:
- * its writes would go over the ended session's key.
+ * items to read, and is offered at once those the ended one left. One the
+ * engine never names starts empty and saves nothing: its writes would go
+ * over the ended session's key.
  */
 async function startCleared($: EngineInterface, endingId: string) {
   const sessionId = await newIdAfter($, endingId)
@@ -1014,11 +1463,14 @@ async function startCleared($: EngineInterface, endingId: string) {
 
   if (sessionId !== undefined) {
     await update($, restoredFor, () => sessionId)
+    await scan($)
   }
 }
 
 /** Goes on as the session a resume took up after `endingId`, with the items it saved; as `startCleared` when the engine never names it. */
 async function startResumed($: EngineInterface, endingId: string) {
+  // Whether the background tasks of a resumed conversation still run is not known.
+  live.background = null
   const sessionId = await newIdAfter($, endingId)
 
   await switchTo($, sessionId ?? endingId)
@@ -1059,25 +1511,33 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.drafts.clear()
   live.closed.clear()
   live.drawn.clear()
-  live.held.clear()
-  live.batch?.cancel()
-  live.batch = null
-  live.isSendingAtEnd = false
-  live.isUnread = false
+  cancelBatch()
+  live.mainTurn = undefined
+  live.wasStopped = false
+  live.unreadAppend.clear()
+  live.moved.clear()
+  live.inputs = []
+  const cwd = await $.session.cwd().catch(() => undefined)
+  const nowMs = await $.clock.now()
+  await update($, folder, known => cwd ?? known)
   await update($, restoredFor, () => null)
   await update($, tasks, () => [])
   await update($, nextId, () => 1)
-  await update($, selectedId, () => null)
-  await update($, editing, () => null)
+  await update($, header, (): Header => ({ lastActiveMs: nowMs, taken: [] }))
+  await update($, offer, (): Offer => [])
+  await update($, saveFailing, () => false)
+  await update($, arrived, () => [])
+  await update($, screen, () => LIST_SCREEN)
+  await update($, held, () => null)
   await refresh($)
 }
 
 /**
  * Takes up the items this session saved, when its key has them (a resumed
- * session), and deletes the keys of sessions saved more than `KEEP_MS` ago.
- * Until the read settles, the tools refuse: an item Claude added meanwhile
- * would go under the items read. A store slow to answer holds up the start
- * 5 seconds at most.
+ * session), and deletes the keys of sessions saved more than `KEEP_MS` ago;
+ * then acts on what other sessions did (see `scan`). Until the read settles,
+ * the tools refuse: an item Claude added meanwhile would go under the items
+ * read. A store slow to answer holds up the start 5 seconds at most.
  */
 async function restore($: EngineInterface) {
   const sessionId = await $.session.id()
@@ -1099,9 +1559,23 @@ async function restore($: EngineInterface) {
     }
   })
   const cleaned = queued(() => dropExpired($)).catch(() => undefined)
+  const scanned = Promise.all([restored, cleaned]).then(async ([isKept, all]) => {
+    if (live.ends !== ends || live.sessionId !== sessionId) {
+      return false
+    }
+
+    // A resumed session's key says at once that it runs again, so no other session offers its items.
+    if (isKept) {
+      void persist($).catch(() => undefined)
+    }
+
+    await scan($, all)
+
+    return isKept
+  })
 
   // The pane opens for what was read, unless the session has ended since.
-  const shown = restored
+  const shown = scanned
     .then(async isKept => {
       if (isKept && (await refresh($)) && live.ends === ends) {
         await show($, false)
@@ -1109,7 +1583,7 @@ async function restore($: EngineInterface) {
     })
     .catch(() => undefined)
 
-  await awaited($, Promise.allSettled([restored, cleaned]))
+  await awaited($, Promise.allSettled([restored, cleaned, scanned]))
   await redrawn($, shown)
 }
 
@@ -1134,9 +1608,20 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   const isKept = saved !== undefined && !isExpired(saved, nowMs)
 
   if (isKept) {
-    await update($, tasks, () => saved.tasks)
+    await update($, tasks, () => trimmed(saved, nowMs).tasks)
     await update($, nextId, () => saved.nextId)
-    await reselect($)
+    // A v0.1 key saved no folder: the session keeps the one it runs in.
+    if (saved.folder !== '') {
+      await update($, folder, () => saved.folder)
+    }
+
+    // Taken up, an ended session runs again; one that ended while its key was read stays ended.
+    await update($, header, (now): Header => ({
+      lastActiveMs: nowMs,
+      taken: saved.taken,
+      ...(saved.handoff === undefined ? {} : { handoff: saved.handoff }),
+      ...(now.endedMs === undefined ? {} : { endedMs: now.endedMs }),
+    }))
   }
 
   await update($, restoredFor, () => sessionId)
@@ -1144,19 +1629,43 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   return isKept
 }
 
-/** Deletes every saved key that has expired or holds no saved session: all of them share the store's one file. */
-async function dropExpired($: EngineInterface) {
+/**
+ * Deletes every saved key that has expired or holds no saved session: all of
+ * them share the store's one file. Resolves the keys left, as `readAll` does.
+ */
+async function dropExpired($: EngineInterface): Promise<Record<string, unknown>> {
   const nowMs = await $.clock.now()
-  const keys = (await $.store.keys()).filter(isSavedKey)
-  const values = await Promise.all(keys.map(key => $.store.get(key)))
+  const all = await readAll($)
 
-  for (const [i, key] of keys.entries()) {
-    const saved = savedIn(values[i])
+  for (const [key, raw] of Object.entries(all)) {
+    const saved = savedIn(raw)
 
     if (saved === undefined || isExpired(saved, nowMs)) {
       await $.store.delete(key)
+      delete all[key]
     }
   }
+
+  return all
+}
+
+/** Every session's key, as `readAll` reads it, with this session's own as `withOwnTaken` has it; undefined when the store cannot be read. */
+async function readStore($: EngineInterface): Promise<Record<string, unknown> | undefined> {
+  const all = await readAll($).catch(() => undefined)
+
+  return all === undefined ? undefined : withOwnTaken($, all)
+}
+
+/** `all` with this session's `taken` records as its state holds them: items it took are not offered again while their write is out, or after it failed. */
+async function withOwnTaken($: EngineInterface, all: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return withTaken(all, keyOf(live.sessionId), (await read($, header)).taken)
+}
+
+async function readAll($: EngineInterface): Promise<Record<string, unknown>> {
+  const keys = (await $.store.keys()).filter(isSavedKey)
+  const values = await Promise.all(keys.map(key => $.store.get(key)))
+
+  return Object.fromEntries(keys.map((key, i) => [key, values[i]]))
 }
 
 /** `writeSaved` once the store work asked for before is done, from the state as it stands then. */
@@ -1165,23 +1674,42 @@ function persist($: EngineInterface): Promise<void> {
 }
 
 /**
- * Writes the session's shown items and its count under its key. Nothing
- * before its first item (most sessions never hold one), nor before the
- * session has read its key, which the write would go over: one whose start
- * read failed reads it here, and writes only where none is saved.
+ * Writes the session's items, as `trimmed` keeps them, its count and its
+ * header under its key. Nothing before its first item (most sessions never
+ * hold one), nor before the session has read its key, which the write would
+ * go over: one whose start read failed reads it here, and writes only where
+ * none is saved. A write that fails is shown until one succeeds.
  */
 async function writeSaved($: EngineInterface) {
   // Read at one moment: a switch to another session never falls between them.
   const sessionId = live.sessionId
-  const [restored, list, count] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId)])
-  const shown = list.filter(isShown)
+  const [restored, list, count, started, head] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId), read($, folder), read($, header)])
 
-  if ((shown.length === 0 && count === 1) || (restored !== sessionId && !(await isUnsaved($, sessionId)))) {
+  if ((list.length === 0 && count === 1) || (restored !== sessionId && !(await isUnsaved($, sessionId)))) {
     return
   }
 
-  const saved: Saved = { tasks: shown, nextId: count, savedMs: await $.clock.now() }
-  await $.store.set(keyOf(sessionId), saved)
+  const nowMs = await $.clock.now()
+  const saved: Saved = { version: 2, tasks: list, nextId: count, savedMs: nowMs, ...head, folder: started ?? '' }
+
+  try {
+    await $.store.set(keyOf(sessionId), trimmed(saved, nowMs))
+  } catch (error) {
+    await noteSaved($, false)
+    throw error
+  }
+
+  await noteSaved($, true)
+}
+
+/** Shows that the session's last write failed, or no more once one succeeds. */
+async function noteSaved($: EngineInterface, isSaved: boolean) {
+  if ((await read($, saveFailing)) !== isSaved) {
+    return
+  }
+
+  await update($, saveFailing, () => !isSaved)
+  await refresh($)
 }
 
 /**
@@ -1243,6 +1771,8 @@ function rostered($: EngineInterface, rewrite: (all: Roster) => Roster): Promise
  */
 async function awaited($: EngineInterface, work: Promise<unknown>) {
   if (live.stalled > 0) {
+    // The caller may be all that holds `work` (a turn's scan and write): its failure must not go unhandled.
+    void work.catch(() => undefined)
     return
   }
 
@@ -1305,9 +1835,10 @@ async function change($: EngineInterface, fn: (list: readonly Task[]) => readonl
  * Marks the updates Claude has not heard delivered (every one, or those
  * `isWanted`), in one change of the task list, and resolves them: the path
  * that claims them sends them, and no other finds them waiting meanwhile.
+ * One on an item away to another session is that session's to hear.
  */
 async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () => true): Promise<readonly Task[]> {
-  const isDue = (task: Task) => task.update === 'pending' && isWanted(task)
+  const isDue = (task: Task) => task.update === 'pending' && !isAway(task) && isWanted(task)
   let due: readonly Task[] = []
 
   if (!(await read($, tasks)).some(isDue)) {
@@ -1317,26 +1848,61 @@ async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () 
   await change($, list => {
     due = list.filter(isDue)
 
-    return list.map(task => (isDue(task) ? { ...task, update: 'delivered' } : task))
+    return list.map(task => (isDue(task) ? toldOf(task) : task))
   })
 
   return due
 }
 
 /**
+ * Puts an item new or changed in front of the user: the pane, or a toast
+ * where it cannot be seated unasked, and an alert when they have been away;
+ * one alert a turn, none for info.
+ */
+async function present($: EngineInterface, task: Task, nowMs: number, words: { toast: string; notice: string }) {
+  if (!(await show($, false))) {
+    $.ui.toast(words.toast)
+  }
+
+  if (task.kind !== 'info' && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
+    live.alertedTurn = true
+    $.ui.notify(words.notice, { title: 'Open items' }).catch(() => undefined)
+  }
+}
+
+/**
  * Keeps the status line in step with the items, and closes the pane once
- * nothing is left in it. Resolves whether anything is shown.
+ * nothing is left in it, no item and no offer. Resolves whether anything is shown.
  */
 async function refresh($: EngineInterface): Promise<boolean> {
-  const shown = (await read($, tasks)).filter(isShown)
+  const list = await read($, tasks)
+  const isShowing = await hasPane($, list)
 
-  $.ui.status(statusOf(shown))
+  $.ui.status(statusOf(list.filter(isShown), await read($, saveFailing)))
 
-  if (shown.length === 0) {
+  if (!isShowing) {
     await closePane($).catch(() => undefined)
   }
 
-  return shown.length > 0
+  return isShowing
+}
+
+/** Whether the pane has anything to draw: an item shown, an offer, or items that moved while this process ran. */
+async function hasPane($: EngineInterface, list?: readonly Task[]): Promise<boolean> {
+  const items = list ?? (await read($, tasks))
+
+  return items.some(isShown) || movedOf(items).length > 0 || (await read($, offer)).length > 0
+}
+
+/** The items another session took while this process ran, which the pane draws where they went. */
+function movedOf(list: readonly Task[]): Task[] {
+  return list.filter(task => task.state === 'moved' && live.moved.has(task.id))
+}
+
+/** The user's Hide: the pane closes, and the line naming the items just moved here goes. */
+async function hidePane($: EngineInterface) {
+  await update($, arrived, () => [])
+  await closePane($)
 }
 
 /** Closes the Open items pane, and has a re-size under way leave it closed. */
@@ -1352,18 +1918,14 @@ function closePane($: EngineInterface): Promise<void> {
  * surface seated it: one opened unasked waits on a narrow terminal.
  */
 async function show($: EngineInterface, isAsked: boolean): Promise<boolean> {
-  // A closed pane's fields are drawn with their drafts as it opens again:
-  // the surfaces forget what they held as it closes. Its ring starts on the
-  // open field, which takes it by autoFocus as the pane takes the keys.
-  // Asked only when there is a draft to draw or a field open to take the
-  // ring; when the engine can't say, they are drawn so anyway, and a field
-  // still drawn gets back the text typed in it.
-  if (live.drafts.size > 0 || (await read($, editing)) !== null) {
+  // The surfaces forget a closed pane's fields and ring: it opens again with its fields drawn from their
+  // drafts and its ring on nothing. When the engine can't say, a field still drawn gets its draft back.
+  if (live.drafts.size > 0 || (await read($, screen)).kind === 'item') {
     const panes = await $.ui.panes().catch(() => undefined)
 
     if (panes === undefined || !panes.some(pane => pane.id === PANE)) {
       live.drawn.clear()
-      live.ring = openKeyOf(await read($, editing))
+      live.ring = undefined
     }
   }
 
@@ -1384,35 +1946,43 @@ async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promi
 
 /** What the pane draws from: the session's state, and what only the surface knows. */
 async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 'isFocused'>): Promise<PaneView> {
-  const field = await read($, editing)
-  const key = openKeyOf(field)
+  const ownKey = keyOf(live.sessionId)
+  const list = await read($, tasks)
   const state = {
-    shown: (await read($, tasks)).filter(isShown),
-    selectedId: await read($, selectedId),
-    editing: field,
-    draft: key === undefined ? '' : (live.drafts.get(key) ?? ''),
+    shown: list.filter(isShown),
+    held: await read($, held),
+    screen: await read($, screen),
     nowMs: await $.clock.now(),
-    isWorking: await read($, isWorking),
+    ...offeredOf(await read($, offer), ownKey),
+    isSaveFailing: await read($, saveFailing),
+    moved: movedOf(list),
+    arrived: (await read($, arrived)).length,
   }
+  const task = openTaskOf(state)
 
-  return seated(state, surface)
+  // The draft is read after every await: a key typed while a read is slow counts.
+  return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? '') }, surface)
+}
+
+/** What the pane draws of `entries`: how many items other sessions left, and whether this session's own hand-off waits unclaimed. */
+function offeredOf(entries: Offer, ownKey: string): Pick<PaneView, 'offered' | 'isUnclaimed'> {
+  return {
+    offered: entries.reduce((count, entry) => count + (entry.key === ownKey ? 0 : entry.ids.length), 0),
+    isUnclaimed: entries.some(entry => entry.key === ownKey),
+  }
 }
 
 /** The pane's `view` as a surface that `canType`, and holds the keys or not, draws it. */
 function seated(view: Omit<PaneView, 'canType' | 'isFocused' | 'isTyping'>, surface: Pick<PaneView, 'canType' | 'isFocused'>): PaneView {
-  const key = openKeyOf(view.editing)
+  const task = openTaskOf(view)
+  const isField = task !== undefined && hasReplyField(task, { ...view, canType: surface.canType })
 
   return {
     ...view,
     canType: surface.canType,
     isFocused: surface.isFocused,
-    isTyping: surface.canType && surface.isFocused && key !== undefined && live.ring === key,
+    isTyping: surface.isFocused && isField && live.ring === replyKeyOf(task.id),
   }
-}
-
-/** The key of the field open to type in, unless an answer held there for looking like a secret takes its place. */
-function openKeyOf(field: Editing | null): string | undefined {
-  return field === null || field.held !== undefined ? undefined : fieldKeyOf(field)
 }
 
 /** Re-sizes the pane to `wanted` rows, or else to what it holds now, when it is on screen. */
@@ -1489,18 +2059,20 @@ function fieldValueOf(surface: RenderSurface, key: string): string {
 }
 
 /**
- * Changes item `id` with `fn` while it is open, and resolves the item as the
- * change found it: one closed meanwhile (Claude withdrew it, or a press from
- * an older render answered it) or gone (a /clear) stays as it is.
+ * Changes item `id` with `fn` while it is open or later, and resolves the
+ * item as the change found it: one closed meanwhile (Claude withdrew it, or a
+ * press from an older render answered it) or gone (a /clear) stays as it is,
+ * as does one `fn` hands back unchanged.
  */
-async function edit($: EngineInterface, id: number, fn: (task: Task) => Task): Promise<Task | undefined> {
+async function edit($: EngineInterface, id: number, fn: (task: Task, nowMs: number) => Task): Promise<Task | undefined> {
   const nowMs = await $.clock.now()
   let found: Task | undefined
 
   await change($, list => {
     found = list.find(task => task.id === id)
+    const changed = found !== undefined && isActive(found) ? fn(found, nowMs) : found
 
-    return found !== undefined && isActive(found) ? list.map(task => (task.id === id ? { ...fn(task), updatedMs: nowMs } : task)) : list
+    return changed === found ? list : list.map(task => (task.id === id && changed !== undefined ? { ...changed, updatedMs: nowMs } : task))
   })
 
   return found
@@ -1531,11 +2103,6 @@ async function passOn<R extends PromptSubmitResult>(
       const lost = due.filter(task => !isCarried(result, task))
 
       if (lost.length > 0) {
-        // The prompt entered, and Claude takes a turn on it: sent again as
-        // that turn ends, a response a hook beneath always takes out (or
-        // rewords at its head) would go round and round. It waits for Send
-        // now, as the toast says, or the next prompt.
-        lost.forEach(task => live.held.add(updateKeyOf(task)))
         back = { lost, note: 'why', reason: 'a hook took it out of the prompt' }
       }
     }
@@ -1547,7 +2114,7 @@ async function passOn<R extends PromptSubmitResult>(
     throw error
   } finally {
     if (back !== undefined) {
-      await giveBack($, back.lost.map(task => task.id), back.note, back.reason)
+      await giveBack($, back.lost, back.note, back.reason)
     }
   }
 }
@@ -1563,11 +2130,6 @@ function inWords(entered: Entered, task: Task): boolean {
   return entered.text.includes(ownHeadOf(task))
 }
 
-/** The update a task carries, the same through each send and give-back: a new one changes `updatedMs`. */
-function updateKeyOf(task: Task): string {
-  return `${task.id}@${task.updatedMs}`
-}
-
 /** Whether a prompt that entered carries an update in a digest beside its words (`#5 done: <title>.`), read as `inWords` reads them. */
 function inDigest(entered: Entered, task: Task): boolean {
   return (entered.context ?? []).some(block => block.includes(newsHeadOf(task)))
@@ -1578,9 +2140,9 @@ function inDigest(entered: Entered, task: Task): boolean {
  * and says so as `note` says. It never throws: `passOn` keeps the prompt's
  * own error.
  */
-async function giveBack($: EngineInterface, ids: readonly number[], note: DropNote, reason?: string) {
+async function giveBack($: EngineInterface, lost: readonly Task[], note: DropNote, reason?: string) {
   try {
-    await undelivered($, ids)
+    await undelivered($, lost)
   } catch {
     // `change` sets the session's state before the store and lets a store
     // write fail quietly; nothing else here is expected to throw.
@@ -1590,97 +2152,183 @@ async function giveBack($: EngineInterface, ids: readonly number[], note: DropNo
     return
   }
 
-  const which = numbersOf(ids)
+  const which = numbersOf(lost.map(task => task.id))
   const why = note === 'why' && reason !== undefined ? `: ${printable(reason, 200).replace(/[.!]+$/, '')}` : ''
 
-  $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved; press Send now in /open-items.`, {
+  $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved, and goes to Claude with the next message.`, {
     timeoutMs: 8000,
   })
 }
 
-/** Gives back updates marked delivered that never reached Claude: they wait again. */
-async function undelivered($: EngineInterface, ids: readonly number[]) {
-  await change($, list => list.map(task => (ids.includes(task.id) && task.update === 'delivered' ? { ...task, update: 'pending' } : task)))
+/**
+ * Gives back updates that never reached Claude, `lost` as they stood before
+ * they were claimed: they wait again, and Claude counts as told only of what
+ * it was told before.
+ */
+async function undelivered($: EngineInterface, lost: readonly Task[]) {
+  await change($, list =>
+    list.map(task => {
+      const was = lost.find(one => one.id === task.id)
+
+      return was === undefined ? task : { ...task, update: task.update === 'delivered' ? 'pending' : task.update, heardMs: was.heardMs }
+    }),
+  )
 }
 
 /**
- * Keeps the selection on a task still open, and drops a field whose task is
- * gone, keeping what was typed for its answer for a press from a drawing
- * from before.
+ * After a move on item `id` or its end: drops what was typed in its field,
+ * kept for a press from a drawing from before, and the reply held there,
+ * and leaves its screen once it is closed.
  */
 async function settle($: EngineInterface, id: number) {
-  const key = fieldKeyOf({ id, field: 'answer' })
+  const key = replyKeyOf(id)
   const draft = live.drafts.get(key)
 
   if (draft !== undefined) {
     live.closed.set(key, draft)
   }
 
-  for (const field of ['answer', 'reason'] as const) {
-    forget(fieldKeyOf({ id, field }))
-    live.drafts.delete(fieldKeyOf({ id, field }))
+  forget(key)
+  live.drafts.delete(key)
+
+  await update($, held, now => (now?.id === id ? null : now))
+
+  if (!(await isOpenNow($, id))) {
+    await update($, screen, now => (now.kind === 'item' && now.id === id ? LIST_SCREEN : now))
   }
-
-  await update($, editing, field => (field?.id === id ? null : field))
-  await reselect($)
 }
 
-async function reselect($: EngineInterface) {
-  const active = (await read($, tasks)).filter(isActive)
-
-  await update($, selectedId, chosen => (active.some(task => task.id === chosen) ? chosen : (firstOf(active)?.id ?? null)))
-}
-
-async function select($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it leaves the pane as
-  // it is: a field open on another task stays open.
+/**
+ * Opens item `id`'s screen, the ring in its reply field where the pressed
+ * drawing's surface draws one (`canType`), else on Back.
+ */
+async function openItem($: EngineInterface, id: number, canType: boolean) {
+  // Pressed on a drawing from before its item closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
   }
 
-  await update($, selectedId, () => id)
-  await update($, editing, field => (field?.id === id ? field : null))
+  forget(replyKeyOf(id))
+  await update($, arrived, ids => (ids.includes(id) ? [] : ids))
+  await update($, screen, (): Screen => ({ kind: 'item', id }))
+  const kept = await update($, held, now => (now?.id === id ? now : null))
+  await markRead($, id)
+
+  // The engine keeps the ring at the row's place, on whatever the item screen draws there: an option a
+  // second Enter would choose. In the field, typed keys stay text (a hotkey there would answer Claude).
+  const task = (await read($, tasks)).find(one => one.id === id)
+  const key = task !== undefined && hasReplyField(task, { canType, held: kept }) ? replyKeyOf(id) : BACK.key
+  const was = live.ring
+  live.ring = key
   await fit($)
+
+  void $.ui
+    .focus({ requestId: PANE, key })
+    .then(moved => {
+      if (moved.deny !== undefined && live.ring === key) {
+        live.ring = was
+        return refit($)
+      }
+    })
+    .catch(() => undefined)
+}
+
+/** The user has seen Claude's last reply on item `id`, which its screen shows. */
+async function markRead($: EngineInterface, id: number) {
+  await edit($, id, task => (task.hasNewReply ? { ...task, hasNewReply: false } : task))
 }
 
 /**
- * The user fulfilled or rejected a task; `how` says when Claude hears of it.
- * Resolves the task as it stood, as `edit` does: one no longer open stays as it is.
+ * Back to the list from item `id`'s screen, the ring on the row `rowBackTo`
+ * finds from the list as the screen drew it (`drawn`), so the next ↓ goes on
+ * from there; a draft stays with its item.
  */
-async function resolve($: EngineInterface, id: number, patch: Pick<Task, 'state'> & Partial<Task>, how: How) {
-  const was = await edit($, id, task => ({ ...task, ...patch, update: 'pending' }))
-  const isOpen = was !== undefined && isActive(was)
-  await settle($, id)
+async function toList($: EngineInterface, id: number, drawn: readonly string[] = []) {
+  await update($, arrived, () => [])
+  await update($, screen, () => LIST_SCREEN)
+  await update($, held, () => null)
+  await markRead($, id)
+  const row = rowBackTo(id, drawn, focusOrderOf((await read($, tasks)).filter(isShown)))
+  live.ring = row
+  await fit($)
 
-  // One no longer open sends nothing new, and holds back no batch under way;
-  // Send now still sends the answer it repeats, saved for later.
-  if ((how === 'now' && (isOpen || isRepeatOf(was, patch))) || (how === 'auto' && isOpen && !working())) {
-    sendSoon($)
+  if (row !== undefined) {
+    void $.ui.focus({ requestId: PANE, key: row }).catch(() => undefined)
+  }
+}
+
+/** A press of one of item `id`'s buttons, then the list, unless the press chose an option Claude has changed since. */
+async function pressOn($: EngineInterface, id: number, move: Move, drawn: readonly string[]) {
+  if (move === SEEN) {
+    await markSeen($, id)
+  } else if (!(await respond($, id, move))) {
+    return
   }
 
-  return was
-}
-
-/** Whether task `was` stands answered as `patch` would answer it: a second press, say. */
-function isRepeatOf(was: Task | undefined, patch: Pick<Task, 'state'> & Partial<Task>): boolean {
-  return was !== undefined && was.state === patch.state && was.answer === patch.answer && was.reason === patch.reason
+  await toList($, id, drawn)
 }
 
 /**
- * A press on the pane resolves item `id`, as `resolve` does. One Claude
- * withdrew, or the user answered otherwise (on another surface, say), since
- * the pane drew it says so, and what the user typed for it (`typedText`)
- * goes to the prompt box, unless it looks like a secret; one already
- * answered as this press would answer it (a second press) stays answered.
+ * The user's `move` on a task, which the batch sends Claude. Resolves the
+ * task as it stood, as `edit` does: one no longer open stays as it is.
  */
-async function respond($: EngineInterface, id: number, patch: Pick<Task, 'state'> & Partial<Task>, how: How, typedText = '') {
-  const was = await resolve($, id, patch, how)
+async function resolve($: EngineInterface, id: number, move: Move) {
+  // Pending from the edit on, it is held until the batch holds it: else a
+  // prompt's digest or list_items could take it while the store writes.
+  live.writing.set(id, (live.writing.get(id) ?? 0) + 1)
 
-  if (was === undefined || (!isActive(was) && !isRepeatOf(was, patch))) {
+  try {
+    const was = await edit($, id, (task, nowMs) => (isStale(task, move) ? task : movedBy(task, move, nowMs)))
+
+    if (isStale(was, move)) {
+      return was
+    }
+
+    const isNew = was !== undefined && isActive(was) && !isRepeatOf(was, move)
+    await settle($, id)
+
+    // A move that changes nothing sends nothing new, and holds back no batch under way.
+    if (isNew) {
+      sendSoon($, id)
+    }
+
+    return was
+  } finally {
+    const left = (live.writing.get(id) ?? 1) - 1
+
+    if (left > 0) {
+      live.writing.set(id, left)
+    } else {
+      live.writing.delete(id)
+    }
+  }
+}
+
+/**
+ * A press on the pane makes the user's `move` on item `id`, as `resolve`
+ * does. One Claude withdrew, or the user answered otherwise (on another
+ * surface, say), since the pane drew it says so, and what the user typed for
+ * it (`typedText`) goes to the prompt box, unless it looks like a secret; one
+ * the user's last move already matches (a second press) stays as it is.
+ * Resolves false for an option Claude has changed since: nothing is saved.
+ */
+async function respond($: EngineInterface, id: number, move: Move, typedText = ''): Promise<boolean> {
+  const was = await resolve($, id, move)
+
+  if (isStale(was, move)) {
+    $.ui.toast(`Item #${id} changed since the pane showed it, so your choice wasn't saved. Look at its options again.`, { timeoutMs: 8000 })
+
+    return false
+  }
+
+  if (was === undefined || (!isActive(was) && !isRepeatOf(was, move))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
+    const why = was !== undefined && isAway(was) ? 'moved to a new session' : "isn't open any more"
 
-    $.ui.toast(`Item #${id} isn't open any more, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
+    $.ui.toast(`Item #${id} ${why}, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
   }
+
+  return true
 }
 
 /**
@@ -1703,15 +2351,15 @@ async function toPromptBox($: EngineInterface, text: string): Promise<boolean> {
  * Answers task `id` with what is typed in its field, or, pressed on a
  * drawing from before the task closed, with what was typed before it did.
  */
-async function answerTyped($: EngineInterface, id: number, how: How) {
-  const key = fieldKeyOf({ id, field: 'answer' })
+async function answerTyped($: EngineInterface, id: number) {
+  const key = replyKeyOf(id)
 
-  return answer($, id, live.drafts.get(key) ?? live.closed.get(key) ?? '', how)
+  return answer($, id, live.drafts.get(key) ?? live.closed.get(key) ?? '')
 }
 
 /** The user looked at info item `id`: it leaves the pane, and Claude hears nothing. */
 async function markSeen($: EngineInterface, id: number) {
-  if (await edit($, id, task => ({ ...task, state: 'seen' }))) {
+  if (await edit($, id, (task, nowMs) => movedBy(task, SEEN, nowMs))) {
     await settle($, id)
   }
 }
@@ -1721,39 +2369,44 @@ async function isOpenNow($: EngineInterface, id: number): Promise<boolean> {
   return (await read($, tasks)).some(task => task.id === id && isActive(task))
 }
 
-async function answer($: EngineInterface, id: number, text: string, how: How, isSecretOk = false) {
+async function answer($: EngineInterface, id: number, text: string, isSecretOk = false) {
   const value = text.trim()
   // Entered or pressed on a drawing from before its task closed, an answer
   // goes to `respond`, which says the task isn't open any more.
   const isOpen = await isOpenNow($, id)
 
   if (isOpen && value === '') {
-    $.ui.toast('Type an answer first, or press Cancel.')
+    $.ui.toast('Type a reply first.')
+    return
+  }
+
+  const overLimit = overLimitOf(id, value)
+
+  if (isOpen && overLimit !== undefined) {
+    $.ui.toast(overLimit, { timeoutMs: 8000 })
     return
   }
 
   if (isOpen && !isSecretOk && looksSecret(value)) {
-    await update($, editing, (): Editing => ({ id, field: 'answer', held: value }))
+    await update($, held, (): Held => ({ id, text: value }))
     return
   }
 
-  await respond($, id, { state: 'done', answer: value }, how, value)
+  await respond($, id, replyOf(value), value)
 }
 
-async function startEditing($: EngineInterface, id: number, field: Editing['field']) {
-  // Pressed on a drawing from before its task closed, it leaves the pane as it is.
+/** Puts the reply held for looking like a secret back in item `id`'s field, its draft in it, to change it. */
+async function editHeld($: EngineInterface, id: number) {
+  // Pressed on a drawing from before its item closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
   }
 
-  const key = fieldKeyOf({ id, field })
+  const key = replyKeyOf(id)
 
   forget(key)
-  // The field takes the ring as it opens: by the move below, or by its
-  // autoFocus, whose `ui.focus` reaches none of this plugin's hooks.
   live.ring = key
-  await update($, selectedId, () => id)
-  await update($, editing, (): Editing => ({ id, field }))
+  await update($, held, () => null)
   await fit($)
 
   // A field the pane can't focus (it doesn't hold the keyboard) is still a click away.
@@ -1767,20 +2420,19 @@ function forget(key: string) {
   }
 }
 
-async function stopEditing($: EngineInterface) {
-  await update($, editing, () => null)
-  await fit($)
-}
-
-/** Moves a long answer into the prompt box, where the real editor takes pastes and lines. */
+/**
+ * Moves a long answer into the prompt box, where the real editor takes
+ * pastes and lines, and goes back to the list: a field drawn with the same
+ * value keeps its text, so it would go on showing what moved.
+ */
 async function longAnswer($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it answers as Save for
-  // later would: the task isn't open any more.
+  // Pressed on a drawing from before its item closed, it answers with what
+  // was typed, which `respond` puts in the prompt box.
   if (!(await isOpenNow($, id))) {
-    return answerTyped($, id, 'later')
+    return answerTyped($, id)
   }
 
-  const key = fieldKeyOf({ id, field: 'answer' })
+  const key = replyKeyOf(id)
   const box = await $.prompt.read()
   const draft = live.drafts.get(key) ?? ''
   const text = bridgeOf(id) + [draft, box.text].filter(part => part.trim() !== '').join('\n')
@@ -1792,72 +2444,402 @@ async function longAnswer($: EngineInterface, id: number) {
   }
 
   live.drafts.delete(key)
-  await update($, editing, () => null)
+  await toList($, id)
   $.ui.toast('Write your answer in the prompt box (Esc gets you there), then press Enter.', {
     timeoutMs: 8000,
   })
 }
 
-function sendNow($: EngineInterface) {
-  live.batch?.cancel()
-  live.batch = null
-  void send($)
+/** Sends item `id`'s update with the others pressed within BATCH_MS of the last. */
+function sendSoon($: EngineInterface, id: number) {
+  live.batchIds.add(id)
+  armBatch($)
 }
 
-function sendSoon($: EngineInterface) {
+/** Starts the batch's BATCH_MS over. */
+function armBatch($: EngineInterface) {
   live.batch?.cancel()
   live.batch = $.clock.after(BATCH_MS, () => {
-    live.batch = null
-    void send($)
+    const ids = [...live.batchIds]
+    cancelBatch()
+    void deliver($, ids).catch(() => undefined)
   })
 }
 
+function cancelBatch() {
+  live.batch?.cancel()
+  live.batch = null
+  live.batchIds.clear()
+}
+
 /**
- * Hands Claude every update it has not heard: a turn of its own while it is
- * idle, a row its running turn reads at the next step while it works.
- * `isTurnOver`: sent as main's turn ends, when Claude is idle whatever the
- * engine's last word on it was.
+ * Hands Claude the updates of items `ids`, with any other no batch holds (one
+ * a send gave back): a row the running main turn reads at its next request,
+ * or else the user's prompt, which the engine runs once Claude is idle.
  */
-async function send($: EngineInterface, isTurnOver = false) {
-  const due = await claim($)
+async function deliver($: EngineInterface, ids: readonly number[]) {
+  // A move Claude is never told of (a Seen v0.1 saved unsent) counts as told, and says nothing.
+  const due = (await claim($, task => ids.includes(task.id) || !isHeld(task))).filter(hasNewsIn)
 
   if (due.length === 0) {
     return
   }
 
-  const text = messageOf(due)
-  const ids = due.map(task => task.id)
-  const which = numbersOf(ids)
+  const which = due.map(task => task.id)
 
-  if (isTurnOver || !working()) {
-    await passOn($, due, inWords, 'why', () => $.prompt.submit({ text, asUser: true })).catch(() => undefined)
-    return
-  }
+  await handOver($, messageOf(due), due, which, inWords, `Sent your response to ${numbersOf(which)} to Claude`)
+}
 
-  const isTaken = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).then(
-    appended => appended.deny === undefined,
-    () => false,
-  )
+/**
+ * Hands Claude `text` about items `ids`, which carries the updates `due`
+ * claimed, as `isCarried` finds them: a row the running main turn reads at
+ * its next request, or else the user's prompt, which the engine runs once
+ * Claude is idle. A row that went in is followed by `notice`, for the user.
+ */
+async function handOver(
+  $: EngineInterface,
+  text: string,
+  due: readonly Task[],
+  ids: readonly number[],
+  isCarried: (entered: Entered, task: Task) => boolean,
+  notice?: string,
+) {
+  const isTaken =
+    live.mainTurn === true &&
+    (await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).then(
+      appended => appended.deny === undefined,
+      () => false,
+    ))
 
   if (!isTaken) {
-    await undelivered($, ids)
-
-    // The turn ended while the row was being refused: they go now.
-    if (!working()) {
-      void send($, true)
-      return
-    }
-
-    live.isSendingAtEnd = true
-    $.ui.toast(`Claude gets your response to ${which} when it finishes this turn.`)
+    await passOn($, due, isCarried, 'why', () => $.prompt.submit({ text, asUser: true })).catch(() => undefined)
     return
   }
 
-  live.isUnread = true
-
-  try {
-    await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: `Sent your response to ${which} to Claude` }] } })
-  } catch {
-    // The notice is for the user's eyes only; Claude has the answer either way.
+  if (live.mainTurn === true) {
+    for (const id of ids) {
+      if (!live.unreadAppend.has(id)) {
+        live.unreadAppend.set(id, due.find(task => task.id === id))
+      }
+    }
+  } else if (!live.wasStopped) {
+    // The turn ended while the row went in.
+    wakeUp($)
   }
+
+  if (notice !== undefined) {
+    await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: notice }] } }).catch(() => undefined)
+  }
+}
+
+/** Starts a turn for the answers that joined the main turn after its last request. */
+function wakeUp($: EngineInterface) {
+  live.unreadAppend.clear()
+  void $.prompt.submit({ text: WAKE_UP, asUser: true }).catch(() => undefined)
+}
+
+/** The user or Claude is at work in the session: other sessions do not offer its items. */
+async function noteActive($: EngineInterface) {
+  const nowMs = await $.clock.now()
+
+  await update($, header, now => ({ ...now, lastActiveMs: nowMs }))
+}
+
+/** A press or a reply in the pane: the user is here, and what other sessions did is read before it acts. */
+async function pressed($: EngineInterface) {
+  live.lastPersonMs = await $.clock.now()
+  noteInput('press', live.lastPersonMs)
+  await noteActive($)
+  await awaited($, scan($))
+}
+
+/**
+ * Reads every session's key, or takes `all` read just now, and acts on what
+ * other sessions did: this session's items another took are moved, and the
+ * items left to take are offered. No timer runs it: the start, each main turn
+ * and each press do. A store that fails leaves things as they are.
+ */
+async function scan($: EngineInterface, all?: Record<string, unknown>) {
+  const sessionId = live.sessionId
+  const stored = all === undefined ? await readStore($) : await withOwnTaken($, all)
+
+  if (stored === undefined || live.sessionId !== sessionId) {
+    return
+  }
+
+  await noteMoved($, stored, sessionId)
+  await offerLeftovers($, stored, sessionId)
+}
+
+/**
+ * Marks moved this session's items another session's key took, and shows
+ * where they went. Once a session took its hand-off code, the hand-off is
+ * over: an item that take left behind (handed off again meanwhile) is back
+ * as it was before.
+ */
+async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
+  const { handoff } = await read($, header)
+  const taken = takenFrom(all, keyOf(sessionId), handoff)
+
+  if ((taken.ids.size === 0 && !taken.isCodeTaken) || live.sessionId !== sessionId) {
+    return
+  }
+
+  const isTaken = (task: Task) => isShown(task) && taken.ids.has(task.id)
+  const isLeftBehind = (task: Task) => taken.isCodeTaken && task.state === 'handing-off' && !taken.ids.has(task.id)
+  const nowMs = await $.clock.now()
+  let moved: number[] = []
+
+  if (taken.isCodeTaken) {
+    await update($, header, now => ({ ...now, handoff: undefined }))
+  }
+
+  await change($, list => {
+    moved = list.filter(isTaken).map(task => task.id)
+
+    return moved.length === 0 && !list.some(isLeftBehind)
+      ? list
+      : list.map(task => {
+          if (isTaken(task)) {
+            return { ...task, state: 'moved', update: 'none', isWaitingForClaude: false, updatedMs: nowMs }
+          }
+
+          return isLeftBehind(task) ? { ...task, state: stateBefore(task), updatedMs: nowMs } : task
+        })
+  })
+
+  if (moved.length === 0) {
+    return
+  }
+
+  for (const id of moved) {
+    live.moved.add(id)
+    await settle($, id)
+  }
+
+  await refresh($)
+
+  if (!(await show($, false))) {
+    $.ui.toast(`${plural(moved.length, 'item')} moved to a new session. See /open-items`)
+  }
+}
+
+/**
+ * Offers the items other sessions in the folder left, and this session's
+ * own hand-off when no session took it in time; opens the pane for an offer
+ * that grew.
+ */
+async function offerLeftovers($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
+  const ownKey = keyOf(sessionId)
+  const nowMs = await $.clock.now()
+  const left = leftoversIn(all, (await read($, folder)) ?? '', ownKey, nowMs).map(({ key, saved }) => ({ key, ids: saved.tasks.map(task => task.id) }))
+  const { handoff } = await read($, header)
+  const own = isUnclaimed(handoff, takenCodes(all), nowMs) ? (await read($, tasks)).filter(task => task.state === 'handing-off').map(task => task.id) : []
+  const next: Offer = [...left, ...(own.length === 0 ? [] : [{ key: ownKey, ids: own }])]
+  const was = await read($, offer)
+
+  if (live.sessionId !== sessionId || JSON.stringify(was) === JSON.stringify(next)) {
+    return
+  }
+
+  await update($, offer, () => next)
+  const isGrown = next.some(entry => entry.ids.some(id => !was.some(one => one.key === entry.key && one.ids.includes(id))))
+
+  if ((await refresh($)) && isGrown && !(await show($, false))) {
+    const count = left.reduce((sum, entry) => sum + entry.ids.length, 0)
+
+    $.ui.toast(`${count === 0 ? 'No session took the items you handed off' : offerOf({ offered: count })}. See /open-items`)
+  }
+}
+
+/** A hand-off code no key in `all` holds. */
+function newCode(all: Record<string, unknown>): string {
+  const used = new Set([...takenCodes(all), ...Object.values(all).flatMap(raw => savedIn(raw)?.handoff?.code ?? [])])
+  let code = randomCode()
+
+  while (used.has(code)) {
+    code = randomCode()
+  }
+
+  return code
+}
+
+/** CODE_LENGTH characters of CODE_CHARS from the runtime's random source, which no other session can guess. */
+function randomCode(): string {
+  // A byte past the last whole run of the characters would favour the first ones.
+  const fair = 256 - (256 % CODE_CHARS.length)
+  let code = ''
+
+  while (code.length < CODE_LENGTH) {
+    const [byte = fair] = crypto.getRandomValues(new Uint8Array(1))
+
+    if (byte < fair) {
+      code += CODE_CHARS.charAt(byte % CODE_CHARS.length)
+    }
+  }
+
+  return code
+}
+
+/**
+ * `task` marked for the next session. One whose answer joined a turn no model
+ * request read (in `unread`) goes on with that answer not heard; what Claude
+ * heard before stays heard.
+ */
+function handedOff(task: Task, unread: ReadonlyMap<number, Task | undefined>, atMs: number): Task {
+  const handed: Task = { ...task, state: 'handing-off', updatedMs: atMs }
+
+  if (!unread.has(task.id)) {
+    return handed
+  }
+
+  return { ...handed, update: 'pending', heardMs: (unread.get(task.id) ?? task).heardMs }
+}
+
+/**
+ * Moves the items of `sources` into this session's key, each numbered by
+ * `numbersFor` and made as `make` has it once it arrives (see `arrivedAs`),
+ * with a record of what came from which key. Resolves each as it arrived, as
+ * made, and with the number it had.
+ */
+async function takeIn($: EngineInterface, sources: readonly Source[], make: (arrived: Task) => Task): Promise<{ arrived: Task; task: Task; was: number }[]> {
+  const nowMs = await $.clock.now()
+  const incoming = sources.flatMap(source => source.tasks)
+  const held = (await read($, tasks)).map(task => task.id)
+  let numbers: readonly { was: number; now: number }[] = []
+
+  await update($, nextId, count => {
+    numbers = numbersFor(held, count, incoming.map(task => task.id))
+
+    return Math.max(count, ...numbers.map(({ now }) => now + 1))
+  })
+
+  const came = incoming.map((task, i) => {
+    const arrived = arrivedAs(task, numbers[i]?.now ?? task.id, nowMs)
+
+    return { arrived, task: make(arrived), was: task.id }
+  })
+  const records: Taken[] = []
+  let at = 0
+
+  for (const { key, code, tasks: taking } of sources) {
+    records.push({ code, fromKey: key, ids: numbers.slice(at, at + taking.length) })
+    at += taking.length
+  }
+
+  // The items before the record of them: a crash between two writes leaves an item in two keys, never in none.
+  await update($, tasks, list => [...list, ...came.map(one => one.task)])
+  await update($, header, now => ({ ...now, taken: [...now.taken, ...records] }))
+  await awaited($, persist($))
+  await refresh($)
+
+  return came
+}
+
+async function dropOffered($: EngineInterface, sources: readonly Source[]) {
+  await update($, offer, entries =>
+    entries.flatMap(entry => {
+      const gone = sources.find(source => source.key === entry.key)?.tasks.map(task => task.id) ?? []
+      const ids = entry.ids.filter(id => !gone.includes(id))
+
+      return ids.length === 0 ? [] : [{ ...entry, ids }]
+    }),
+  )
+  await refresh($)
+}
+
+/**
+ * The items of the offer as the pane drew it (`drawn`) that are still left to
+ * take, from the store as it is now. Taken by their hand-off code when they
+ * are its items still handing off; else by none. Undefined, and the user
+ * told, when nothing is left or the store cannot be read.
+ */
+async function stillOffered($: EngineInterface, drawn: Offer): Promise<Source[] | undefined> {
+  const all = await readStore($)
+  const left = all === undefined ? [] : leftoversIn(all, (await read($, folder)) ?? '', keyOf(live.sessionId), await $.clock.now())
+  const sources = left.flatMap(({ key, saved }) => {
+    const ids = drawn.find(entry => entry.key === key)?.ids ?? []
+    const taking = saved.tasks.filter(task => ids.includes(task.id))
+    const code = taking.some(task => task.state === 'handing-off') ? (saved.handoff?.code ?? '') : ''
+
+    return taking.length === 0 ? [] : [{ key, code, tasks: taking }]
+  })
+
+  if (sources.length === 0) {
+    await notOffered($, all === undefined)
+    return undefined
+  }
+
+  return sources
+}
+
+/** The user's Take on items other sessions left: they move here, and Claude is told of them. */
+async function takeLeft($: EngineInterface, drawn: Offer) {
+  const sources = await stillOffered($, drawn)
+
+  if (sources === undefined) {
+    return
+  }
+
+  const nowMs = await $.clock.now()
+  const came = await takeIn($, sources, arrived => tookBy(arrived, 'user', nowMs))
+  const ids = came.map(({ task }) => task.id)
+
+  await dropOffered($, sources)
+  const due = await claim($, task => ids.includes(task.id))
+  await handOver($, leftTakenOf(came, nowMs), due, ids, inNews)
+}
+
+/** The user's Dismiss on items other sessions left: they close here, as no other session is offered them again, and Claude hears nothing. */
+async function dismissLeft($: EngineInterface, drawn: Offer) {
+  const sources = await stillOffered($, drawn)
+
+  if (sources === undefined) {
+    return
+  }
+
+  await takeIn($, sources, arrived => ({ ...arrived, state: 'withdrawn', note: 'dismissed', update: 'none', isWaitingForClaude: false, hasNewReply: false }))
+  await dropOffered($, sources)
+}
+
+/** Says a Take or Dismiss found nothing to act on (`isStoreDown`: it could not read the store), and offers what is left. */
+async function notOffered($: EngineInterface, isStoreDown: boolean) {
+  $.ui.toast(isStoreDown ? STORE_DOWN : 'Those items are no longer offered, so nothing changed.', { timeoutMs: 8000 })
+  await scan($)
+}
+
+/** The user's Take on this session's own hand-off no session took: the items are theirs and Claude's again. */
+async function takeBack($: EngineInterface) {
+  const ownKey = keyOf(live.sessionId)
+
+  // Pressed on a drawing from before Claude handed them off again, or before a session took them.
+  if (!(await read($, offer)).some(entry => entry.key === ownKey)) {
+    await notOffered($, false)
+    return
+  }
+
+  const nowMs = await $.clock.now()
+  let back: number[] = []
+
+  await update($, header, now => ({ ...now, handoff: undefined }))
+  await change($, list => {
+    back = list.filter(task => task.state === 'handing-off').map(task => task.id)
+
+    return back.length === 0 ? list : list.map(task => (task.state === 'handing-off' ? { ...task, state: stateBefore(task), updatedMs: nowMs } : task))
+  })
+  await update($, offer, entries => entries.filter(entry => entry.key !== ownKey))
+  await refresh($)
+
+  if (back.length === 0) {
+    return
+  }
+
+  const items = (await read($, tasks)).filter(task => back.includes(task.id))
+  const due = await claim($, task => back.includes(task.id))
+  await handOver($, takenBackOf(items.map(task => ({ task, was: task.id })), nowMs), due, back, inNews)
+}
+
+/** Whether a prompt that entered carries an update in its words as its news (`#5 open: <title>.`), read as `inWords` reads them. */
+function inNews(entered: Entered, task: Task): boolean {
+  return entered.text.includes(newsHeadOf(task))
 }
