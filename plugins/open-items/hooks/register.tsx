@@ -1,40 +1,47 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
-import type { Editing, Task } from '../types'
+import type { Editing, Saved, Task } from '../types'
 import {
-  MAX_INFO,
-  MAX_OPEN,
+  DONE,
+  LATER,
   MAX_TITLE,
+  SEEN,
   answerIn,
   addedOf,
   bridgeOf,
+  choseOf,
   contextOf,
   digestOf,
   isActive,
-  isAsk,
+  isOpenAsk,
+  isRepeatOf,
   isShown,
+  isUnanswered,
   listOf,
   looksSecret,
   messageOf,
+  movedBy,
   newsHeadOf,
   ownHeadOf,
   parseAsk,
+  replyOf,
   sameAsk,
   statusOf,
+  waitsOnUser,
 } from './tasks'
+import type { Move } from './tasks'
 import {
   ANSWER_LABEL,
   BUTTON_GAP,
   HELD,
   HIDE,
   MAX_SHOWN_TITLE,
-  REASON_LABEL,
-  REASON_PLACEHOLDER,
   actionsOf as actionsFor,
   ageOf,
   answerButtonsOf,
   answerPlaceholderOf,
+  detailOf,
   doneWhenOf,
   fieldKeyOf,
   firstOf,
@@ -49,11 +56,10 @@ import {
   sendNowOf,
   submitLabelOf,
   titleOf,
-  whyOf,
+  unsentOf,
 } from './pane'
 import type { PaneView } from './pane'
-import { isExpired, isSavedKey, keyOf, savedIn } from './saved'
-import type { Saved } from './saved'
+import { isExpired, isSavedKey, keyOf, savedIn, trimmed } from './saved'
 import { numbersOf, oneLine, printable } from './text'
 
 const PLUGIN = 'open-items'
@@ -142,9 +148,9 @@ const TOOLS: readonly ToolSpec[] = [
           type: 'string',
           description: 'What the user should do, as an imperative they can act on without scrolling back. Under 80 characters.',
         },
-        why: {
+        detail: {
           type: 'string',
-          description: 'One sentence: what it unblocks, or why only the user can do it.',
+          description: 'What you need from the user and why, in full: it keeps its line breaks, up to 4000 characters.',
         },
         done_when: {
           type: 'string',
@@ -168,13 +174,13 @@ const TOOLS: readonly ToolSpec[] = [
           description: 'For decision only: the option you suggest, spelled exactly as in options.',
         },
       },
-      required: ['title', 'why', 'kind'],
+      required: ['title', 'detail', 'kind'],
     },
   },
   {
     name: 'list_items',
     description: [
-      'List the items you gave the user and what they did with them: done (with their answer or choice) or rejected (with their reason). It also lists open info items.',
+      'List the items you gave the user and what they did with them: their choice, Done, Later, or their answer. It also lists open info items.',
       'Call it when you are about to need an item\'s result, when told an answer is saved for you, or before adding, to avoid a duplicate.',
     ].join(' '),
     inputSchema: {
@@ -208,6 +214,7 @@ const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, 1)
 const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, null as number | null)
 const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
 const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
+const folder = atom({ plugin: 'open-items', key: 'folder' } as const, null as string | null)
 const isWorking = atom({ plugin: 'open-items', key: 'isWorking' } as const, false)
 /** The remote clients attached, by surface, as the state's contract declares them. */
 type Roster = StateValue<'open-items', 'clients'>
@@ -313,6 +320,7 @@ export const register: Register = on => {
     }
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
+    await update($, folder, known => known ?? e.cwd)
     await restore($)
 
     return next(e)
@@ -380,33 +388,22 @@ export const register: Register = on => {
       return { result: `Item #${same.id} already asks the user for this ("${same.title}"); nothing new was added.` }
     }
 
-    const isInfo = ask.kind === 'info'
-    const group = active.filter(task => (task.kind === 'info') === isInfo)
-
-    if (!isInfo && group.length >= MAX_OPEN) {
-      return {
-        deny: `The user already has ${MAX_OPEN} open items. Withdraw one you no longer need, or wait for them to act (list_items shows them).`,
-      }
-    }
-
     const id = (await update($, nextId, n => n + 1)) - 1
     const nowMs = await $.clock.now()
+    const { detail, ...fields } = ask
     const task: Task = {
       id,
-      ...ask,
+      ...fields,
+      thread: [{ from: 'claude', text: detail, atMs: nowMs }],
       state: 'open',
+      isWaitingForClaude: false,
+      hasNewReply: false,
       update: 'none',
       createdMs: nowMs,
       updatedMs: nowMs,
     }
 
-    const dropped = isInfo ? group.slice(0, Math.max(0, group.length + 1 - MAX_INFO)) : []
-
-    await change($, list => [
-      ...list.map(one => (dropped.some(old => old.id === one.id) ? { ...one, state: 'seen' as const, updatedMs: nowMs } : one)),
-      task,
-    ])
-    await Promise.all(dropped.map(old => settle($, old.id)))
+    await change($, list => [...list, task])
     await reselect($)
     await update($, selectedId, chosen => chosen ?? id)
 
@@ -414,12 +411,12 @@ export const register: Register = on => {
       $.ui.toast(`Claude added an item for you: ${printable(task.title, MAX_TITLE)}. See /open-items`)
     }
 
-    if (!isInfo && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
+    if (task.kind !== 'info' && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
       live.alertedTurn = true
       $.ui.notify(printable(task.title, MAX_TITLE), { title: 'Open items' }).catch(() => undefined)
     }
 
-    return { result: addedOf(task, group.length + 1 - dropped.length) }
+    return { result: addedOf(task) }
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
@@ -467,15 +464,16 @@ export const register: Register = on => {
     const id = args['id']
     const reason = typeof args['reason'] === 'string' ? oneLine(args['reason']) : ''
     const task = (await read($, tasks)).find(one => one.id === id)
-    // Withdrawn only while it is open: an answer the user gave a moment before stands.
+    // Withdrawn only while it is open: an answer the user gave a moment
+    // before stands, and a reply Claude has not heard yet still goes to it.
     const found =
       task === undefined || !isActive(task)
         ? task
         : await edit($, task.id, one => ({
             ...one,
             state: 'withdrawn',
-            update: 'delivered',
-            ...(reason === '' ? {} : { reason }),
+            update: one.update === 'pending' ? 'pending' : 'delivered',
+            ...(reason === '' ? {} : { note: reason }),
           }))
 
     if (found === undefined) {
@@ -531,11 +529,10 @@ export const register: Register = on => {
 
     if (e.agentId === undefined) {
       // Answers saved while Claude worked go now that it's free, unless an
-      // item that asks something is still open: then they go with that last
-      // answer, together.
+      // ask is still unanswered: then they go with that last answer, together.
       // One a prompt entered without goes with them, but sends nothing alone.
       const all = await read($, tasks)
-      const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isAsk)
+      const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isUnanswered)
 
       if (live.isSendingAtEnd || isAllAnswered) {
         live.isSendingAtEnd = false
@@ -588,7 +585,7 @@ export const register: Register = on => {
     }
 
     const bridged = answerIn(e.text)
-    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isAsk(one))
+    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isOpenAsk(one))
     let isAnswered = false
 
     if (bridged !== null && task !== undefined) {
@@ -598,8 +595,6 @@ export const register: Register = on => {
         }
       }
 
-      const given = bridged.answer === '' ? {} : { answer: bridged.answer }
-
       if (e.turnId === undefined) {
         // Claude is idle: this prompt is the answer, sent with every other
         // update Claude has not heard, those a batch was about to send among them.
@@ -608,12 +603,12 @@ export const register: Register = on => {
       }
 
       // An item closed meanwhile (Claude withdrew it, say) keeps no answer:
-      // the prompt goes as typed.
-      const was = await resolve($, task.id, { state: 'done', ...given }, 'later')
+      // the prompt goes as typed. One with nothing after its head is Done.
+      const was = await resolve($, task.id, bridged.answer === '' ? DONE : replyOf(bridged.answer), 'later')
       isAnswered = was !== undefined && isActive(was)
 
       if (isAnswered && e.turnId !== undefined) {
-        const when = (await read($, tasks)).some(isAsk) ? 'with your other answers' : 'when this turn ends'
+        const when = (await read($, tasks)).some(isUnanswered) ? 'with your other answers' : 'when this turn ends'
 
         return {
           drop: `Saved as your answer to #${task.id}. Claude gets it ${when}, or press Send now in /open-items.`,
@@ -776,9 +771,8 @@ export const register: Register = on => {
       }
     }
 
-    const active = shown.filter(isActive)
-    const groups = groupsOf(active)
-    const saved = shown.filter(task => !isActive(task))
+    const groups = groupsOf(shown.filter(isActive))
+    const saved = unsentOf(shown)
     const selected = selectedOf(view)
     const head = headlineOf(view)
 
@@ -808,22 +802,18 @@ export const register: Register = on => {
             label={action.label}
             onPress={() => {
               if (action.option !== undefined) {
-                return respond($, task.id, { state: 'done', answer: action.option }, 'auto')
+                return respond($, task.id, choseOf(action.option), 'auto')
               }
 
               if (action.key === 'seen') {
                 return markSeen($, task.id)
               }
 
-              if (action.key === 'done') {
-                return respond($, task.id, { state: 'done' }, 'auto')
-              }
-
               if (action.key === 'answer') {
-                return startEditing($, task.id, 'answer')
+                return startEditing($, task.id)
               }
 
-              return view.canType ? startEditing($, task.id, 'reason') : respond($, task.id, { state: 'rejected' }, 'auto')
+              return respond($, task.id, action.key === 'later' ? LATER : DONE, 'auto')
             }}
           />
         ))}
@@ -843,7 +833,7 @@ export const register: Register = on => {
               {HELD}
             </Text>
             <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-              <Button key="edit" plain label="Edit" onPress={() => startEditing($, task.id, 'answer')} />
+              <Button key="edit" plain label="Edit" onPress={() => startEditing($, task.id)} />
               <Button key="send-anyway" plain label="Send anyway" onPress={() => answer($, task.id, held, 'auto', true)} />
             </Box>
           </Box>,
@@ -851,7 +841,7 @@ export const register: Register = on => {
       }
 
       const key = fieldKeyOf({ id: task.id, field: 'answer' })
-      const submitLabel = submitLabelOf('answer', view)
+      const submitLabel = submitLabelOf(view)
       const [otherWay, long, cancel] = answerButtonsOf(view)
 
       return [
@@ -873,40 +863,10 @@ export const register: Register = on => {
       ]
     }
 
-    const reasonField = (task: Task): Controls => {
-      if (Input === undefined) {
-        return [null, null]
-      }
-
-      const key = fieldKeyOf({ id: task.id, field: 'reason' })
-      const submitLabel = submitLabelOf('reason', view)
-
-      return [
-        <Input
-          key={key}
-          label={REASON_LABEL}
-          placeholder={placeholderOf(REASON_PLACEHOLDER, REASON_LABEL, submitLabel, columns)}
-          value={fieldValueOf(e.surface, key)}
-          submitLabel={submitLabel}
-          autoFocus
-          onInput={value => typed($, key, value)}
-          onSubmit={value => {
-            const reason = oneLine(value)
-            return respond($, task.id, { state: 'rejected', ...(reason === '' ? {} : { reason }) }, 'auto', reason)
-          }}
-        />,
-        <Button key="cancel" plain label="Cancel" onPress={() => stopEditing($)} />,
-      ]
-    }
-
     const selectedRows = (task: Task) => {
       // A field open on a surface that draws one: elsewhere the item keeps its buttons.
       const isEditing = view.canType && field !== null && field.id === task.id
-      const [input, buttons]: Controls = !isEditing
-        ? [null, actionsOf(task)]
-        : field.field === 'answer'
-          ? answerField(task, field.held)
-          : reasonField(task)
+      const [input, buttons]: Controls = isEditing ? answerField(task, field.held) : [null, actionsOf(task)]
       const doneWhen = doneWhenOf(task)
 
       // The terminal sizes a field by the pane's body, whatever box holds it:
@@ -918,7 +878,7 @@ export const register: Register = on => {
             {titleText(task, true)}
           </Box>
           <Box flexDirection="column" paddingLeft={2}>
-            <Text wrap="wrap">{whyOf(task)}</Text>
+            <Text wrap="wrap">{detailOf(task)}</Text>
             {doneWhen === undefined ? null : (
               <Text dimColor wrap="wrap">
                 {doneWhen}
@@ -959,7 +919,9 @@ export const register: Register = on => {
 
     const savedRows = saved.map((task, i) => (
       <Box key={`saved-${task.id}`} flexDirection="row" flexShrink={0}>
-        <Box flexShrink={0}>{task.state === 'rejected' ? <Text color="red">{'✗ '}</Text> : <Text color="green">{'✓ '}</Text>}</Box>
+        <Box flexShrink={0}>
+          <Text color="green">{'✓ '}</Text>
+        </Box>
         <Text dimColor wrap="wrap">
           {savedOf(task)}
         </Text>
@@ -973,7 +935,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Box key="head" flexDirection="row" flexShrink={0}>
           <Text wrap="wrap">
-            <Text color={active.length > 0 ? 'yellow' : 'gray'}>{head.glyph}</Text>
+            <Text color={shown.some(waitsOnUser) ? 'yellow' : 'gray'}>{head.glyph}</Text>
             <Text bold>{head.headline}</Text>
             <Text dimColor>{head.note}</Text>
           </Text>
@@ -1134,7 +1096,7 @@ async function takeUp($: EngineInterface, sessionId: string): Promise<boolean> {
   const isKept = saved !== undefined && !isExpired(saved, nowMs)
 
   if (isKept) {
-    await update($, tasks, () => saved.tasks)
+    await update($, tasks, () => trimmed(saved, nowMs).tasks)
     await update($, nextId, () => saved.nextId)
     await reselect($)
   }
@@ -1165,23 +1127,23 @@ function persist($: EngineInterface): Promise<void> {
 }
 
 /**
- * Writes the session's shown items and its count under its key. Nothing
- * before its first item (most sessions never hold one), nor before the
- * session has read its key, which the write would go over: one whose start
- * read failed reads it here, and writes only where none is saved.
+ * Writes the session's items, as `trimmed` keeps them, and its count under
+ * its key. Nothing before its first item (most sessions never hold one), nor
+ * before the session has read its key, which the write would go over: one
+ * whose start read failed reads it here, and writes only where none is saved.
  */
 async function writeSaved($: EngineInterface) {
   // Read at one moment: a switch to another session never falls between them.
   const sessionId = live.sessionId
-  const [restored, list, count] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId)])
-  const shown = list.filter(isShown)
+  const [restored, list, count, started] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId), read($, folder)])
 
-  if ((shown.length === 0 && count === 1) || (restored !== sessionId && !(await isUnsaved($, sessionId)))) {
+  if ((list.length === 0 && count === 1) || (restored !== sessionId && !(await isUnsaved($, sessionId)))) {
     return
   }
 
-  const saved: Saved = { tasks: shown, nextId: count, savedMs: await $.clock.now() }
-  await $.store.set(keyOf(sessionId), saved)
+  const nowMs = await $.clock.now()
+  const saved: Saved = { version: 2, tasks: list, nextId: count, savedMs: nowMs, lastActiveMs: nowMs, folder: started ?? '', taken: [] }
+  await $.store.set(keyOf(sessionId), trimmed(saved, nowMs))
 }
 
 /**
@@ -1489,18 +1451,20 @@ function fieldValueOf(surface: RenderSurface, key: string): string {
 }
 
 /**
- * Changes item `id` with `fn` while it is open, and resolves the item as the
- * change found it: one closed meanwhile (Claude withdrew it, or a press from
- * an older render answered it) or gone (a /clear) stays as it is.
+ * Changes item `id` with `fn` while it is open or later, and resolves the
+ * item as the change found it: one closed meanwhile (Claude withdrew it, or a
+ * press from an older render answered it) or gone (a /clear) stays as it is,
+ * as does one `fn` hands back unchanged.
  */
-async function edit($: EngineInterface, id: number, fn: (task: Task) => Task): Promise<Task | undefined> {
+async function edit($: EngineInterface, id: number, fn: (task: Task, nowMs: number) => Task): Promise<Task | undefined> {
   const nowMs = await $.clock.now()
   let found: Task | undefined
 
   await change($, list => {
     found = list.find(task => task.id === id)
+    const changed = found !== undefined && isActive(found) ? fn(found, nowMs) : found
 
-    return found !== undefined && isActive(found) ? list.map(task => (task.id === id ? { ...fn(task), updatedMs: nowMs } : task)) : list
+    return changed === found ? list : list.map(task => (task.id === id && changed !== undefined ? { ...changed, updatedMs: nowMs } : task))
   })
 
   return found
@@ -1616,13 +1580,20 @@ async function settle($: EngineInterface, id: number) {
     live.closed.set(key, draft)
   }
 
-  for (const field of ['answer', 'reason'] as const) {
-    forget(fieldKeyOf({ id, field }))
-    live.drafts.delete(fieldKeyOf({ id, field }))
-  }
+  forget(key)
+  live.drafts.delete(key)
 
   await update($, editing, field => (field?.id === id ? null : field))
   await reselect($)
+}
+
+/** After the user's move on selected item `id`, which a reply or Later leaves in the pane, selects the next that waits on them. */
+async function moveOn($: EngineInterface, id: number) {
+  const next = firstOf((await read($, tasks)).filter(task => task.id !== id && waitsOnUser(task)))
+
+  if (next !== undefined) {
+    await update($, selectedId, chosen => (chosen === id ? next.id : chosen))
+  }
 }
 
 async function reselect($: EngineInterface) {
@@ -1644,39 +1615,39 @@ async function select($: EngineInterface, id: number) {
 }
 
 /**
- * The user fulfilled or rejected a task; `how` says when Claude hears of it.
- * Resolves the task as it stood, as `edit` does: one no longer open stays as it is.
+ * The user's `move` on a task; `how` says when Claude hears of it. Resolves
+ * the task as it stood, as `edit` does: one no longer open stays as it is.
  */
-async function resolve($: EngineInterface, id: number, patch: Pick<Task, 'state'> & Partial<Task>, how: How) {
-  const was = await edit($, id, task => ({ ...task, ...patch, update: 'pending' }))
-  const isOpen = was !== undefined && isActive(was)
+async function resolve($: EngineInterface, id: number, move: Move, how: How) {
+  const was = await edit($, id, (task, nowMs) => movedBy(task, move, nowMs))
+  const isRepeat = isRepeatOf(was, move)
+  const isNew = was !== undefined && isActive(was) && !isRepeat
   await settle($, id)
 
-  // One no longer open sends nothing new, and holds back no batch under way;
-  // Send now still sends the answer it repeats, saved for later.
-  if ((how === 'now' && (isOpen || isRepeatOf(was, patch))) || (how === 'auto' && isOpen && !working())) {
+  if (isNew) {
+    await moveOn($, id)
+  }
+
+  // A move that changes nothing sends nothing new, and holds back no batch
+  // under way; Send now still sends the answer it repeats, saved for later.
+  if ((how === 'now' && (isNew || isRepeat)) || (how === 'auto' && isNew && !working())) {
     sendSoon($)
   }
 
   return was
 }
 
-/** Whether task `was` stands answered as `patch` would answer it: a second press, say. */
-function isRepeatOf(was: Task | undefined, patch: Pick<Task, 'state'> & Partial<Task>): boolean {
-  return was !== undefined && was.state === patch.state && was.answer === patch.answer && was.reason === patch.reason
-}
-
 /**
- * A press on the pane resolves item `id`, as `resolve` does. One Claude
- * withdrew, or the user answered otherwise (on another surface, say), since
- * the pane drew it says so, and what the user typed for it (`typedText`)
- * goes to the prompt box, unless it looks like a secret; one already
- * answered as this press would answer it (a second press) stays answered.
+ * A press on the pane makes the user's `move` on item `id`, as `resolve`
+ * does. One Claude withdrew, or the user answered otherwise (on another
+ * surface, say), since the pane drew it says so, and what the user typed for
+ * it (`typedText`) goes to the prompt box, unless it looks like a secret; one
+ * the user's last move already matches (a second press) stays as it is.
  */
-async function respond($: EngineInterface, id: number, patch: Pick<Task, 'state'> & Partial<Task>, how: How, typedText = '') {
-  const was = await resolve($, id, patch, how)
+async function respond($: EngineInterface, id: number, move: Move, how: How, typedText = '') {
+  const was = await resolve($, id, move, how)
 
-  if (was === undefined || (!isActive(was) && !isRepeatOf(was, patch))) {
+  if (was === undefined || (!isActive(was) && !isRepeatOf(was, move))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
 
     $.ui.toast(`Item #${id} isn't open any more, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
@@ -1711,7 +1682,7 @@ async function answerTyped($: EngineInterface, id: number, how: How) {
 
 /** The user looked at info item `id`: it leaves the pane, and Claude hears nothing. */
 async function markSeen($: EngineInterface, id: number) {
-  if (await edit($, id, task => ({ ...task, state: 'seen' }))) {
+  if (await edit($, id, (task, nowMs) => movedBy(task, SEEN, nowMs))) {
     await settle($, id)
   }
 }
@@ -1737,23 +1708,23 @@ async function answer($: EngineInterface, id: number, text: string, how: How, is
     return
   }
 
-  await respond($, id, { state: 'done', answer: value }, how, value)
+  await respond($, id, replyOf(value), how, value)
 }
 
-async function startEditing($: EngineInterface, id: number, field: Editing['field']) {
+async function startEditing($: EngineInterface, id: number) {
   // Pressed on a drawing from before its task closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
   }
 
-  const key = fieldKeyOf({ id, field })
+  const key = fieldKeyOf({ id, field: 'answer' })
 
   forget(key)
   // The field takes the ring as it opens: by the move below, or by its
   // autoFocus, whose `ui.focus` reaches none of this plugin's hooks.
   live.ring = key
   await update($, selectedId, () => id)
-  await update($, editing, (): Editing => ({ id, field }))
+  await update($, editing, (): Editing => ({ id, field: 'answer' }))
   await fit($)
 
   // A field the pane can't focus (it doesn't hold the keyboard) is still a click away.

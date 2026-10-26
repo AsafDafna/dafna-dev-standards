@@ -6,11 +6,16 @@
 export type TaskKind = 'decision' | 'question' | 'action' | 'info'
 
 /**
- * Where an item stands: waiting for the user (`open`), fulfilled (`done`),
- * turned down (`rejected`), taken back by Claude (`withdrawn`), or looked at
- * (`seen`, an `info` item only).
+ * `handing-off`: marked for a successor session, not taken yet. `moved`:
+ * taken by another session, which owns it now.
  */
-export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn' | 'seen'
+export type ItemState = 'open' | 'later' | 'resolved' | 'withdrawn' | 'handing-off' | 'moved'
+
+/** A one-line entry in a thread for a press or an in-place change, in place of words. */
+export type ThreadEvent = 'chose' | 'done' | 'seen' | 'later' | 'changed' | 'took'
+
+/** `text` is the option for `chose`, and empty for the other events. */
+export type Message = { from: 'claude' | 'user'; text: string; atMs: number; event?: ThreadEvent }
 
 /**
  * Whether Claude has heard of the user's latest move on the item: nothing
@@ -18,35 +23,54 @@ export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn' | 'seen'
  */
 export type TaskUpdate = 'none' | 'pending' | 'delivered'
 
-/** An item Claude gave the user. */
 export type Task = {
   /** Counts up per session: #1, #2, … */
   id: number
-  title: string
-  why: string
-  doneWhen?: string
   kind: TaskKind
+  title: string
+  /** `thread[0]` is the detail, from Claude. A closed item saved past its delivery keeps none. */
+  thread: readonly Message[]
+  doneWhen?: string
   options?: readonly string[]
   /** One of `options`, the one Claude suggests. */
   recommended?: string
-  state: TaskState
-  /** The user's answer, or the option they chose. */
-  answer?: string
-  /** Why the user rejected it, or why Claude withdrew it. */
-  reason?: string
+  link?: string
+  state: ItemState
+  /** The user replied; Claude has not replied or closed it since. */
+  isWaitingForClaude: boolean
+  /** Claude replied; the user has not opened the item since. */
+  hasNewReply: boolean
   update: TaskUpdate
+  /** Claude's note on closing it, "recorded in …", or "was #5 in the previous session". */
+  note?: string
   createdMs: number
   updatedMs: number
 }
 
 /**
- * The selected item's field, when the pane shows one in place of its
- * buttons: an answer, or a reason for rejecting. `held` is an answer held
- * back because it looks like a secret.
+ * What a session keeps in the store under its own key, as one JSON file of
+ * 4 MiB holds every session's key.
+ */
+export type Saved = {
+  version: 2
+  tasks: readonly Task[]
+  nextId: number
+  savedMs: number
+  lastActiveMs: number
+  endedMs?: number
+  /** The folder the session started in, read once then. */
+  folder: string
+  handoff?: { code: string; atMs: number }
+  taken: readonly { code: string; fromKey: string; ids: readonly { was: number; now: number }[] }[]
+}
+
+/**
+ * The selected item's answer field, when the pane shows it in place of its
+ * buttons. `held` is an answer held back because it looks like a secret.
  */
 export type Editing = {
   id: number
-  field: 'answer' | 'reason'
+  field: 'answer'
   held?: string
 }
 
@@ -59,6 +83,8 @@ declare module 'claude-code' {
       editing: Editing | null
       /** The session whose saved key the state was read from: a reload of the code finds it read. */
       restoredFor: string | null
+      /** The folder the process's first session started in: a reload of the code, or a later cd, keeps it. */
+      folder: string | null
       isWorking: boolean
       /** The remote clients attached, by surface: two phones are two clients on one. */
       clients: Readonly<Partial<Record<RenderSurface, readonly string[]>>>

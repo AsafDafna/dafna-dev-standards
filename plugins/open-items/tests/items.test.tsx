@@ -1,0 +1,143 @@
+import { describe, expect, test } from 'claude-code/testing'
+
+import { savedIn, trimmed } from '../hooks/saved'
+import { isOpenAsk, parseAsk, parseReply } from '../hooks/tasks'
+import type { Message, Saved, Task } from '../types'
+
+const DAY_MS = 24 * 60 * 60_000
+const NOW = 100 * DAY_MS
+
+const STEPS = '1. Open settings\n2. Click New'
+
+/** An item v0.1 saved: the same as register.test.tsx's. */
+const ROTATE = {
+  id: 7,
+  title: 'Rotate the leaked token in Vault',
+  why: 'It was in a public gist.',
+  kind: 'action',
+  state: 'open',
+  update: 'none',
+  createdMs: 0,
+  updatedMs: 0,
+} as const
+
+const DETAIL: Message = { from: 'claude', text: "I can't run Xcode here.", atMs: NOW }
+
+function item(fields: Partial<Task> = {}): Task {
+  return {
+    id: 1,
+    kind: 'question',
+    title: 'Paste the failing test names',
+    thread: [DETAIL],
+    state: 'open',
+    isWaitingForClaude: false,
+    hasNewReply: false,
+    update: 'none',
+    createdMs: NOW,
+    updatedMs: NOW,
+    ...fields,
+  }
+}
+
+function saved(tasks: readonly Task[]): Saved {
+  return { version: 2, tasks, nextId: 9, savedMs: NOW, lastActiveMs: NOW, folder: '/repo', taken: [] }
+}
+
+const errorOf = (parsed: unknown) => (parsed as { error?: string }).error
+
+describe('the item model', () => {
+  test('parseAsk keeps line breaks in detail and done_when', () => {
+    const ask = parseAsk({ kind: 'action', title: 'Create the dev tokens', detail: STEPS, done_when: STEPS })
+
+    expect(ask).toEqual({ kind: 'action', title: 'Create the dev tokens', detail: STEPS, doneWhen: STEPS })
+  })
+
+  test('parseAsk refuses a detail or done_when over 4000 characters', () => {
+    const long = 'x'.repeat(4001)
+
+    expect(errorOf(parseAsk({ kind: 'action', title: 'Create the dev tokens', detail: long }))).toContain('4000')
+    expect(errorOf(parseAsk({ kind: 'action', title: 'Create the dev tokens', detail: 'Two tokens.', done_when: long }))).toContain('4000')
+
+    const full = parseAsk({ kind: 'action', title: 'Create the dev tokens', detail: 'x'.repeat(4000) })
+    expect((full as { detail?: string }).detail).toHaveLength(4000)
+  })
+
+  test('parseAsk keeps the 80-character title error', () => {
+    const title = 'x'.repeat(81)
+
+    expect(errorOf(parseAsk({ kind: 'action', title, detail: 'Two tokens.' }))).toBe(
+      'title is 81 characters; keep it under 80 and put the rest in detail.',
+    )
+  })
+
+  test('parseReply needs text or a change', () => {
+    expect(errorOf(parseReply({ id: 3 }))).toContain('text or a change')
+    expect(parseReply({ id: 3, text: STEPS })).toEqual({ id: 3, text: STEPS })
+    expect(parseReply({ id: 3, title: 'Paste the failing test names' })).toEqual({ id: 3, change: { title: 'Paste the failing test names' } })
+    expect(errorOf(parseReply({ id: 3, text: 'x'.repeat(4001) }))).toContain('4000')
+  })
+
+  test('isOpenAsk counts later items, not info', () => {
+    expect(isOpenAsk(item())).toBe(true)
+    expect(isOpenAsk(item({ state: 'later' }))).toBe(true)
+    expect(isOpenAsk(item({ kind: 'info' }))).toBe(false)
+    expect(isOpenAsk(item({ state: 'resolved' }))).toBe(false)
+  })
+
+  test('savedIn converts a v0.1 key', () => {
+    const done = { ...ROTATE, id: 6, state: 'done', update: 'pending', answer: 'Rotated it.' }
+    const converted = savedIn({ tasks: [ROTATE, done], nextId: 8, savedMs: 0 })
+
+    expect(converted?.tasks.map(task => task.id)).toEqual([7])
+    expect(converted?.tasks[0]?.thread[0]?.text).toBe('It was in a public gist.')
+    expect(converted?.folder).toBe('')
+    expect(converted).toEqual({
+      version: 2,
+      tasks: [
+        {
+          id: 7,
+          kind: 'action',
+          title: 'Rotate the leaked token in Vault',
+          thread: [{ from: 'claude', text: 'It was in a public gist.', atMs: 0 }],
+          state: 'open',
+          isWaitingForClaude: false,
+          hasNewReply: false,
+          update: 'none',
+          createdMs: 0,
+          updatedMs: 0,
+        },
+      ],
+      nextId: 8,
+      savedMs: 0,
+      lastActiveMs: 0,
+      folder: '',
+      taken: [],
+    })
+  })
+
+  test('trimmed keeps a resolved item\'s thread while its update is pending, strips it once delivered, drops it after 7 days, and keeps an open one of any age', () => {
+    const old = { createdMs: NOW - 30 * DAY_MS, updatedMs: NOW - 30 * DAY_MS }
+    const open = item({ id: 1, ...old })
+    const later = item({ id: 2, state: 'later', ...old })
+    const chosen: Message = { from: 'user', text: 'Cursor', event: 'chose', atMs: NOW }
+    const resolved = item({ id: 3, kind: 'decision', options: ['Cursor', 'Offset'], state: 'resolved', update: 'pending', thread: [DETAIL, chosen] })
+
+    expect(trimmed(saved([open, later, resolved]), NOW).tasks).toEqual([open, later, resolved])
+
+    const delivered = { ...resolved, update: 'delivered' as const }
+    const withdrawn = item({ id: 4, state: 'withdrawn', update: 'delivered', note: 'answered in chat' })
+
+    expect(trimmed(saved([open, delivered, withdrawn]), NOW).tasks).toEqual([open, { ...delivered, thread: [] }, { ...withdrawn, thread: [] }])
+    expect(trimmed(saved([open, later, delivered, withdrawn]), NOW + 7 * DAY_MS + 1).tasks).toEqual([open, later])
+  })
+
+  test('a 40-message thread of 4000-character messages saves under 1 MiB', () => {
+    // Three bytes a character in UTF-8: the most a 4000-character message can take.
+    const thread = Array.from({ length: 40 }, (_, i): Message => ({ from: i % 2 === 0 ? 'claude' : 'user', text: '一'.repeat(4000), atMs: NOW + i }))
+    const value = trimmed(saved([item({ thread })]), NOW)
+    const json = JSON.stringify(value)
+
+    expect(new TextEncoder().encode(json).length).toBeLessThan(1024 * 1024)
+    expect(savedIn(JSON.parse(json))?.tasks[0]?.thread).toHaveLength(40)
+  })
+})

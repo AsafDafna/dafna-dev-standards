@@ -1,5 +1,5 @@
 import type { Editing, Task, TaskKind } from '../types'
-import { MAX_OPTION, MAX_WHY, isActive, isAsk, waitingOf } from './tasks'
+import { MAX_DETAIL, MAX_OPTION, isActive, isUnanswered, waitingOf } from './tasks'
 import { ago, cellsOf, clip, printable, rowsOf } from './text'
 
 /**
@@ -79,17 +79,22 @@ export function titleOf(task: Task): string {
   return `#${task.id} ${nameOf(task)}`
 }
 
-/** `  3m`, drawn dim after an open item's title. */
+/** `  3m`, drawn dim after an open item's title, and `· waiting for Claude` once the user replied. */
 export function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
-  return `  ${ago(view.nowMs - task.createdMs)}`
+  return `  ${ago(view.nowMs - task.createdMs)}${task.isWaitingForClaude ? ' · waiting for Claude' : ''}`
 }
 
-export function whyOf(task: Task): string {
-  return printable(task.why, MAX_WHY)
+export function detailOf(task: Task): string {
+  return printable(task.thread[0]?.text ?? '', MAX_DETAIL)
 }
 
 export function doneWhenOf(task: Task): string | undefined {
-  return task.doneWhen === undefined ? undefined : `Done when: ${printable(task.doneWhen, MAX_WHY)}`
+  return task.doneWhen === undefined ? undefined : `Done when: ${printable(task.doneWhen, MAX_DETAIL)}`
+}
+
+/** The responses Claude has not heard yet, each a row with Send now. */
+export function unsentOf(shown: readonly Task[]): Task[] {
+  return shown.filter(task => task.update === 'pending')
 }
 
 /** A saved response's row: its task, and that it waits. */
@@ -113,20 +118,14 @@ export function actionsOf(task: Task, canType: boolean): { key: string; hotkey: 
         }))
       : [{ key: 'done', hotkey: 'd', label: 'Done' }]
 
-  const typed = canType
-    ? [
-        { key: 'answer', hotkey: 'r', label: task.kind === 'decision' ? 'Other…' : 'Answer…' },
-        { key: 'reject', hotkey: 'x', label: 'Reject…' },
-      ]
-    : [{ key: 'reject', hotkey: 'x', label: 'Reject' }]
+  const typed = canType ? [{ key: 'answer', hotkey: 'r', label: task.kind === 'decision' ? 'Other…' : 'Answer…' }] : []
+  const later = task.state === 'open' ? [{ key: 'later', hotkey: 'l', label: 'Later' }] : []
 
-  return [...choices, ...typed]
+  return [...choices, ...typed, ...later]
 }
 
 // The terminal draws a field's label as `Answer: `.
 export const ANSWER_LABEL = 'Answer'
-export const REASON_LABEL = 'Reason'
-export const REASON_PLACEHOLDER = 'Optional; Enter rejects it'
 export const HELD =
   'This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and press Done instead.'
 
@@ -135,7 +134,7 @@ export function answerPlaceholderOf(view: PaneView): string {
     return 'Enter sends it to Claude'
   }
 
-  return view.shown.filter(isAsk).length > 1
+  return view.shown.some(task => isUnanswered(task) && task.id !== view.editing?.id)
     ? 'Enter saves it; Claude gets it with your other answers'
     : 'Enter saves it; Claude gets it when this turn ends'
 }
@@ -150,9 +149,9 @@ export function fieldKeyOf(field: Pick<Editing, 'id' | 'field'>): string {
   return `${field.field}-${field.id}`
 }
 
-/** What Enter does in a field, drawn beside it while it has the keys. */
-export function submitLabelOf(field: Editing['field'], view: Pick<PaneView, 'isWorking'>): string {
-  return field === 'reason' ? 'reject' : view.isWorking ? 'save' : 'send'
+/** What Enter does in the answer field, drawn beside it while it has the keys. */
+export function submitLabelOf(view: Pick<PaneView, 'isWorking'>): string {
+  return view.isWorking ? 'save' : 'send'
 }
 
 /**
@@ -248,7 +247,7 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
   const inner = Math.max(1, width - GLYPH_CELLS)
   const groups = groupsOf(view.shown.filter(isActive))
-  const saved = view.shown.filter(task => !isActive(task))
+  const saved = unsentOf(view.shown)
   const selected = selectedOf(view)
   const head = headlineOf(view)
   let rows = rowsOf(`${head.glyph}${head.headline}${head.note}`, width) + 1
@@ -263,7 +262,7 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
     }
 
     rows += rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner)
-    rows += rowsOf(whyOf(task), inner)
+    rows += rowsOf(detailOf(task), inner)
     const doneWhen = doneWhenOf(task)
     rows += doneWhen === undefined ? 0 : rowsOf(doneWhen, inner)
     rows += controlRowsOf(task, view, width, inner)
@@ -293,7 +292,5 @@ function controlRowsOf(task: Task, view: PaneView, width: number, inner: number)
     return rowsOf(HELD, inner) + buttonRowsOf(['Edit', 'Send anyway'], inner)
   }
 
-  const [label, buttons] = field.field === 'answer' ? [ANSWER_LABEL, answerButtonsOf(view)] : [REASON_LABEL, ['Cancel']]
-
-  return fieldRowsOf(label, submitLabelOf(field.field, view), view.draft, view.isTyping, width) + buttonRowsOf(buttons, inner)
+  return fieldRowsOf(ANSWER_LABEL, submitLabelOf(view), view.draft, view.isTyping, width) + buttonRowsOf(answerButtonsOf(view), inner)
 }

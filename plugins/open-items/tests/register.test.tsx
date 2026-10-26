@@ -4,7 +4,10 @@ import type { Engine, Mounted } from 'claude-code/testing'
 
 import { fieldRowsOf, rowsFor } from '../hooks/pane'
 import { register } from '../hooks/register'
+import { savedIn } from '../hooks/saved'
+import { DONE as DONE_PRESS, movedBy } from '../hooks/tasks'
 import { cellsOf, rowsOf, wrapRows } from '../hooks/text'
+import type { Task } from '../types'
 
 const ADD = 'mcp__open-items__add_item'
 const LIST = 'mcp__open-items__list_items'
@@ -37,7 +40,7 @@ const DONE = {
 const KEY_TASK = {
   tool: ADD,
   title: 'Add STRIPE_SECRET_KEY to .env',
-  why: "The webhook test can't run without it.",
+  detail: "The webhook test can't run without it.",
   done_when: "It's in .env. Don't paste it here.",
   kind: 'action',
 } as const
@@ -45,14 +48,14 @@ const KEY_TASK = {
 const XCODE_TASK = {
   tool: ADD,
   title: 'Run xcodebuild test on your Mac, paste the failures',
-  why: "I can't run Xcode here.",
+  detail: "I can't run Xcode here.",
   kind: 'question',
 } as const
 
 const PAGING_TASK = {
   tool: ADD,
   title: 'Pick a pagination strategy for /feed',
-  why: 'I lean towards cursor: the feed is append-only.',
+  detail: 'I lean towards cursor: the feed is append-only.',
   kind: 'decision',
   options: ['Cursor', 'Offset, capped at 10k'],
 } as const
@@ -138,6 +141,8 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     panesAsked: 0,
     /** How many times the plugin read its task list. */
     tasksRead: 0,
+    /** The task list as the plugin last wrote it to its state. */
+    items: [] as readonly Task[],
   }
 
   const clock = mock.clock(on, { now: NOW })
@@ -199,6 +204,16 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     }
 
     return read
+  })
+  on('state.set', { plugin: 'open-items' }, async ($, e, next) => {
+    const set = await next(e)
+
+    // A write another beat is made again, so the last one made is the one that stands.
+    if (e.key === 'tasks') {
+      world.items = e.value as readonly Task[]
+    }
+
+    return set
   })
 
   on('session.id', () => ({ value: world.sessionId }))
@@ -357,17 +372,24 @@ function holdingPresses(on: On) {
   return held
 }
 
+/** The kit has no `test.skip`: a test given to this does not run. */
+const skip: typeof test = () => {}
+
 type Drawn = Pick<Mounted<'terminal', 'Pane'>, 'find'>
 
 async function textOf(ui: Drawn, key: string): Promise<string> {
   return (await ui.find({ key }))?.text ?? ''
 }
 
+function itemOf(world: ReturnType<typeof seat>['world'], id: number): Task | undefined {
+  return world.items.find(task => task.id === id)
+}
+
 const ROWS_THREE_KINDS = 15
 const ROWS_ONE_KIND = 8
 
 describe('adding', () => {
-  test('an item opens the Open items pane, with its why and its buttons, and the status line counts it', async ($, on) => {
+  test('an item opens the Open items pane, with its detail and its buttons, and the status line counts it', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -397,7 +419,8 @@ describe('adding', () => {
     expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
-  test('the same ask twice is one item, and a sixth open item is refused', async ($, on) => {
+  // Task 3: there is no cap now; Task 3 rewrites this test.
+  skip('the same ask twice is one item, and a sixth open item is refused', async ($, on) => {
     seat(on)
     await start($)
 
@@ -476,9 +499,19 @@ function inline(bodyColumns: number) {
   return { ...PANE, props: { ...PANE.props, placement: 'inline', bodyColumns } } as const
 }
 
-/** The store as session 1 saved `tasks` before: started again, it shows them. */
+/** The store as session 1 saved `tasks` before, in v0.1's format: started again, it shows the open ones. */
 function earlier(tasks: readonly unknown[]) {
   return { 'session:session-1': { tasks, nextId: 3, savedMs: NOW } }
+}
+
+/** v0.1's open tasks as v0.2 holds them. */
+function asItems(tasks: readonly unknown[]): Task[] {
+  return [...(savedIn({ tasks, nextId: 1, savedMs: NOW })?.tasks ?? [])]
+}
+
+/** The store as session 1 saved `items` before, in v0.2's format. */
+function earlierItems(items: readonly Task[]) {
+  return { 'session:session-1': { version: 2, tasks: items, nextId: 3, savedMs: NOW, lastActiveMs: NOW, folder: '/repo', taken: [] } }
 }
 
 describe('long titles', () => {
@@ -534,7 +567,7 @@ describe('long titles', () => {
 
   test('the pane asks for a row for each row a wrapped title takes, at the width it is drawn in', () => {
     const view = {
-      shown: [INSTRUMENTS, XCODE_LONG],
+      shown: asItems([INSTRUMENTS, XCODE_LONG]),
       selectedId: null,
       editing: null,
       draft: '',
@@ -549,8 +582,8 @@ describe('long titles', () => {
     // rows Claude Code 2.1.296 drew at 36 and 64 columns, as the live check reads them.
     expect(rowsFor(view, 32, 99)).toBe(17)
     expect(rowsFor(view, 60, 99)).toBe(13)
-    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 32, 99)).toBe(14)
-    expect(rowsFor({ ...view, shown: [INSTRUMENTS] }, 60, 99)).toBe(11)
+    expect(rowsFor({ ...view, shown: asItems([INSTRUMENTS]) }, 32, 99)).toBe(14)
+    expect(rowsFor({ ...view, shown: asItems([INSTRUMENTS]) }, 60, 99)).toBe(11)
     expect(rowsFor(view, 32, 12)).toBe(12)
   })
 
@@ -1039,7 +1072,7 @@ describe('long titles', () => {
 
   test('a title past 80 characters, an older version left, is drawn whole', async ($, on) => {
     const title = `Rotate the deploy key ${'and check every runner that holds it '.repeat(3).trim()}`
-    seat(on, earlier([{ ...INSTRUMENTS, title }, { ...XCODE_LONG, title, state: 'done', update: 'pending' }]))
+    seat(on, earlierItems(asItems([{ ...INSTRUMENTS, title }, { ...XCODE_LONG, title }]).map(item => (item.id === 2 ? movedBy(item, DONE_PRESS, NOW) : item))))
     await start($)
 
     const ui = await $.ui.mount(inline(32))
@@ -1157,24 +1190,6 @@ describe('the pane and /open-items', () => {
     expect(world.opens.at(-1)?.focus).toBe(true)
   })
 
-  test('the phone, which draws no field, offers Done and a Reject that rejects at once', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    const phone = await $.ui.mount({ ...PANE, surface: 'mobile' })
-
-    expect((await phone.findAll({ type: 'Button' })).map(button => button.props.label)).toEqual(['Done', 'Reject', 'Hide'])
-
-    await phone.press({ key: 'reject' })
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.submitted).toEqual([
-      "My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures: I won't do this.",
-    ])
-  })
-
   test('a field open on a surface that draws one leaves the task its buttons on the phone', async ($, on) => {
     seat(on)
     await start($)
@@ -1185,7 +1200,7 @@ describe('the pane and /open-items', () => {
     const phone = await $.ui.mount({ ...PANE, surface: 'mobile' })
 
     expect(await ui.find({ type: 'Input' })).toBeDefined()
-    expect((await phone.findAll({ type: 'Button' })).map(button => button.props.label)).toEqual(['Done', 'Reject', 'Hide'])
+    expect((await phone.findAll({ type: 'Button' })).map(button => button.props.label)).toEqual(['Done', 'Later', 'Hide'])
   })
 
   test('Hide closes the pane and the status line keeps the count', async ($, on) => {
@@ -1556,7 +1571,7 @@ describe('responding', () => {
 
     const next = await $.prompt.submit(typed('now the cart'))
 
-    expect(next.context?.[0]).toContain('#1 done: Run xcodebuild test on your Mac, paste the failures.')
+    expect(next.context?.[0]).toContain('#1 open: Run xcodebuild test on your Mac, paste the failures.')
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
   })
 
@@ -1631,7 +1646,7 @@ describe('responding', () => {
     await clock.settle()
 
     world.isStripping = true
-    const stripped = await $.prompt.submit(typed('Earlier you wrote "#1 done: Run xcodebuild test on your Mac, paste the failures." Why?'))
+    const stripped = await $.prompt.submit(typed('Earlier you wrote "#1 open: Run xcodebuild test on your Mac, paste the failures." Why?'))
 
     expect(stripped.context).toBeUndefined()
     expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
@@ -1687,7 +1702,7 @@ describe('responding', () => {
     world.rewriting = undefined
     const again = await $.prompt.submit(typed('and the docs'))
 
-    expect(again.context?.[0]).toContain('#2 done: Pick a pagination strategy for /feed. The user chose: Cursor')
+    expect(again.context?.[0]).toContain('#2 resolved: Pick a pagination strategy for /feed. The user chose: Cursor')
     expect(again.context?.[0]).not.toContain('LoginTests.testExpiredToken failed')
   })
 
@@ -1887,25 +1902,6 @@ describe('responding', () => {
     expect(world.appended.filter(row => row.type === 'user')).toHaveLength(1)
   })
 
-  test('a choice and a rejection reach Claude together', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(PAGING_TASK)
-    await $.tool.call(KEY_TASK)
-    const ui = await $.ui.mount(PANE)
-
-    await ui.press({ key: 'option-1' })
-    await ui.press({ key: 'reject' })
-    await ui.input({ key: 'reason-2', text: 'I will do it after the deploy' })
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(1)
-    expect(world.submitted[0]).toContain('#1 Pick a pagination strategy for /feed: I chose "Cursor".')
-    expect(world.submitted[0]).toContain("#2 Add STRIPE_SECRET_KEY to .env: I won't do this. I will do it after the deploy")
-  })
-
   test("a response whose prompt doesn't enter stays saved, and Send now tries again", async ($, on) => {
     const { world, clock } = seat(on)
     world.refusing = 'Another plugin held the prompt.'
@@ -1959,7 +1955,7 @@ describe('responding', () => {
 
     const listed = await $.tool.call({ tool: LIST })
     expect(String((listed as { result?: unknown }).result)).toContain('Two failures')
-    expect(world.isPaneOpen).toBe(false)
+    expect(world.status).toBeUndefined()
   })
 
   test('list_items for one item marks only that one heard', async ($, on) => {
@@ -2026,7 +2022,7 @@ describe('responding', () => {
     await ui.press({ key: 'done' })
     await clock.advance(500)
 
-    expect(((await withdrawn) as { deny?: string }).deny).toBe('Item #1 is already done; there is nothing to withdraw.')
+    expect(((await withdrawn) as { deny?: string }).deny).toBe('Item #1 is already resolved; there is nothing to withdraw.')
     expect(world.toasts).toEqual([])
 
     await $.turn.complete({ ...DONE, turnId: 't1' })
@@ -2206,8 +2202,6 @@ describe('responding', () => {
     await ui.press({ key: 'answer' })
     await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed', kind: 'change' })
     await ui.press({ key: 'cancel' })
-    await ui.press({ key: 'reject' })
-    await ui.input({ key: 'reason-1', text: 'Not on this Mac', kind: 'change' })
     await clock.settle()
     world.composer = 'Also bump the version'
     await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found it in the CI logs' })
@@ -2536,9 +2530,9 @@ describe('saving', () => {
   }
 
   test('restores open items and unsent answers when the same session starts again', async ($, on) => {
-    const choose = { ...MINE, id: 1, title: PAGING_TASK.title, why: PAGING_TASK.why, kind: 'decision', options: PAGING_TASK.options }
-    const answered = { ...MINE, id: 2, state: 'done', update: 'pending' }
-    const { world } = seat(on, { 'session:session-1': { tasks: [choose, answered], nextId: 3, savedMs: NOW } })
+    const choose = { ...MINE, id: 1, title: PAGING_TASK.title, why: PAGING_TASK.detail, kind: 'decision', options: PAGING_TASK.options }
+    const items = asItems([choose, { ...MINE, id: 2 }])
+    const { world } = seat(on, earlierItems(items.map(item => (item.id === 2 ? movedBy(item, DONE_PRESS, NOW) : item))))
     await start($)
 
     expect(world.status).toContain('1 not sent yet')
@@ -2552,30 +2546,46 @@ describe('saving', () => {
     await $.tool.call(KEY_TASK)
 
     expect(world.store['session:session-1']).toEqual({
-      tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title, state: 'open' })],
+      version: 2,
+      tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title, state: 'open', thread: [{ from: 'claude', text: KEY_TASK.detail, atMs: NOW }] })],
       nextId: 2,
       savedMs: NOW,
+      lastActiveMs: NOW,
+      folder: '/repo',
+      taken: [],
     })
 
     await $.tool.call({ tool: WITHDRAW, id: 1 })
 
-    expect(world.store['session:session-1']).toEqual({ tasks: [], nextId: 2, savedMs: NOW })
+    // A closed item keeps its number, title and state, without its thread.
+    expect(world.store['session:session-1']).toEqual({
+      version: 2,
+      tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title, state: 'withdrawn', thread: [] })],
+      nextId: 2,
+      savedMs: NOW,
+      lastActiveMs: NOW,
+      folder: '/repo',
+      taken: [],
+    })
   })
 
-  test('saves only shown items', async ($, on) => {
+  test('saves a resolved item whole until Claude hears of it, then without its thread', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
+    const savedOf = (id: number) => (world.store['session:session-1'] as { tasks: Task[] }).tasks.find(task => task.id === id)
 
     await $.tool.call(PAGING_TASK)
     await $.tool.call(KEY_TASK)
     await (await $.ui.mount(PANE)).press({ key: 'option-1' })
     expect(savedIdsOf(world)).toEqual([1, 2])
+    expect(savedOf(1)?.thread).toHaveLength(2)
 
     await clock.advance(1000)
     await clock.settle()
 
     expect(world.submitted).toHaveLength(1)
-    expect(savedIdsOf(world)).toEqual([2])
+    expect(savedIdsOf(world)).toEqual([1, 2])
+    expect(savedOf(1)).toEqual(expect.objectContaining({ state: 'resolved', update: 'delivered', thread: [] }))
   })
 
   test('deletes saved sessions older than 30 days at start', async ($, on) => {
@@ -2743,14 +2753,22 @@ describe('saving', () => {
 
     expect(String((added as { result?: unknown }).result)).toContain('Added item #1')
     expect(world.store['session:session-1']).toEqual({
+      version: 2,
       tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title }), expect.objectContaining({ id: 2, title: XCODE_TASK.title })],
       nextId: 3,
       savedMs: NOW,
+      lastActiveMs: NOW,
+      folder: '/repo',
+      taken: [],
     })
     expect(world.store['session:session-2']).toEqual({
+      version: 2,
       tasks: [expect.objectContaining({ id: 1, title: PAGING_TASK.title })],
       nextId: 2,
       savedMs: NOW + 1,
+      lastActiveMs: NOW + 1,
+      folder: '/repo',
+      taken: [],
     })
   })
 
@@ -2762,7 +2780,15 @@ describe('saving', () => {
       await $.tool.call(KEY_TASK)
       await $.session.end({ reason, sessionId: 'session-1', resume: { id: 'session-1' } })
       await clock.advance(5000)
-      const saved = { tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title })], nextId: 2, savedMs: NOW }
+      const saved = {
+        version: 2,
+        tasks: [expect.objectContaining({ id: 1, title: KEY_TASK.title })],
+        nextId: 2,
+        savedMs: NOW,
+        lastActiveMs: NOW,
+        folder: '/repo',
+        taken: [],
+      }
 
       expect(world.status).toBeUndefined()
 
@@ -2926,7 +2952,13 @@ describe('saving', () => {
     await clock.advance(60_000)
 
     expect((world.store['session:session-1'] as { tasks: unknown[] } | undefined)?.tasks).toEqual([
-      expect.objectContaining({ id: 1, state: 'done', update: 'pending', answer: 'LoginTests.testExpiredToken failed' }),
+      expect.objectContaining({
+        id: 1,
+        state: 'open',
+        update: 'pending',
+        isWaitingForClaude: true,
+        thread: [expect.objectContaining({ from: 'claude' }), expect.objectContaining({ from: 'user', text: 'LoginTests.testExpiredToken failed' })],
+      }),
       expect.objectContaining({ id: 2, state: 'open' }),
     ])
   })
@@ -2941,7 +2973,7 @@ describe('the README example', () => {
     await $.tool.call({
       tool: ADD,
       title: 'Add STRIPE_SECRET_KEY to .env',
-      why: "The integration tests run against Stripe's test mode and need it.",
+      detail: "The integration tests run against Stripe's test mode and need it.",
       done_when: "It's in .env. Don't paste it here.",
       kind: 'action',
     })
@@ -2952,7 +2984,7 @@ describe('the README example', () => {
     await $.tool.call({
       tool: ADD,
       title: 'Decide whether to make the repo public',
-      why: 'npm will link to it, and its whole git history becomes public. I found no secrets in it.',
+      detail: 'npm will link to it, and its whole git history becomes public. I found no secrets in it.',
       kind: 'decision',
       options: ['Make it public', 'Keep it private'],
     })
@@ -2961,7 +2993,7 @@ describe('the README example', () => {
     await $.tool.call({
       tool: ADD,
       title: "Choose the package's name on npm",
-      why: 'stripe-webhooks is taken. The name goes in package.json and the README.',
+      detail: 'stripe-webhooks is taken. The name goes in package.json and the README.',
       kind: 'question',
     })
     expect(world.status).toBe('☐ 1 question · 2 not sent yet · /open-items')
@@ -3045,13 +3077,13 @@ describe('the four kinds', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
-    why: 'It unblocks the mobile release.',
+    detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
     recommended: 'Yes',
   } as const
 
-  const INFO = { tool: ADD, title: 'The migration ran clean', why: 'Nothing for you to do; the schema is current.', kind: 'info' } as const
+  const INFO = { tool: ADD, title: 'The migration ran clean', detail: 'Nothing for you to do; the schema is current.', kind: 'info' } as const
 
   const resultOf = (call: unknown) => call as { result?: string; deny?: string }
 
@@ -3095,6 +3127,98 @@ describe('the four kinds', () => {
     expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Ship the feed rewrite this week: I chose "Yes".'])
   })
 
+  test('an option resolves the decision, and its thread records the choice', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    await (await $.ui.mount(PANE)).press({ key: 'option-2' })
+    const task = itemOf(world, 1)
+
+    expect(task?.state).toBe('resolved')
+    expect(task?.thread.at(-1)).toEqual({ from: 'user', text: 'Not yet', event: 'chose', atMs: NOW })
+    expect(task?.update).toBe('pending')
+  })
+
+  test('Done resolves the action, and its thread records it', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    await (await $.ui.mount(PANE)).press({ key: 'done' })
+    const task = itemOf(world, 1)
+
+    expect(task?.state).toBe('resolved')
+    expect(task?.thread.at(-1)).toEqual({ from: 'user', text: '', event: 'done', atMs: NOW })
+    expect(task?.update).toBe('pending')
+  })
+
+  test('Seen resolves the info item, its thread records it, and Claude hears nothing', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(INFO)
+    await (await $.ui.mount(PANE)).press({ key: 'seen' })
+    const task = itemOf(world, 1)
+
+    expect(task?.state).toBe('resolved')
+    expect(task?.thread.at(-1)).toEqual({ from: 'user', text: '', event: 'seen', atMs: NOW })
+    expect(task?.update).toBe('none')
+  })
+
+  test('Later moves the item to later, its thread records it, and Claude goes on without it', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'later' })
+    await clock.advance(1000)
+    await clock.settle()
+    const task = itemOf(world, 1)
+
+    expect(task?.state).toBe('later')
+    expect(task?.thread.at(-1)).toEqual({ from: 'user', text: '', event: 'later', atMs: NOW })
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Ship the feed rewrite this week: Later. Go on without it.'])
+    // It stays, and keeps its options: the user can still answer it.
+    expect(world.status).toBe('☐ 1 decision · /open-items')
+    expect(await ui.find({ type: 'Button', key: 'option-1' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'later' })).toBeUndefined()
+  })
+
+  test('a reply keeps the item open, its thread holds the reply, and the item waits for Claude', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await clock.settle()
+    const task = itemOf(world, 1)
+
+    expect(task?.state).toBe('open')
+    expect(task?.isWaitingForClaude).toBe(true)
+    expect(task?.thread.at(-1)).toEqual({ from: 'user', text: 'Two failures', atMs: NOW })
+    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures'])
+    expect(await textOf(ui, 'task-1')).toContain('waiting for Claude')
+    expect(world.status).toBeUndefined()
+  })
+
+  test('an answer written in the prompt box is a reply too', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.prompt.submit(typed('↳ Answer to #1: LoginTests.testExpiredToken\nCartTests.testCouponRounding'))
+    const task = itemOf(world, 1)
+
+    expect(task?.state).toBe('open')
+    expect(task?.isWaitingForClaude).toBe(true)
+    expect(task?.thread.at(-1)).toEqual({ from: 'user', text: 'LoginTests.testExpiredToken\nCartTests.testCouponRounding', atMs: NOW })
+  })
+
   test('an info item has one Seen button and sends nothing to Claude', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
@@ -3104,7 +3228,7 @@ describe('the four kinds', () => {
 
     const seen = await ui.find({ type: 'Button', key: 'seen' })
     expect([seen?.props.hotkey, seen?.props.label]).toEqual(['d', 'Seen'])
-    expect(await ui.find({ type: 'Button', key: 'reject' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'later' })).toBeUndefined()
     await ui.press({ key: 'seen' })
     await clock.advance(1000)
     await clock.settle()
@@ -3115,7 +3239,8 @@ describe('the four kinds', () => {
     expect(world.isPaneOpen).toBe(false)
   })
 
-  test('info items do not count toward the cap of 5 asks', async ($, on) => {
+  // Task 3: there is no cap now; Task 3 rewrites this test.
+  skip('info items do not count toward the cap of 5 asks', async ($, on) => {
     seat(on)
     await start($)
 
@@ -3127,7 +3252,8 @@ describe('the four kinds', () => {
     expect(resultOf(await $.tool.call({ ...XCODE_TASK, title: 'Question number 6' })).deny).toContain('already has 5 open items')
   })
 
-  test('a sixth info item drops the oldest', async ($, on) => {
+  // Task 3: info items stay until Seen now; Task 3 rewrites this test.
+  skip('a sixth info item drops the oldest', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -3211,7 +3337,7 @@ describe('the four kinds', () => {
       ...ROTATE,
       id: 1,
       title: DECISION.title,
-      why: DECISION.why,
+      why: DECISION.detail,
       kind: 'decision',
       options: DECISION.options,
       recommended: 'Yes',
@@ -3237,11 +3363,11 @@ describe('the pane groups items by kind', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
-    why: 'It unblocks the mobile release.',
+    detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
   } as const
-  const INFO = { tool: ADD, title: 'The migration ran clean', why: 'Nothing for you to do.', kind: 'info' } as const
+  const INFO = { tool: ADD, title: 'The migration ran clean', detail: 'Nothing for you to do.', kind: 'info' } as const
 
   test('the pane draws sections in order, empty ones left out', async ($, on) => {
     seat(on)
@@ -3279,7 +3405,7 @@ describe('the pane groups items by kind', () => {
   test('rows count the section headers', () => {
     const task = (id: number, kind: 'decision' | 'question' | 'info') => ({ ...ROTATE, id, kind, title: `Item number ${id}`, why: 'A reason.', ...(kind === 'decision' ? { options: ['Ship it', 'Hold'] } : {}) })
     const view = {
-      shown: [task(1, 'info'), task(2, 'question'), task(3, 'decision')],
+      shown: asItems([task(1, 'info'), task(2, 'question'), task(3, 'decision')]),
       selectedId: null,
       editing: null,
       draft: '',
@@ -3291,7 +3417,7 @@ describe('the pane groups items by kind', () => {
     }
 
     expect(rowsFor(view, 40, 99)).toBe(ROWS_THREE_KINDS)
-    expect(rowsFor({ ...view, shown: [task(2, 'question')] }, 40, 99)).toBe(ROWS_ONE_KIND)
+    expect(rowsFor({ ...view, shown: asItems([task(2, 'question')]) }, 40, 99)).toBe(ROWS_ONE_KIND)
   })
 
   test('a long-answer prompt naming an info item goes through as typed', async ($, on) => {
@@ -3308,7 +3434,7 @@ describe('the pane groups items by kind', () => {
 })
 
 describe('the alert', () => {
-  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ADD, title, why: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
+  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ADD, title, detail: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
   const DECISION = ask('decision', 'Ship the feed rewrite this week')
   const QUESTION = ask('question', 'Which branch is the release cut from')
 
@@ -3342,7 +3468,7 @@ describe('the alert', () => {
     const { world, clock } = seat(on)
     await start($)
 
-    await $.tool.call({ tool: ADD, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
+    await $.tool.call({ tool: ADD, title: 'The migration ran clean', detail: 'Nothing to do.', kind: 'info' })
     await clock.settle()
 
     expect(world.notices).toEqual([])
@@ -3376,7 +3502,7 @@ describe('the alert', () => {
     const { world, clock } = seat(on)
     await start($)
 
-    await $.tool.call({ tool: ADD, title: 'The migration ran clean', why: 'Nothing to do.', kind: 'info' })
+    await $.tool.call({ tool: ADD, title: 'The migration ran clean', detail: 'Nothing to do.', kind: 'info' })
     await clock.advance(180_000)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'seen' })

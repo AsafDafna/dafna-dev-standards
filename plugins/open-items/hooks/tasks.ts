@@ -1,32 +1,38 @@
-import type { Task, TaskKind } from '../types'
+import type { Message, Task, TaskKind, ThreadEvent } from '../types'
 import { ago, oneLine, plural, sizeOf } from './text'
 
-/** Open decisions, questions and actions at once; the next is refused. */
-export const MAX_OPEN = 5
-/** Open info items at once; the next drops the oldest, since an info item asks nothing. */
-export const MAX_INFO = 5
 export const MAX_TITLE = 80
-/** The longest why or done-when an item keeps, and the pane draws. */
-export const MAX_WHY = 300
 export const MAX_OPTION = 60
+/** The longest detail, done-when or thread message Claude writes: the tools refuse a longer one, and cut nothing. */
+export const MAX_DETAIL = 4000
 /** Answers longer than this are named in a digest, not quoted. */
 const MAX_INLINE_ANSWER = 2000
 
 export const KINDS: readonly TaskKind[] = ['decision', 'question', 'action', 'info']
 
-/** Still open for the user: any kind, `info` included. */
+/** Still the user's to act on, any kind: open, or put off for later. */
 export function isActive(task: Task): boolean {
-  return task.state === 'open'
+  return task.state === 'open' || task.state === 'later'
 }
 
-/** Open and asks something of the user: every kind but `info`. */
-export function isAsk(task: Task): boolean {
+/** Open or later, and asks something of the user: every kind but `info`. */
+export function isOpenAsk(task: Task): boolean {
   return isActive(task) && task.kind !== 'info'
 }
 
-/** In the Open items pane: open for the user, or acted on and not yet told to Claude. */
+/** What the pane's head and the status line count: not yet replied to, or replied to and answered by Claude since. */
+export function waitsOnUser(task: Task): boolean {
+  return isActive(task) && !task.isWaitingForClaude
+}
+
+/** An ask the user has not answered or put off: `turn.complete` in register.tsx holds saved answers back while one is left. */
+export function isUnanswered(task: Task): boolean {
+  return task.state === 'open' && task.kind !== 'info' && !task.isWaitingForClaude
+}
+
+/** In the Open items pane: the user's to act on, moving to a new session, or acted on and not yet told to Claude. */
 export function isShown(task: Task): boolean {
-  return isActive(task) || task.update === 'pending'
+  return isActive(task) || task.state === 'handing-off' || task.update === 'pending'
 }
 
 /** A title as two near-identical asks compare equal. */
@@ -36,42 +42,88 @@ export function sameAsk(a: string, b: string): boolean {
   return norm(a) === norm(b)
 }
 
-export type Ask = Pick<Task, 'title' | 'why' | 'doneWhen' | 'kind' | 'options' | 'recommended'>
+export type Ask = Pick<Task, 'kind' | 'title' | 'doneWhen' | 'options' | 'recommended' | 'link'> & { detail: string }
+
+export type Reply = {
+  id: number
+  text?: string
+  change?: Partial<Pick<Task, 'title' | 'options' | 'recommended' | 'link' | 'doneWhen'>>
+}
+
+const LINK = /^https?:\/\/\S+$/
+
+/** `args[key]` as typed, its line breaks kept: '' when it is no text. */
+function textIn(args: Record<string, unknown>, key: string): string {
+  const value = args[key]
+
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function lineIn(args: Record<string, unknown>, key: string): string {
+  const value = args[key]
+
+  return typeof value === 'string' ? oneLine(value) : ''
+}
+
+function optionsIn(raw: unknown[]): string[] {
+  return raw.filter((o): o is string => typeof o === 'string').map(oneLine).filter(o => o !== '')
+}
+
+function titleErrorOf(title: string): string | undefined {
+  return title.length > MAX_TITLE ? `title is ${title.length} characters; keep it under ${MAX_TITLE} and put the rest in detail.` : undefined
+}
+
+/** What is wrong with the longer texts, the options and the link of an ask or a reply; undefined when nothing is. */
+function errorIn(fields: { texts: Record<string, string>; options: readonly string[] | undefined; link: string }): string | undefined {
+  for (const [name, text] of Object.entries(fields.texts)) {
+    if (text.length > MAX_DETAIL) {
+      return `${name} is ${text.length} characters; keep it to ${MAX_DETAIL} or fewer.`
+    }
+  }
+
+  if (fields.options?.some(o => o.length > MAX_OPTION)) {
+    return `keep each option under ${MAX_OPTION} characters.`
+  }
+
+  return fields.link !== '' && !LINK.test(fields.link) ? 'link must be a URL that starts with https://.' : undefined
+}
 
 /** Reads `add_item`'s arguments, or says what is wrong with them. */
 export function parseAsk(args: Record<string, unknown>): Ask | { error: string } {
-  const text = (key: string) => (typeof args[key] === 'string' ? oneLine(args[key] as string) : '')
-  const title = text('title')
-  const why = text('why')
-  const doneWhen = text('done_when')
-  const recommended = text('recommended')
+  const title = lineIn(args, 'title')
+  const detail = textIn(args, 'detail')
+  const doneWhen = textIn(args, 'done_when')
+  const recommended = lineIn(args, 'recommended')
+  const link = lineIn(args, 'link')
   const kind = args['kind'] ?? 'action'
+  const options = optionsIn(Array.isArray(args['options']) ? args['options'] : [])
 
   if (title === '') {
     return { error: 'title is required: what the user should do, as an imperative.' }
   }
 
-  if (title.length > MAX_TITLE) {
-    return { error: `title is ${title.length} characters; keep it under ${MAX_TITLE} and put the rest in why.` }
+  const titleError = titleErrorOf(title)
+
+  if (titleError !== undefined) {
+    return { error: titleError }
   }
 
-  if (why === '') {
-    return { error: 'why is required: one sentence on what it unblocks.' }
+  if (detail === '') {
+    return { error: 'detail is required: what you need from the user, and why.' }
   }
 
   if (!KINDS.includes(kind as TaskKind)) {
     return { error: 'kind must be "decision", "question", "action" or "info".' }
   }
 
-  const raw = Array.isArray(args['options']) ? args['options'] : []
-  const options = raw.filter((o): o is string => typeof o === 'string').map(oneLine).filter(o => o !== '')
-
   if (kind === 'decision' && (options.length < 2 || options.length > 4)) {
     return { error: 'a decision needs 2 to 4 options.' }
   }
 
-  if (options.some(o => o.length > MAX_OPTION)) {
-    return { error: `keep each option under ${MAX_OPTION} characters.` }
+  const error = errorIn({ texts: { detail, done_when: doneWhen }, options, link })
+
+  if (error !== undefined) {
+    return { error }
   }
 
   if (kind === 'decision' && recommended !== '' && !options.includes(recommended)) {
@@ -79,51 +131,148 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
   }
 
   return {
-    title,
-    why: why.slice(0, MAX_WHY),
-    ...(doneWhen === '' ? {} : { doneWhen: doneWhen.slice(0, MAX_WHY) }),
     kind: kind as TaskKind,
+    title,
+    detail,
+    ...(doneWhen === '' ? {} : { doneWhen }),
     ...(kind === 'decision' ? { options } : {}),
     ...(kind === 'decision' && recommended !== '' ? { recommended } : {}),
+    ...(link === '' ? {} : { link }),
   }
 }
 
-/**
- * What the user did with an item, after its head: their answer, choice or
- * reason; '' when there is nothing more to say. `isFull` quotes a long
- * answer whole; a digest names it instead and points at `list_items`.
- */
-function bodyOf(task: Task, isFull: boolean): string {
-  switch (task.state) {
-    case 'rejected':
-      return task.reason ? `The user's reason: "${task.reason}"` : 'No reason given.'
-    case 'withdrawn':
-      return task.reason ? `You withdrew it: ${task.reason}` : 'You withdrew it.'
-    case 'done':
-      if (task.answer === undefined || task.answer === '') {
-        return ''
-      }
+/** Reads `reply_item`'s arguments: Claude's message, a change to the item, or both; or says what is wrong with them. */
+export function parseReply(args: Record<string, unknown>): Reply | { error: string } {
+  const id = args['id']
+  const text = textIn(args, 'text')
+  const title = lineIn(args, 'title')
+  const doneWhen = textIn(args, 'done_when')
+  const recommended = lineIn(args, 'recommended')
+  const link = lineIn(args, 'link')
+  const options = Array.isArray(args['options']) ? optionsIn(args['options']) : undefined
 
-      if (task.kind === 'decision' && task.options?.includes(task.answer)) {
-        return `The user chose: ${task.answer}`
-      }
+  if (typeof id !== 'number') {
+    return { error: "id is required: the item's number." }
+  }
 
-      if (!isFull && task.answer.length > MAX_INLINE_ANSWER) {
-        return `The user's answer (${sizeOf(task.answer.length)}) is saved: call list_items with id ${task.id} to read it.`
-      }
+  if (options !== undefined && (options.length < 2 || options.length > 4)) {
+    return { error: 'a decision needs 2 to 4 options.' }
+  }
 
-      return `The user's answer:\n${task.answer}`
+  const error = titleErrorOf(title) ?? errorIn({ texts: { text, done_when: doneWhen }, options, link })
+
+  if (error !== undefined) {
+    return { error }
+  }
+
+  if (options !== undefined && recommended !== '' && !options.includes(recommended)) {
+    return { error: 'recommended must be one of the options, spelled the same.' }
+  }
+
+  const change = {
+    ...(title === '' ? {} : { title }),
+    ...(options === undefined ? {} : { options }),
+    ...(recommended === '' ? {} : { recommended }),
+    ...(link === '' ? {} : { link }),
+    ...(doneWhen === '' ? {} : { doneWhen }),
+  }
+  const isChanged = Object.keys(change).length > 0
+
+  if (text === '' && !isChanged) {
+    return { error: 'reply_item needs text or a change: a message for the user, or a new title, options, recommended, link or done_when.' }
+  }
+
+  return { id, ...(text === '' ? {} : { text }), ...(isChanged ? { change } : {}) }
+}
+
+/** What the user did with an item, as its thread records it: a reply has no event. */
+export type Move = Pick<Message, 'text' | 'event'>
+
+export const DONE: Move = { text: '', event: 'done' }
+export const SEEN: Move = { text: '', event: 'seen' }
+export const LATER: Move = { text: '', event: 'later' }
+
+export function choseOf(option: string): Move {
+  return { text: option, event: 'chose' }
+}
+
+export function replyOf(text: string): Move {
+  return { text }
+}
+
+/** Whether `move` is the user's last word on `task`: a second press, or one answer sent twice. */
+export function isRepeatOf(task: Task | undefined, move: Move): boolean {
+  const last = task?.thread.at(-1)
+
+  return last !== undefined && last.from === 'user' && last.event === move.event && last.text === move.text
+}
+
+/** `task` after the user's `move` at `atMs`; the same task when the move repeats their last. */
+export function movedBy(task: Task, move: Move, atMs: number): Task {
+  if (isRepeatOf(task, move)) {
+    return task
+  }
+
+  const thread = [...task.thread, { from: 'user' as const, ...move, atMs }]
+
+  switch (move.event) {
+    case undefined:
+      return { ...task, thread, isWaitingForClaude: true, update: 'pending' }
+    case 'later':
+      return { ...task, thread, state: 'later', update: 'pending' }
+    case 'seen':
+      return { ...task, thread, state: 'resolved' }
+    default:
+      return { ...task, thread, state: 'resolved', update: 'pending' }
+  }
+}
+
+const SPOKEN: readonly (ThreadEvent | undefined)[] = [undefined, 'chose', 'done', 'later']
+
+/** The user's replies and presses since Claude's last message, oldest first: what Claude has had no word on. */
+function movesOf(task: Task): readonly Message[] {
+  return task.thread.slice(task.thread.findLastIndex(message => message.from === 'claude') + 1).filter(move => SPOKEN.includes(move.event))
+}
+
+function detailIn(task: Task): string {
+  return task.thread[0]?.text ?? ''
+}
+
+/** A move as a digest tells it; `isFull` quotes a long answer whole, where a digest names it and points at `list_items`. */
+function newsLineOf(task: Task, move: Message, isFull: boolean): string {
+  switch (move.event) {
+    case undefined:
+      return !isFull && move.text.length > MAX_INLINE_ANSWER
+        ? `The user's answer (${sizeOf(move.text.length)}) is saved: call list_items with id ${task.id} to read it.`
+        : `The user's answer:\n${move.text}`
+    case 'chose':
+      return `The user chose: ${move.text}`
+    case 'later':
+      return 'The user pressed Later: go on without it.'
     default:
       return ''
   }
 }
 
-/** How a task's news opens: `#5 done: <title>.` */
+/** What the user did with an item, after its head; '' when there is nothing more to say. */
+function bodyOf(task: Task, isFull: boolean): string {
+  const lines = movesOf(task)
+    .map(move => newsLineOf(task, move, isFull))
+    .filter(line => line !== '')
+
+  if (task.state === 'withdrawn') {
+    lines.push(task.note ? `You withdrew it: ${task.note}` : 'You withdrew it.')
+  }
+
+  return lines.join('\n')
+}
+
+/** How a task's news opens: `#5 resolved: <title>.` */
 export function newsHeadOf(task: Task): string {
   return `#${task.id} ${task.state}: ${task.title}.`
 }
 
-/** One task's news for Claude: `#5 done: <title>.` and what the user said. */
+/** One task's news for Claude: `#5 resolved: <title>.` and what the user said. */
 export function newsOf(task: Task, isFull: boolean): string {
   const body = bodyOf(task, isFull)
 
@@ -135,26 +284,29 @@ export function ownHeadOf(task: Task): string {
   return `#${task.id} ${task.title}:`
 }
 
-/** What the user did with an item, in their own words. */
+function ownWordOf(move: Message): string {
+  switch (move.event) {
+    case undefined:
+      return move.text
+    case 'chose':
+      return `I chose "${move.text}".`
+    case 'later':
+      return 'Later. Go on without it.'
+    default:
+      return 'Done.'
+  }
+}
+
+/** What the user did with an item, in their own words: a reply starts on a line of its own. */
 function ownWordsOf(task: Task): string {
+  const moves = movesOf(task)
   const head = ownHeadOf(task)
 
-  switch (task.state) {
-    case 'rejected':
-      return task.reason ? `${head} I won't do this. ${task.reason}` : `${head} I won't do this.`
-    case 'done':
-      if (task.answer === undefined || task.answer === '') {
-        return `${head} Done.`
-      }
-
-      if (task.kind === 'decision' && task.options?.includes(task.answer)) {
-        return `${head} I chose "${task.answer}".`
-      }
-
-      return `${head}\n${task.answer}`
-    default:
-      return head
+  if (moves.length === 0) {
+    return head
   }
+
+  return `${head}${moves[0]?.event === undefined ? '\n' : ' '}${moves.map(ownWordOf).join('\n')}`
 }
 
 /**
@@ -176,7 +328,7 @@ export function digestOf(due: readonly Task[]): string {
 
 /** Read after a compaction or at a session's start: what is still with the user. */
 export function contextOf(shown: readonly Task[]): string {
-  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${task.why}` : newsOf(task, false)))
+  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${detailIn(task)}` : newsOf(task, false)))
 
   return [
     'Items you gave the user, through the Open items tools (add_item, list_items, withdraw_item):',
@@ -196,27 +348,26 @@ export function listOf(tasks: readonly Task[], nowMs: number): string {
       const age = ago(nowMs - task.createdMs)
       const detail = isActive(task)
         ? [
-            `Why: ${task.why}`,
+            `Detail: ${detailIn(task)}`,
             task.doneWhen ? `Done when: ${task.doneWhen}` : '',
             task.options ? `Options: ${task.options.join(' | ')}` : '',
             task.recommended ? `Recommended: ${task.recommended}` : '',
           ]
-        : bodyOf(task, true).split('\n')
+        : []
 
-      return [`#${task.id} ${task.state} · added ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail]
+      return [`#${task.id} ${task.state} · added ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail, ...bodyOf(task, true).split('\n')]
         .filter(line => line.trim() !== '')
         .join('\n  ')
     })
     .join('\n\n')
 }
 
-/** `add_item`'s answer; `count` is the open items of the new item's group (info, or the rest). */
-export function addedOf(task: Task, count: number): string {
+/** `add_item`'s answer. */
+export function addedOf(task: Task): string {
   if (task.kind === 'info') {
     return [
       `Added item #${task.id}: "${task.title}".`,
       'The user sees it in their Open items pane, or with /open-items, until they mark it seen. It asks nothing, so no response reaches you.',
-      `Info items: ${count} of ${MAX_INFO}; a sixth drops the oldest.`,
     ].join(' ')
   }
 
@@ -224,13 +375,12 @@ export function addedOf(task: Task, count: number): string {
     `Added item #${task.id}: "${task.title}".`,
     'The user sees it in their Open items pane, or with /open-items, until they act on it. Their response reaches you as a message, or through list_items.',
     'You can carry on with work that does not depend on it.',
-    `Open items: ${count} of ${MAX_OPEN}.`,
   ].join(' ')
 }
 
-/** The status line under the prompt: the open items by kind, and responses not sent yet. */
+/** The status line under the prompt: what waits on the user by kind, and responses not sent yet; nothing when neither is left. */
 export function statusOf(shown: readonly Task[]): string | undefined {
-  if (shown.length === 0) {
+  if (!shown.some(task => waitsOnUser(task) || task.update === 'pending')) {
     return undefined
   }
 
@@ -240,25 +390,31 @@ export function statusOf(shown: readonly Task[]): string | undefined {
 }
 
 /**
- * What waits on the user among `shown`, as the pane's head and the status line
- * lead with it: `☐ 1 decision · 2 questions · 1 not sent yet` (the open items by
- * kind), or `✓ 1 not sent yet` with nothing open, the responses named `noun`
- * where there's room.
+ * What waits among `shown`, as the pane's head and the status line lead with
+ * it: `☐ 1 decision · 2 questions · 1 not sent yet` (what waits on the user,
+ * by kind), `✓ 1 not sent yet` with none of that, or `⋯ 1 waiting for Claude`
+ * with only replies Claude has not answered; the responses named `noun` where
+ * there's room.
  */
 export function waitingOf(shown: readonly Task[], noun?: string): { glyph: string; headline: string; note: string } {
-  const open = shown.filter(isActive)
-  const saved = shown.length - open.length
-  // "info" keeps its form for any count.
-  const kinds = KINDS.map(kind => ({ kind, count: open.filter(task => task.kind === kind).length }))
-    .filter(({ count }) => count > 0)
-    .map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind)))
-    .join(' · ')
+  const asks = shown.filter(waitsOnUser)
+  const saved = shown.filter(task => task.update === 'pending').length
 
-  return {
-    glyph: open.length > 0 ? '☐ ' : '✓ ',
-    headline: open.length > 0 ? kinds : `${noun === undefined ? saved : plural(saved, noun)} not sent yet`,
-    note: open.length > 0 && saved > 0 ? ` · ${saved} not sent yet` : '',
+  if (asks.length > 0) {
+    // "info" keeps its form for any count.
+    const kinds = KINDS.map(kind => ({ kind, count: asks.filter(task => task.kind === kind).length }))
+      .filter(({ count }) => count > 0)
+      .map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind)))
+      .join(' · ')
+
+    return { glyph: '☐ ', headline: kinds, note: saved > 0 ? ` · ${saved} not sent yet` : '' }
   }
+
+  if (saved > 0) {
+    return { glyph: '✓ ', headline: `${noun === undefined ? saved : plural(saved, noun)} not sent yet`, note: '' }
+  }
+
+  return { glyph: '⋯ ', headline: `${shown.filter(isActive).length} waiting for Claude`, note: '' }
 }
 
 const BRIDGE = /^\s*↳?\s*Answer to #(\d+):[ \t]*\n?/i
