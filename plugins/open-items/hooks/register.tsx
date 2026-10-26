@@ -125,17 +125,6 @@ const LIVE_CHAT = 'live chat: ask in the chat'
 /** Ends `add_item`'s result when the live-chat gate cannot tell whether background work runs. */
 const LIVE_CHAT_NOTE = 'This looks like a live chat: if the user is here and replying, withdraw it with close_item and ask in the chat.'
 
-/**
- * A short copy of the rules the tool descriptions carry, at the end of the
- * system prompt where it loads: on some seats only the descriptions reach Claude.
- */
-const STEERING = [
-  'Open items: while background agents, shell commands or monitors run, or after the user went quiet, put every ask for the user in their Open items pane with mcp__open-items__add_item. In a live chat, ask in the chat only.',
-  'One item per ask: answer the user and change the item with reply_item, and close it with close_item when it is resolved. When the user answers in the chat instead, close it as withdrawn with the note "answered in chat".',
-  'Before the session ends, resolve, record or hand off every open and Later item.',
-  'If an Open items tool call fails, ask in the chat.',
-].join('\n')
-
 /** Resolutions pressed this close together go to Claude as one message. */
 const BATCH_MS = 800
 
@@ -188,30 +177,24 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'add_item',
     description: [
-      "Put an item in the user's Open items pane. It stays there until the user acts on it. Their response reaches you as a message, or when you call list_items. An item does not block: you keep working while it waits.",
-      '',
-      'Kinds:',
-      '- decision: the user picks one of 2 to 4 options. Mark the option you suggest with recommended.',
-      "- question: you need the user's words (an error, a log, test results).",
-      '- action: the user does something on their machine or on an account you cannot reach, then marks it done.',
-      '- info: something the user must see (a failure, a finding that changes their plan). It asks nothing, and no response reaches you.',
+      "Put an item in the user's Open items pane. It stays until the user acts on it. An item does not block: you keep working while it waits. The response reaches you as a message, or through list_items.",
       '',
       'When to add an item:',
-      '- Add an item for every ask while background agents, shell commands or monitors run, or after the user went quiet. While background work runs, add the item and write no chat text about it until the batch ends.',
-      '- In a live chat, ask in the chat only. A live chat is a back-and-forth: the user typed their last two prompts in the chat, the last one a short time ago, and no background work runs. There, add_item refuses with "live chat: ask in the chat".',
+      '- Add an item for every ask while background agents, shell commands or monitors run, or after the user went quiet. While background work runs, write no chat text about the item until the batch ends.',
+      '- In a live chat (the user replies to you in the chat, and no background work runs), ask in the chat only. add_item refuses there.',
       "- Add only what is the user's: a decision that is theirs, a question only they can answer, an action only they can do, or a finding they must see. Ask no unnecessary questions.",
       '- One item per ask. Never add the same ask again: change the item in place with reply_item. list_items shows what is open.',
-      '- When only the user\'s consent is missing (for example, to run a command), add a decision with options such as "Run it" and "Don\'t", not an action. Then one press lets you go on.',
+      '- When only the user\'s consent is missing, add a decision ("Run it" / "Don\'t"), not an action.',
       '- AskUserQuestion is the blocking kind: use it only for what you need before you can go on.',
       '',
       'How to write an item:',
-      '- Write the title and the detail in plain, simple English. Make them self-contained, so the user understands them without the chat. Use no internal IDs.',
-      '- Write the title as an imperative of under 80 characters. Put the rest in the detail.',
-      '- Write numbers that are not item numbers without "#": "PR 787", not "#787". "#5" always means item 5.',
-      '- The detail keeps its line breaks, up to 4000 characters. If you can publish artifact pages, put tables, diffs and long step lists on the one artifact page of the session, and give the URL of its section in link.',
+      '- Use plain, simple English. Make the item clear without the chat. Use no internal IDs.',
+      '- Write the title as an imperative. Put the rest in the detail.',
+      '- Write numbers that are not item numbers without "#": "PR 787", not "#787".',
+      "- If you can publish artifact pages, put tables, diffs and long step lists on the session's one artifact page. Give the URL of its section in link.",
       '- For a secret, ask the user to put it where it belongs and to mark the item done. Never ask them to paste it.',
       '',
-      'Before the session ends, resolve, record or hand off every open and Later item. To record an item, write it and its state in the hand-off file or in the final summary of the session, then close it with close_item as withdrawn, with the note "recorded in <where>". To give the items to a new session, use handoff_items; the new session calls take_items. If they are not callable yet, load handoff_items and take_items with ToolSearch.',
+      'Before the session ends, resolve, record or hand off every open and Later item. To record an item, write it and its state in the hand-off file or the final summary. Then close it with close_item as withdrawn, with the note "recorded in <where>". To hand items off, call handoff_items; the new session calls take_items. If they are not callable yet, load handoff_items and take_items with ToolSearch.',
       '',
       'If an Open items tool call fails, ask in the chat.',
     ].join('\n'),
@@ -222,35 +205,20 @@ const TOOLS: readonly ToolSpec[] = [
           type: 'string',
           enum: ['decision', 'question', 'action', 'info'],
           description:
-            "decision: the user picks one of the options. question: you need the user's words. action: the user does something and marks it done. info: something the user must see; it asks nothing.",
+            "decision: the user picks one of 2 to 4 options; mark the one you suggest with recommended. question: you need the user's words (an error, a log, test results). action: the user does something you cannot do, then marks it done. info: something the user must see; it asks nothing, and no response reaches you.",
         },
-        title: {
-          type: 'string',
-          description: 'What the user should do, as an imperative in plain English that is clear without the chat. Under 80 characters.',
-        },
-        detail: {
-          type: 'string',
-          description: 'What you need from the user and why, in full and self-contained. It keeps its line breaks, up to 4000 characters.',
-        },
+        title: { type: 'string', description: 'Under 80 characters.' },
+        detail: { type: 'string', description: 'What you need from the user and why. It keeps its line breaks, up to 4000 characters.' },
         options: {
           type: 'array',
           items: { type: 'string' },
           minItems: 2,
           maxItems: 4,
-          description: 'For decision only: 2 to 4 short options.',
+          description: 'For decision only: short options.',
         },
-        recommended: {
-          type: 'string',
-          description: 'For decision only: the option you suggest, spelled exactly as in options.',
-        },
-        done_when: {
-          type: 'string',
-          description: "Optional, for action only: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
-        },
-        link: {
-          type: 'string',
-          description: 'Optional: the URL of the section of the session\'s artifact page that holds the long detail.',
-        },
+        recommended: { type: 'string', description: 'For decision only: spelled exactly as in options.' },
+        done_when: { type: 'string', description: 'Optional, for action only: what counts as done.' },
+        link: { type: 'string', description: 'Optional: a URL for the long detail.' },
       },
       required: ['kind', 'title', 'detail'],
     },
@@ -258,32 +226,29 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'reply_item',
     description: [
-      "Add your message to the thread of an item, change the item in place, or both. The item stays open: a reply never closes it. The user reads the thread in their Open items pane.",
+      "Add your message to the thread of an item, change the item in place, or both. The item stays open: a reply never closes it.",
       '',
       '- When the user replies on an item, answer in the item with reply_item, not in the chat.',
-      '- To change the ask, change the item in place: a new title, options, recommended option, done_when or link. Never add a new item for the same ask. Say in text why you changed it.',
-      '- When the user answers in the chat instead of in the item, close the item with close_item as withdrawn, with the note "answered in chat".',
-      '- When the user pressed Later, go on without the item. It stays in the pane until they act on it, and you can still reply on it.',
-      '- Close the item with close_item when it is resolved.',
-      '- Write in plain, simple English, self-contained, with no internal IDs. Write numbers that are not item numbers without "#".',
-      '- text keeps its line breaks, up to 4000 characters. Put tables, diffs and long step lists on the artifact page of the session and give its URL in link.',
+      '- To change the ask, change the item in place: a new title, options, recommended option, done_when or link. Say in text why you changed it.',
+      '- When the user pressed Later, go on without the item. It stays in the pane, and you can still reply on it.',
+      '- Write the text as "How to write an item" in add_item says.',
     ].join('\n'),
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: "The item's number." },
-        text: { type: 'string', description: 'Your message to the user, up to 4000 characters. It keeps its line breaks.' },
+        text: { type: 'string', description: 'Your message to the user. It keeps its line breaks, up to 4000 characters.' },
         title: { type: 'string', description: 'A new title, under 80 characters.' },
         options: {
           type: 'array',
           items: { type: 'string' },
           minItems: 2,
           maxItems: 4,
-          description: 'For a decision only: new options, 2 to 4. A recommended option that is not among them is dropped.',
+          description: 'For a decision: new options. A recommended option that is not among them is dropped.',
         },
-        recommended: { type: 'string', description: 'For a decision only: the option you suggest, spelled exactly as in its options.' },
+        recommended: { type: 'string', description: 'For a decision: spelled exactly as in its options.' },
         link: { type: 'string', description: 'A new URL for the long detail.' },
-        done_when: { type: 'string', description: 'For an action: what counts as done, now.' },
+        done_when: { type: 'string', description: 'For an action: what counts as done now.' },
       },
       required: ['id'],
     },
@@ -293,18 +258,20 @@ const TOOLS: readonly ToolSpec[] = [
     description: [
       "Close an item, so it leaves the user's Open items pane. The user sees your note.",
       '',
-      '- as "resolved": the answer of the user in the thread settles the item. You can resolve an item only after the user wrote in its thread.',
-      '- as "withdrawn": you no longer need the item (you found another way, or the plan changed), the user answered in the chat (note "answered in chat"), or you recorded it before the session ends (note "recorded in <where>").',
-      '- When the user pressed an option or Done, the item is closed already. Do not close it again.',
-      '- When the user replies, answer in the item with reply_item. Close the item when nothing more is needed: do not leave a settled item open.',
+      '- Close an item when it is resolved. Do not leave a settled item open.',
       '- When the user answers in the chat instead of in the item, close it as withdrawn with the note "answered in chat".',
+      '- When the user pressed an option or Done, the item is closed already. Do not close it again.',
       '- Before the session ends, resolve, record or hand off every open and Later item.',
     ].join('\n'),
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: "The item's number." },
-        as: { type: 'string', enum: ['resolved', 'withdrawn'], description: 'resolved: the user answered it. withdrawn: you no longer need it.' },
+        as: {
+          type: 'string',
+          enum: ['resolved', 'withdrawn'],
+          description: 'resolved: only after the user wrote in its thread. withdrawn: you no longer need it, the user answered in the chat, or you recorded it.',
+        },
         note: { type: 'string', description: 'One short line the user sees, up to 200 characters: "answered in chat", "recorded in <where>", or why.' },
       },
       required: ['id', 'as'],
@@ -313,8 +280,8 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'list_items',
     description: [
-      'List the items you gave the user: the state of each item, whether the user replied and waits for you, whether they opened your last reply, and the last 3 entries of its thread. With id, one item with its whole thread.',
-      'Call it when you need the result of an item, when told an answer is saved for you, or before you add an item, so you do not add the same ask twice.',
+      'List the items you gave the user: the state of each, whether the user replied and waits for you, whether they opened your last reply, and the last 3 entries of its thread.',
+      'Call it when you need the result of an item, when told an answer is saved for you, or before you add an item.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -1047,19 +1014,6 @@ export const register: Register = on => {
     }
 
     return isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered))
-  })
-
-  // The steering goes last, on the session's side of the cache boundary,
-  // wherever the tool can be reached: offered outright, or found through ToolSearch.
-  on('prompt.compose', async ($, e, next) => {
-    const composed = await next(e)
-    const isReachable = e.tools.some(tool => tool === ADD || tool === 'ToolSearch')
-
-    if (!isReachable || e.traits.includes('print') || e.traits.includes('bare')) {
-      return composed
-    }
-
-    return { sections: [...composed.sections, { id: 'open-items:steering', text: STEERING, scope: 'session' }] }
   })
 
   on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {

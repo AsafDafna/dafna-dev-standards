@@ -3148,43 +3148,21 @@ describe('delivery', () => {
 })
 
 describe('the system prompt', () => {
-  const COMPOSE = {
-    model: 'claude-opus-5-5',
-    promptModel: 'claude-opus-5-5',
-    surfaces: ['terminal'],
-    outputStyle: null,
-  } as const
-
-  test('the system prompt carries a short copy of the steering, where add_item can be reached', async ($, on) => {
+  test('the mod adds no section to the system prompt', async ($, on) => {
     seat(on)
     on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
     await start($)
 
-    const offered = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ADD], traits: [] })
-    const deferred = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', 'ToolSearch'], traits: [] })
-    const without = await $.prompt.compose({ ...COMPOSE, tools: ['Bash'], traits: [] })
-    const steering = offered.sections.at(-1)
+    const composed = await $.prompt.compose({
+      model: 'claude-opus-5-5',
+      promptModel: 'claude-opus-5-5',
+      surfaces: ['terminal'],
+      outputStyle: null,
+      tools: ['Bash', ADD, 'ToolSearch'],
+      traits: [],
+    })
 
-    expect(steering?.id).toBe('open-items:steering')
-    expect(steering?.scope).toBe('session')
-    for (const rule of ['live chat', 'reply_item', 'close_item', 'answered in chat', 'Before the session ends']) {
-      expect(steering?.text).toContain(rule)
-    }
-    expect(steering?.text).not.toContain('withdraw_item')
-    expect(deferred.sections.at(-1)?.id).toBe('open-items:steering')
-    expect(without.sections).toHaveLength(1)
-  })
-
-  test('bare and print sessions get no section', async ($, on) => {
-    seat(on)
-    on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
-    await start($)
-
-    for (const trait of ['bare', 'print'] as const) {
-      const composed = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ADD], traits: [trait] })
-
-      expect(composed.sections.map(section => section.id)).toEqual(['intro'])
-    }
+    expect(composed.sections.map(section => section.id)).toEqual(['intro'])
   })
 })
 
@@ -3263,15 +3241,15 @@ describe('the mod\'s own tools', () => {
     await start($)
 
     expect(descriptionOf(world, 'add_item')).toContain('live chat')
+    expect(descriptionOf(world, 'add_item')).toContain('no background work runs')
     expect(descriptionOf(world, 'add_item')).toContain('Before the session ends')
     expect(descriptionOf(world, 'add_item')).toContain('load handoff_items and take_items with ToolSearch')
   })
 
-  test('reply_item and close_item carry the rule for an answer in the chat, and handoff_items says how to pass the code', async ($, on) => {
+  test('close_item carries the rule for an answer in the chat, and handoff_items says how to pass the code', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
-    expect(descriptionOf(world, 'reply_item')).toContain('answered in chat')
     expect(descriptionOf(world, 'close_item')).toContain('answered in chat')
     expect(descriptionOf(world, 'handoff_items')).toContain('take_items')
   })

@@ -4,6 +4,8 @@ A Claude Code mod that keeps the decisions, questions, actions and findings that
 
 ## Install
 
+Add the marketplace once, with the `/plugin marketplace add` command in the [repository README](../../README.md#install). Then install the mod:
+
 ```
 /plugin install open-items@dafna-dev-standards
 ```
@@ -55,7 +57,7 @@ When Claude adds a decision, question or action and you have been quiet for two 
 
 The mod also reads every prompt you type. It turns a prompt that starts with `↳ Answer to #N:` into that item's answer. It also counts your typed prompts for the live-chat gate. A live chat is one where your last two inputs were typed prompts, the last under five minutes ago. In a live chat with no agent or background work running, `add_item` refuses, so Claude asks in the chat. A slash command is not a typed prompt here.
 
-Nothing else from the conversation, your files or your machine goes into a prompt. The mod also adds four lines to the system prompt that tell Claude about items.
+Nothing else from the conversation, your files or your machine goes into a prompt. The mod adds nothing to the system prompt. It reaches Claude through its tool descriptions, its tool results, the reminder line on each prompt and its answers.
 
 ## Data and tools
 

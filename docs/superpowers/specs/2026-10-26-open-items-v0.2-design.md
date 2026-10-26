@@ -88,7 +88,7 @@ These follow from the evidence; Asaf saw them in the brainstorm and did not obje
 - **Consent is a decision.** When only Asaf's consent is missing ("run this command"), Claude adds a decision ("Run it" / "Don't"), not an action, so one press lets Claude do it.
 - **One item per ask.** Claude changes an item in place (title, detail, options) instead of adding a new one.
 - **Reply alert.** A Claude reply in a thread alerts Asaf like a new item, with v0.1's presence rule (no alert if he used the session in the last 2 minutes).
-- **Steering lives in the tool descriptions,** the one prompt channel that reaches Claude on both seats. The `prompt.compose` section stays as a short copy where it loads (the personal seat).
+- **Steering lives in the tool descriptions,** the one prompt channel that reaches Claude on both seats. The `prompt.compose` section stays as a short copy where it loads (the personal seat). (Removed in 0.2.1: the tool descriptions carry every rule.)
 - **A live chat** means a back-and-forth: no background task runs (agent, background shell command, or monitor), and Asaf's last two inputs (of any kind: typed prompt, bridge answer, pane press) were both prompts he typed in the chat, the latest less than 5 minutes ago. A pane press never counts, because in the COO sessions the pane was his only input. A long answer sent through the composer bridge (`↳ Answer to #N:`) is a pane answer and does not count either. In a live chat, `add_item` refuses with "live chat: ask in the chat". One typed prompt is not enough: a COO session starts with a typed `/coo` and adds items before its first agent (session 7c940839 added #1 at 18:46:16 and dispatched its first agent at 18:47:05). For the first turn, the steering rule decides. If Claude Code gives a mod no signal for background shell commands and monitors, the gate fails open: `add_item` adds the item and its result says it looks like a live chat, so Claude can withdraw it and ask in the chat. The 5 minutes is a setting the builder can tune. Test cases the rule must pass:
   - a brainstorm, second typed prompt, no agent running: refused;
   - a COO first turn, an add before the first agent: allowed;
@@ -219,7 +219,7 @@ One artifact per session holds detail that a terminal cannot show well: tables, 
 
 ### Steering
 
-Short rules, written into the tool descriptions, and repeated in `prompt.compose` where it loads:
+Short rules, written into the tool descriptions, and repeated in `prompt.compose` where it loads (removed in 0.2.1: the tool descriptions carry every rule):
 
 - Add an item for every ask while background agents run or after the user went quiet. In a live chat, ask in the chat only; `add_item` refuses there.
 - Add only what is the user's: a decision, a question only they can answer, an action only they can do, or a finding they must see. Ask no unnecessary questions.
