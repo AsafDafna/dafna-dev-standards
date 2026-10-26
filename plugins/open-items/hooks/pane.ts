@@ -1,5 +1,5 @@
 import type { Editing, Task, TaskKind } from '../types'
-import { MAX_DETAIL, MAX_OPTION, isActive, isUnanswered, waitingOf } from './tasks'
+import { MAX_DETAIL, MAX_OPTION, isActive, waitingOf } from './tasks'
 import { ago, cellsOf, clip, printable, rowsOf } from './text'
 
 /**
@@ -30,7 +30,6 @@ export type PaneView = {
   /** The draft in the open field. */
   draft: string
   nowMs: number
-  isWorking: boolean
   /** The surface draws a text field (the mobile app draws none yet). */
   canType: boolean
   isFocused: boolean
@@ -64,9 +63,9 @@ export function selectedOf(view: PaneView): Task | undefined {
   return active.find(task => task.id === view.selectedId) ?? firstOf(active)
 }
 
-/** The pane's head: `☐ 1 decision · 2 questions · 1 not sent yet`, or `✓ 1 response not sent yet`. */
-export function headlineOf(view: PaneView): { glyph: string; headline: string; note: string } {
-  return waitingOf(view.shown, 'response')
+/** The pane's head: `☐ 1 decision · 2 questions`, or `⋯ 1 waiting for Claude`. */
+export function headlineOf(view: PaneView): { glyph: string; headline: string } {
+  return waitingOf(view.shown)
 }
 
 /** A task's whole title, safe to draw. */
@@ -90,16 +89,6 @@ export function detailOf(task: Task): string {
 
 export function doneWhenOf(task: Task): string | undefined {
   return task.doneWhen === undefined ? undefined : `Done when: ${printable(task.doneWhen, MAX_DETAIL)}`
-}
-
-/** The responses Claude has not heard yet, each a row with Send now. */
-export function unsentOf(shown: readonly Task[]): Task[] {
-  return shown.filter(task => task.update === 'pending')
-}
-
-/** A saved response's row: its task, and that it waits. */
-export function savedOf(task: Task): string {
-  return `${titleOf(task)} · not sent yet`
 }
 
 /** The selected item's buttons, as `hotkey` and `label`. */
@@ -129,29 +118,17 @@ export const ANSWER_LABEL = 'Answer'
 export const HELD =
   'This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and press Done instead.'
 
-export function answerPlaceholderOf(view: PaneView): string {
-  if (!view.isWorking) {
-    return 'Enter sends it to Claude'
-  }
-
-  return view.shown.some(task => isUnanswered(task) && task.id !== view.editing?.id)
-    ? 'Enter saves it; Claude gets it with your other answers'
-    : 'Enter saves it; Claude gets it when this turn ends'
-}
+export const ANSWER_PLACEHOLDER = 'Enter sends it to Claude'
 
 /** The answer field's buttons. */
-export function answerButtonsOf(view: PaneView): string[] {
-  return [view.isWorking ? 'Send now' : 'Save for later', 'Long answer…', 'Cancel']
-}
+export const ANSWER_BUTTONS = ['Long answer…', 'Cancel'] as const
+
+/** What Enter does in the answer field, drawn beside it while it has the keys. */
+export const SUBMIT_LABEL = 'send'
 
 /** The key of task `id`'s field: its own, so no other task's draft, or the focus, lands in it. */
 export function fieldKeyOf(field: Pick<Editing, 'id' | 'field'>): string {
   return `${field.field}-${field.id}`
-}
-
-/** What Enter does in the answer field, drawn beside it while it has the keys. */
-export function submitLabelOf(view: Pick<PaneView, 'isWorking'>): string {
-  return view.isWorking ? 'save' : 'send'
 }
 
 /**
@@ -200,18 +177,6 @@ export function fieldRowsOf(label: string, submitLabel: string, text: string, is
   return Math.max(rows, isLabelCut(head, drawn + cellsOf(` ⏎ ${submitLabel}`), columns) ? 2 : 1)
 }
 
-/** The `i`th saved row's Send now: the first answers `s`. */
-export function sendNowOf(i: number): { hotkey?: string; label: string } {
-  return i === 0 ? { hotkey: 's', label: 'Send now' } : { label: 'Send now' }
-}
-
-/** The `i`th saved row's Send now as the terminal draws it: `s: Send now` on the first. */
-export function sendLabelOf(i: number): string {
-  const { hotkey, label } = sendNowOf(i)
-
-  return hotkey === undefined ? label : `${hotkey}: ${label}`
-}
-
 export function hintOf(view: PaneView): string {
   return view.isFocused ? 'Esc: back to the prompt' : 'Click, or press ctrl+x tab to use the keys'
 }
@@ -247,10 +212,9 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
   const inner = Math.max(1, width - GLYPH_CELLS)
   const groups = groupsOf(view.shown.filter(isActive))
-  const saved = unsentOf(view.shown)
   const selected = selectedOf(view)
   const head = headlineOf(view)
-  let rows = rowsOf(`${head.glyph}${head.headline}${head.note}`, width) + 1
+  let rows = rowsOf(`${head.glyph}${head.headline}`, width) + 1
 
   rows += Math.max(0, groups.length * 2 - 1)
 
@@ -267,10 +231,6 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
     rows += doneWhen === undefined ? 0 : rowsOf(doneWhen, inner)
     rows += controlRowsOf(task, view, width, inner)
   }
-
-  saved.forEach((task, i) => {
-    rows += rowsOf(savedOf(task), Math.max(1, inner - 2 - cellsOf(sendLabelOf(i))))
-  })
 
   rows += 1 + rowsOf(hintOf(view), Math.max(1, width - BUTTON_GAP - cellsOf(HIDE)))
 
@@ -292,5 +252,5 @@ function controlRowsOf(task: Task, view: PaneView, width: number, inner: number)
     return rowsOf(HELD, inner) + buttonRowsOf(['Edit', 'Send anyway'], inner)
   }
 
-  return fieldRowsOf(ANSWER_LABEL, submitLabelOf(view), view.draft, view.isTyping, width) + buttonRowsOf(answerButtonsOf(view), inner)
+  return fieldRowsOf(ANSWER_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) + buttonRowsOf(ANSWER_BUTTONS, inner)
 }

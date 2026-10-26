@@ -13,14 +13,13 @@ import {
   bridgeOf,
   choseOf,
   closedAs,
-  contextOf,
   digestOf,
   hasAnswerIn,
+  hasNewsIn,
   isActive,
   isOpenAsk,
   isRepeatOf,
   isShown,
-  isUnanswered,
   listOf,
   looksSecret,
   messageOf,
@@ -32,6 +31,7 @@ import {
   parseAsk,
   parseClose,
   parseReply,
+  reminderOf,
   repliedBy,
   replyErrorOf,
   replyOf,
@@ -42,15 +42,16 @@ import {
 } from './tasks'
 import type { Move } from './tasks'
 import {
+  ANSWER_BUTTONS,
   ANSWER_LABEL,
+  ANSWER_PLACEHOLDER,
   BUTTON_GAP,
   HELD,
   HIDE,
   MAX_SHOWN_TITLE,
+  SUBMIT_LABEL,
   actionsOf as actionsFor,
   ageOf,
-  answerButtonsOf,
-  answerPlaceholderOf,
   detailOf,
   doneWhenOf,
   fieldKeyOf,
@@ -61,12 +62,8 @@ import {
   nameOf,
   placeholderOf,
   rowsFor,
-  savedOf,
   selectedOf,
-  sendNowOf,
-  submitLabelOf,
   titleOf,
-  unsentOf,
 } from './pane'
 import type { PaneView } from './pane'
 import { isExpired, isSavedKey, keyOf, savedIn, trimmed } from './saved'
@@ -111,6 +108,9 @@ const STEERING = [
 
 /** Resolutions pressed this close together go to Claude as one message. */
 const BATCH_MS = 800
+
+/** The prompt that wakes Claude for an answer its turn ended without reading. */
+const WAKE_UP = 'I answered an item while you were finishing your reply; my answer is above.'
 
 /** The longest a person, or Claude, waits on the store: what it doesn't answer by then finishes on its own. */
 const STORE_WAIT_MS = 5000
@@ -324,18 +324,10 @@ const selectedId = atom({ plugin: 'open-items', key: 'selectedId' } as const, nu
 const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
 const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
 const folder = atom({ plugin: 'open-items', key: 'folder' } as const, null as string | null)
-const isWorking = atom({ plugin: 'open-items', key: 'isWorking' } as const, false)
 /** The remote clients attached, by surface, as the state's contract declares them. */
 type Roster = StateValue<'open-items', 'clients'>
 /** The roster, kept where a reload of the code finds it. */
 const clients = atom({ plugin: 'open-items', key: 'clients' } as const, {} as Roster)
-
-/**
- * Send now goes to Claude as a message (`auto` while it is idle), Save for
- * later waits (`auto` while it works) until its turn ends with every task
- * answered, a later answer while it is idle, or the user's next prompt.
- */
-type How = 'auto' | 'now' | 'later'
 
 /**
  * What a toast says when a prompt carrying updates is dropped: why (`why`,
@@ -355,10 +347,10 @@ const live = {
   lastPersonMs: 0,
   /** An alert went out in the main loop's current turn; one per turn. */
   alertedTurn: false,
-  /** A Send now row joined the running turn and no step has read it yet. */
-  isUnread: false,
-  /** A Send now the running turn could not take: it goes once the turn ends. */
-  isSendingAtEnd: false,
+  /** Whether the main loop's turn runs: undefined until the mod has seen it begin or end. */
+  mainTurn: undefined as boolean | undefined,
+  /** The items whose answers joined the running main turn as a row no model request has read yet. */
+  unreadAppend: [] as readonly number[],
   /** What the user has typed in each field so far, by `fieldKeyOf`. */
   drafts: new Map<string, string>(),
   /**
@@ -375,10 +367,10 @@ const live = {
    */
   drawn: new Map<RenderSurface, Map<string, string>>(),
   batch: null as Timer | null,
+  /** The items the batch under way sends: their updates go in the user's own words, which no other path takes. */
+  batchIds: new Set<number>(),
   /** How many sessions of the process have ended: a start read that lands after its session ended opens no pane. */
   ends: 0,
-  /** Responses a prompt entered without, by `updateKeyOf`: they go with Send now, the next prompt or another response, never alone as a turn ends. */
-  held: new Set<string>(),
   /** The session whose saved items are being read at its start: until the read settles, the tools refuse, as it replaces the items. */
   loading: null as string | null,
   /** The session whose start read failed: a write reads its key first, and writes only where none is saved. */
@@ -389,14 +381,6 @@ const live = {
   stalled: 0,
   /** The roster's writes asked for and not yet done: each waits for the one before (see `rostered`). */
   rosterQueue: Promise.resolve() as Promise<unknown>,
-  /**
-   * Turns begun and not yet ended. A loop other than main's (an engine side
-   * request, a teammate) may begin one whose `turn.complete` carries an agent
-   * id: each ends by its own id.
-   */
-  turns: new Set<string>(),
-  /** Whether a turn runs, in the engine's own word (the band's `isWorking`), once it has said. */
-  engineWorking: undefined as boolean | undefined,
   /**
    * How each surface drawing the pane draws it, by `e.surface`: as it last
    * did, or, drawn by two clients or more, every way since one came or went
@@ -499,9 +483,14 @@ function resultTextOf(content: readonly Record<string, unknown>[]): string | und
   return Array.isArray(inner) ? inner.map(part => (typeof part?.text === 'string' ? part.text : '')).join('\n') : undefined
 }
 
-/** Whether Claude is at work: the engine's word when it has given one, else the turns begun and not ended. */
-function working(): boolean {
-  return live.engineWorking ?? live.turns.size > 0
+/** Whether the main loop's turn runs: true from its `turn.start` to its `turn.complete`, undefined before the mod has seen either. */
+function isMainTurnRunning(): boolean | undefined {
+  return live.mainTurn
+}
+
+/** Whether the batch under way sends `task`'s update. */
+function isHeld(task: Task): boolean {
+  return live.batchIds.has(task.id)
 }
 
 export const register: Register = on => {
@@ -528,6 +517,8 @@ export const register: Register = on => {
   // more, for a change whose write failed. The exit's budget is short, and
   // the end waits for the write only through half of what is left.
   on('session.end', async ($, e, next) => {
+    // Its answers stay unsent in its key: a prompt sent now could reach the session /clear starts.
+    cancelBatch()
     live.ends += 1
     const written = persist($).catch(() => undefined)
     const leftMs = next.budget.remainingMs
@@ -715,16 +706,18 @@ export const register: Register = on => {
           ? list
           : scope === 'open'
             ? list.filter(isActive)
-            : list.filter(isShown)
+            : list.filter(task => isShown(task) || task.update === 'pending')
 
     if (id !== undefined && picked.length === 0) {
       return { result: `No item #${id}.` }
     }
 
     // A subagent's read tells the main agent nothing. Claude hears the
-    // responses this shows: one that came in after it read goes later.
+    // responses this shows: one that came in after it read goes later, and
+    // one the batch sends goes in the user's own words, which auto mode reads
+    // as their consent.
     if (e.agentId === undefined) {
-      await claim($, task => picked.some(one => one.id === task.id && one.update === 'pending'))
+      await claim($, task => !isHeld(task) && picked.some(one => one.id === task.id && one.update === 'pending'))
     }
 
     return { result: listOf(picked, await $.clock.now(), id !== undefined) }
@@ -749,21 +742,21 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Only the main loop's events say whether Claude reads an appended row: a
+  // subagent's turns read their own conversation.
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       live.alertedTurn = false
+      live.mainTurn = true
+      live.unreadAppend = []
     }
-
-    live.isUnread = false
-    live.turns.add(e.turnId)
-    await syncWorking($)
 
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
-      live.isUnread = false
+      live.unreadAppend = []
     }
 
     return yield* next(e)
@@ -772,49 +765,17 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
 
-    // Main's turn ending ends every turn; another loop's ends its own.
     if (e.agentId === undefined) {
       live.alertedTurn = false
-      live.turns.clear()
-      live.engineWorking = false
-    } else {
-      live.turns.delete(e.turnId)
-    }
+      live.mainTurn = false
 
-    await syncWorking($)
-
-    if (e.agentId === undefined) {
-      // Answers saved while Claude worked go now that it's free, unless an
-      // ask is still unanswered: then they go with that last answer, together.
-      // One a prompt entered without goes with them, but sends nothing alone.
-      const all = await read($, tasks)
-      const isAllAnswered = all.some(task => task.update === 'pending' && !live.held.has(updateKeyOf(task))) && !all.some(isUnanswered)
-
-      if (live.isSendingAtEnd || isAllAnswered) {
-        live.isSendingAtEnd = false
-        // This message wakes Claude, which reads any row it missed above it.
-        live.isUnread = false
-        void send($, true)
-      } else if (live.isUnread) {
-        // A Send now that joined the turn during its final reply sits in the
-        // conversation with no step left to read it: wake Claude up for it.
-        live.isUnread = false
-        void $.prompt.submit({ text: 'I answered an item while you were finishing your reply; my answer is above.', asUser: true })
+      // A row that joined the turn during its last request has no step left to read it.
+      if (live.unreadAppend.length > 0) {
+        wakeUp($)
       }
     }
 
     return result
-  })
-
-  // Draws nothing and passes the band on: it only reads the engine's word on
-  // whether a turn runs, which no turn event gives for every loop.
-  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    if (live.engineWorking !== e.props.isWorking) {
-      live.engineWorking = e.props.isWorking
-      $.clock.after(0, () => void syncWorking($))
-    }
-
-    return next(e)
   })
 
   on('ui.press', { plugin: PLUGIN }, async ($, e, next) => {
@@ -866,28 +827,48 @@ export const register: Register = on => {
         return { drop: overLimit }
       }
 
-      if (e.turnId === undefined) {
-        // Claude is idle: this prompt is the answer, sent with every other
-        // update Claude has not heard, those a batch was about to send among them.
+      // While Claude is idle, this prompt is the answer, sent with every other
+      // update Claude has not heard, the batch's among them: the batch waits
+      // until the prompt is known to be one.
+      const isPaused = e.turnId === undefined && live.batch !== null
+
+      if (isPaused) {
         live.batch?.cancel()
         live.batch = null
       }
 
       // An item closed meanwhile (Claude withdrew it, say) keeps no answer:
       // the prompt goes as typed. One with nothing after its head is Done.
-      const was = await resolve($, task.id, bridged.answer === '' ? DONE : replyOf(bridged.answer), 'later')
+      const was = await resolve($, task.id, bridged.answer === '' ? DONE : replyOf(bridged.answer))
       isAnswered = was !== undefined && isActive(was)
 
+      // Typed over a running turn, the prompt may wait for the turn to end:
+      // the batch takes the answer into the turn instead.
       if (isAnswered && e.turnId !== undefined) {
-        const when = (await read($, tasks)).some(isUnanswered) ? 'with your other answers' : 'when this turn ends'
+        const now = (await read($, tasks)).find(one => one.id === task.id)
 
-        return {
-          drop: `Saved as your answer to #${task.id}. Claude gets it ${when}, or press Send now in /open-items.`,
+        if (now?.update !== 'pending') {
+          return { drop: `Your answer to #${task.id} already went to Claude.` }
         }
+
+        // The same answer again, after a send gave it back: no batch holds it.
+        if (!isHeld(now)) {
+          sendSoon($, task.id)
+        }
+
+        return { drop: `Your answer to #${task.id} goes to Claude now.` }
+      }
+
+      if (isAnswered) {
+        cancelBatch()
+      } else if (isPaused) {
+        armBatch($)
       }
     }
 
-    const due = await claim($)
+    // What the batch sends goes in the user's own words, not beside a prompt
+    // that is not theirs (a task notification, a hand-back).
+    const due = (await claim($, one => !isHeld(one))).filter(hasNewsIn)
     // An item still here has its answer in this prompt, or in another send
     // that took it as it was saved. One gone meanwhile (a /clear) leaves the
     // prompt as typed.
@@ -897,15 +878,17 @@ export const register: Register = on => {
       return { drop: `Your answer to #${task.id} already went to Claude.` }
     }
 
+    // Some seats skip this mod's prompt.context and session.compact hooks, so
+    // a line on every prompt is what reminds a Claude past a compaction.
+    const reminder = reminderOf(await read($, tasks), live.batchIds)
+    const context = [...(e.context ?? []), ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []), ...(reminder === undefined ? [] : [reminder])]
+    const entered = { ...e, ...(isAnswer ? { text: messageOf(due) } : {}), ...(context.length > 0 ? { context } : {}) }
+
     if (due.length === 0) {
-      return next(e)
+      return next(entered)
     }
 
-    if (isAnswer) {
-      return passOn($, due, inWords, 'kept', () => next({ ...e, text: messageOf(due) }))
-    }
-
-    return passOn($, due, inDigest, 'nothing', () => next({ ...e, context: [...(e.context ?? []), digestOf(due)] }))
+    return isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered))
   })
 
   // The steering goes last, on the session's side of the cache boundary,
@@ -919,19 +902,6 @@ export const register: Register = on => {
     }
 
     return { sections: [...composed.sections, { id: 'open-items:steering', text: STEERING, scope: 'session' }] }
-  })
-
-  // Read at a conversation's start and again after a compaction: what is
-  // still with the user, so Claude neither forgets nor adds it twice.
-  on('prompt.context', async ($, e, next) => {
-    const result = await next(e)
-    const shown = (await read($, tasks)).filter(task => isShown(task) && task.kind !== 'info')
-
-    if (shown.length === 0) {
-      return result
-    }
-
-    return { ...result, blocks: [...result.blocks, { name: 'openItems', text: contextOf(shown) }] }
   })
 
   on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {
@@ -1027,7 +997,7 @@ export const register: Register = on => {
       live.seats.set(e.surface, isShared ? seatsWith(kept, seat) : [seat])
     }
 
-    const { shown, editing: field, isWorking: working } = view
+    const { shown, editing: field } = view
 
     // The pane is closing: it asks for no rows, which would open it again.
     if (shown.length === 0) {
@@ -1043,7 +1013,6 @@ export const register: Register = on => {
     }
 
     const groups = groupsOf(shown.filter(isActive))
-    const saved = unsentOf(shown)
     const selected = selectedOf(view)
     const head = headlineOf(view)
 
@@ -1073,7 +1042,7 @@ export const register: Register = on => {
             label={action.label}
             onPress={() => {
               if (action.option !== undefined) {
-                return respond($, task.id, choseOf(action.option), 'auto')
+                return respond($, task.id, choseOf(action.option))
               }
 
               if (action.key === 'seen') {
@@ -1084,7 +1053,7 @@ export const register: Register = on => {
                 return startEditing($, task.id)
               }
 
-              return respond($, task.id, action.key === 'later' ? LATER : DONE, 'auto')
+              return respond($, task.id, action.key === 'later' ? LATER : DONE)
             }}
           />
         ))}
@@ -1105,29 +1074,27 @@ export const register: Register = on => {
             </Text>
             <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
               <Button key="edit" plain label="Edit" onPress={() => startEditing($, task.id)} />
-              <Button key="send-anyway" plain label="Send anyway" onPress={() => answer($, task.id, held, 'auto', true)} />
+              <Button key="send-anyway" plain label="Send anyway" onPress={() => answer($, task.id, held, true)} />
             </Box>
           </Box>,
         ]
       }
 
       const key = fieldKeyOf({ id: task.id, field: 'answer' })
-      const submitLabel = submitLabelOf(view)
-      const [otherWay, long, cancel] = answerButtonsOf(view)
+      const [long, cancel] = ANSWER_BUTTONS
 
       return [
         <Input
           key={key}
           label={ANSWER_LABEL}
-          placeholder={placeholderOf(answerPlaceholderOf(view), ANSWER_LABEL, submitLabel, columns)}
+          placeholder={placeholderOf(ANSWER_PLACEHOLDER, ANSWER_LABEL, SUBMIT_LABEL, columns)}
           value={fieldValueOf(e.surface, key)}
-          submitLabel={submitLabel}
+          submitLabel={SUBMIT_LABEL}
           autoFocus
           onInput={value => typed($, key, value)}
-          onSubmit={value => answer($, task.id, value, 'auto')}
+          onSubmit={value => answer($, task.id, value)}
         />,
         <Box key="buttons" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-          <Button key="other-way" plain label={otherWay} onPress={() => answerTyped($, task.id, working ? 'now' : 'later')} />
           <Button key="long" plain label={long} onPress={() => longAnswer($, task.id)} />
           <Button key="cancel" plain label={cancel} onPress={() => stopEditing($)} />
         </Box>,
@@ -1188,32 +1155,16 @@ export const register: Register = on => {
       </Box>
     ))
 
-    const savedRows = saved.map((task, i) => (
-      <Box key={`saved-${task.id}`} flexDirection="row" flexShrink={0}>
-        <Box flexShrink={0}>
-          <Text color="green">{'✓ '}</Text>
-        </Box>
-        <Text dimColor wrap="wrap">
-          {savedOf(task)}
-        </Text>
-        <Box flexShrink={0} marginLeft={2}>
-          <Button key={`send-${task.id}`} plain {...sendNowOf(i)} onPress={() => sendNow($)} />
-        </Box>
-      </Box>
-    ))
-
     return (
       <Box flexDirection="column">
         <Box key="head" flexDirection="row" flexShrink={0}>
           <Text wrap="wrap">
             <Text color={shown.some(waitsOnUser) ? 'yellow' : 'gray'}>{head.glyph}</Text>
             <Text bold>{head.headline}</Text>
-            <Text dimColor>{head.note}</Text>
           </Text>
         </Box>
         <Box key="tasks" flexDirection="column" marginTop={1} flexShrink={0}>
           {sectionRows}
-          {savedRows}
         </Box>
         <Box key="foot" flexDirection="row" marginTop={1} columnGap={BUTTON_GAP} flexShrink={0}>
           <Text dimColor wrap="wrap">
@@ -1226,13 +1177,6 @@ export const register: Register = on => {
       </Box>
     )
   })
-}
-
-/** Keeps the pane's word on whether Claude works (Enter sends, or saves) in step. */
-async function syncWorking($: EngineInterface) {
-  const now = working()
-
-  await update($, isWorking, () => now)
 }
 
 /**
@@ -1294,11 +1238,9 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.drafts.clear()
   live.closed.clear()
   live.drawn.clear()
-  live.held.clear()
-  live.batch?.cancel()
-  live.batch = null
-  live.isSendingAtEnd = false
-  live.isUnread = false
+  cancelBatch()
+  live.mainTurn = undefined
+  live.unreadAppend = []
   const cwd = await $.session.cwd().catch(() => undefined)
   await update($, folder, known => cwd ?? known)
   await update($, restoredFor, () => null)
@@ -1646,11 +1588,10 @@ async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 
   const key = openKeyOf(field)
   const state = {
     shown: (await read($, tasks)).filter(isShown),
-    selectedId: await read($, selectedId),
     editing: field,
     draft: key === undefined ? '' : (live.drafts.get(key) ?? ''),
+    selectedId: await read($, selectedId),
     nowMs: await $.clock.now(),
-    isWorking: await read($, isWorking),
   }
 
   return seated(state, surface)
@@ -1791,11 +1732,6 @@ async function passOn<R extends PromptSubmitResult>(
       const lost = due.filter(task => !isCarried(result, task))
 
       if (lost.length > 0) {
-        // The prompt entered, and Claude takes a turn on it: sent again as
-        // that turn ends, a response a hook beneath always takes out (or
-        // rewords at its head) would go round and round. It waits for Send
-        // now, as the toast says, or the next prompt.
-        lost.forEach(task => live.held.add(updateKeyOf(task)))
         back = { lost, note: 'why', reason: 'a hook took it out of the prompt' }
       }
     }
@@ -1823,11 +1759,6 @@ function inWords(entered: Entered, task: Task): boolean {
   return entered.text.includes(ownHeadOf(task))
 }
 
-/** The update a task carries, the same through each send and give-back: a new one changes `updatedMs`. */
-function updateKeyOf(task: Task): string {
-  return `${task.id}@${task.updatedMs}`
-}
-
 /** Whether a prompt that entered carries an update in a digest beside its words (`#5 done: <title>.`), read as `inWords` reads them. */
 function inDigest(entered: Entered, task: Task): boolean {
   return (entered.context ?? []).some(block => block.includes(newsHeadOf(task)))
@@ -1853,7 +1784,7 @@ async function giveBack($: EngineInterface, lost: readonly Task[], note: DropNot
   const which = numbersOf(lost.map(task => task.id))
   const why = note === 'why' && reason !== undefined ? `: ${printable(reason, 200).replace(/[.!]+$/, '')}` : ''
 
-  $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved; press Send now in /open-items.`, {
+  $.ui.toast(`Claude didn't get your response to ${which}${why}. It's saved, and goes to Claude with the next message.`, {
     timeoutMs: 8000,
   })
 }
@@ -1921,23 +1852,18 @@ async function select($: EngineInterface, id: number) {
 }
 
 /**
- * The user's `move` on a task; `how` says when Claude hears of it. Resolves
- * the task as it stood, as `edit` does: one no longer open stays as it is.
+ * The user's `move` on a task, which the batch sends Claude. Resolves the
+ * task as it stood, as `edit` does: one no longer open stays as it is.
  */
-async function resolve($: EngineInterface, id: number, move: Move, how: How) {
+async function resolve($: EngineInterface, id: number, move: Move) {
   const was = await edit($, id, (task, nowMs) => movedBy(task, move, nowMs))
-  const isRepeat = isRepeatOf(was, move)
-  const isNew = was !== undefined && isActive(was) && !isRepeat
+  const isNew = was !== undefined && isActive(was) && !isRepeatOf(was, move)
   await settle($, id)
 
+  // A move that changes nothing sends nothing new, and holds back no batch under way.
   if (isNew) {
     await moveOn($, id)
-  }
-
-  // A move that changes nothing sends nothing new, and holds back no batch
-  // under way; Send now still sends the answer it repeats, saved for later.
-  if ((how === 'now' && (isNew || isRepeat)) || (how === 'auto' && isNew && !working())) {
-    sendSoon($)
+    sendSoon($, id)
   }
 
   return was
@@ -1950,8 +1876,8 @@ async function resolve($: EngineInterface, id: number, move: Move, how: How) {
  * it (`typedText`) goes to the prompt box, unless it looks like a secret; one
  * the user's last move already matches (a second press) stays as it is.
  */
-async function respond($: EngineInterface, id: number, move: Move, how: How, typedText = '') {
-  const was = await resolve($, id, move, how)
+async function respond($: EngineInterface, id: number, move: Move, typedText = '') {
+  const was = await resolve($, id, move)
 
   if (was === undefined || (!isActive(was) && !isRepeatOf(was, move))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
@@ -1980,10 +1906,10 @@ async function toPromptBox($: EngineInterface, text: string): Promise<boolean> {
  * Answers task `id` with what is typed in its field, or, pressed on a
  * drawing from before the task closed, with what was typed before it did.
  */
-async function answerTyped($: EngineInterface, id: number, how: How) {
+async function answerTyped($: EngineInterface, id: number) {
   const key = fieldKeyOf({ id, field: 'answer' })
 
-  return answer($, id, live.drafts.get(key) ?? live.closed.get(key) ?? '', how)
+  return answer($, id, live.drafts.get(key) ?? live.closed.get(key) ?? '')
 }
 
 /** The user looked at info item `id`: it leaves the pane, and Claude hears nothing. */
@@ -1998,7 +1924,7 @@ async function isOpenNow($: EngineInterface, id: number): Promise<boolean> {
   return (await read($, tasks)).some(task => task.id === id && isActive(task))
 }
 
-async function answer($: EngineInterface, id: number, text: string, how: How, isSecretOk = false) {
+async function answer($: EngineInterface, id: number, text: string, isSecretOk = false) {
   const value = text.trim()
   // Entered or pressed on a drawing from before its task closed, an answer
   // goes to `respond`, which says the task isn't open any more.
@@ -2021,7 +1947,7 @@ async function answer($: EngineInterface, id: number, text: string, how: How, is
     return
   }
 
-  await respond($, id, replyOf(value), how, value)
+  await respond($, id, replyOf(value), value)
 }
 
 async function startEditing($: EngineInterface, id: number) {
@@ -2058,10 +1984,10 @@ async function stopEditing($: EngineInterface) {
 
 /** Moves a long answer into the prompt box, where the real editor takes pastes and lines. */
 async function longAnswer($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it answers as Save for
-  // later would: the task isn't open any more.
+  // Pressed on a drawing from before its task closed, it answers with what
+  // was typed, which `respond` puts in the prompt box.
   if (!(await isOpenNow($, id))) {
-    return answerTyped($, id, 'later')
+    return answerTyped($, id)
   }
 
   const key = fieldKeyOf({ id, field: 'answer' })
@@ -2082,65 +2008,70 @@ async function longAnswer($: EngineInterface, id: number) {
   })
 }
 
-function sendNow($: EngineInterface) {
-  live.batch?.cancel()
-  live.batch = null
-  void send($)
+/** Sends item `id`'s update with the others pressed within BATCH_MS of the last. */
+function sendSoon($: EngineInterface, id: number) {
+  live.batchIds.add(id)
+  armBatch($)
 }
 
-function sendSoon($: EngineInterface) {
+/** Starts the batch's BATCH_MS over. */
+function armBatch($: EngineInterface) {
   live.batch?.cancel()
   live.batch = $.clock.after(BATCH_MS, () => {
-    live.batch = null
-    void send($)
+    const ids = [...live.batchIds]
+    cancelBatch()
+    void deliver($, ids)
   })
 }
 
+function cancelBatch() {
+  live.batch?.cancel()
+  live.batch = null
+  live.batchIds.clear()
+}
+
 /**
- * Hands Claude every update it has not heard: a turn of its own while it is
- * idle, a row its running turn reads at the next step while it works.
- * `isTurnOver`: sent as main's turn ends, when Claude is idle whatever the
- * engine's last word on it was.
+ * Hands Claude the updates of items `ids`, with any other no batch holds (one
+ * a send gave back): a row the running main turn reads at its next request,
+ * or else the user's prompt, which the engine runs once Claude is idle.
  */
-async function send($: EngineInterface, isTurnOver = false) {
-  const due = await claim($)
+async function deliver($: EngineInterface, ids: readonly number[]) {
+  // A move Claude is never told of (a Seen v0.1 saved unsent) counts as told, and says nothing.
+  const due = (await claim($, task => ids.includes(task.id) || !isHeld(task))).filter(hasNewsIn)
 
   if (due.length === 0) {
     return
   }
 
   const text = messageOf(due)
-  const which = numbersOf(due.map(task => task.id))
+  const which = due.map(task => task.id)
+  const isTaken =
+    isMainTurnRunning() === true &&
+    (await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).then(
+      appended => appended.deny === undefined,
+      () => false,
+    ))
 
-  if (isTurnOver || !working()) {
+  if (!isTaken) {
     await passOn($, due, inWords, 'why', () => $.prompt.submit({ text, asUser: true })).catch(() => undefined)
     return
   }
 
-  const isTaken = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).then(
-    appended => appended.deny === undefined,
-    () => false,
-  )
-
-  if (!isTaken) {
-    await undelivered($, due)
-
-    // The turn ended while the row was being refused: they go now.
-    if (!working()) {
-      void send($, true)
-      return
-    }
-
-    live.isSendingAtEnd = true
-    $.ui.toast(`Claude gets your response to ${which} when it finishes this turn.`)
-    return
+  if (isMainTurnRunning() === true) {
+    live.unreadAppend = [...new Set([...live.unreadAppend, ...which])]
+  } else {
+    // The turn ended while the row went in.
+    wakeUp($)
   }
 
-  live.isUnread = true
+  // The notice is for the user's eyes only; Claude has the answer either way.
+  await $.session
+    .append({ message: { type: 'system', content: [{ type: 'text', text: `Sent your response to ${numbersOf(which)} to Claude` }] } })
+    .catch(() => undefined)
+}
 
-  try {
-    await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: `Sent your response to ${which} to Claude` }] } })
-  } catch {
-    // The notice is for the user's eyes only; Claude has the answer either way.
-  }
+/** Starts a turn for the answers that joined the main turn after its last request. */
+function wakeUp($: EngineInterface) {
+  live.unreadAppend = []
+  void $.prompt.submit({ text: WAKE_UP, asUser: true }).catch(() => undefined)
 }

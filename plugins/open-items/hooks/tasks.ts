@@ -29,14 +29,9 @@ export function waitsOnUser(task: Task): boolean {
   return isActive(task) && !task.isWaitingForClaude
 }
 
-/** An ask the user has not answered or put off: `turn.complete` in register.tsx holds saved answers back while one is left. */
-export function isUnanswered(task: Task): boolean {
-  return task.state === 'open' && task.kind !== 'info' && !task.isWaitingForClaude
-}
-
-/** In the Open items pane: the user's to act on, moving to a new session, or acted on and not yet told to Claude. */
+/** In the Open items pane: the user's to act on, or moving to a new session. */
 export function isShown(task: Task): boolean {
-  return isActive(task) || task.state === 'handing-off' || task.update === 'pending'
+  return isActive(task) || task.state === 'handing-off'
 }
 
 /** A title as two near-identical asks compare equal. */
@@ -353,17 +348,16 @@ export function overLimitOf(id: number, text: string): string | undefined {
     : undefined
 }
 
-function detailIn(task: Task): string {
-  return task.thread[0]?.text ?? ''
-}
+/** What a reply's head adds, so Claude does not take the reply as the item's end. */
+const STAYS_OPEN = '(the item stays open; answer in it with reply_item, or close it with close_item)'
 
-/** A move as a digest tells it: a long answer named, and `list_items` pointed at. */
+/** A move as a digest tells it: a long reply named, and `list_items` pointed at. */
 function newsLineOf(task: Task, move: Message): string {
   switch (move.event) {
     case undefined:
       return move.text.length > MAX_INLINE_ANSWER
-        ? `The user's answer (${sizeOf(move.text.length)}) is saved: call list_items with id ${task.id} to read it.`
-        : `The user's answer:\n${move.text}`
+        ? `The user's reply (${sizeOf(move.text.length)}) is saved: call list_items with id ${task.id} to read it. The item stays open.`
+        : `The user replied ${STAYS_OPEN}:\n${move.text}`
     case 'chose':
       return `The user chose: ${move.text}`
     case 'later':
@@ -391,6 +385,11 @@ export function newsHeadOf(task: Task): string {
   return `#${task.id} ${task.state}: ${task.title}.`
 }
 
+/** Whether the user made a move on `task` that Claude is told of and has not heard: a Seen is never told. */
+export function hasNewsIn(task: Task): boolean {
+  return unheardOf(task).length > 0
+}
+
 /** One task's news for Claude: `#5 resolved: <title>.` and what the user said that Claude has not heard. */
 export function newsOf(task: Task): string {
   const body = bodyOf(task)
@@ -406,7 +405,7 @@ export function ownHeadOf(task: Task): string {
 function ownWordOf(move: Message): string {
   switch (move.event) {
     case undefined:
-      return move.text
+      return `my reply ${STAYS_OPEN}:\n${move.text}`
     case 'chose':
       return `I chose "${move.text}".`
     case 'later':
@@ -416,16 +415,11 @@ function ownWordOf(move: Message): string {
   }
 }
 
-/** What the user did with an item that Claude has not been told of, in their own words: a reply starts on a line of its own. */
+/** What the user did with an item that Claude has not been told of, in their own words, each move after the item's head. */
 function ownWordsOf(task: Task): string {
-  const moves = unheardOf(task)
-  const head = ownHeadOf(task)
-
-  if (moves.length === 0) {
-    return head
-  }
-
-  return `${head}${moves[0]?.event === undefined ? '\n' : ' '}${moves.map(ownWordOf).join('\n')}`
+  return unheardOf(task)
+    .map(move => `${ownHeadOf(task)} ${ownWordOf(move)}`)
+    .join('\n')
 }
 
 /**
@@ -445,15 +439,18 @@ export function digestOf(due: readonly Task[]): string {
   return `Item updates since you last checked (Open items):\n${lines.join('\n')}`
 }
 
-/** Read after a compaction or at a session's start: what is still with the user. */
-export function contextOf(shown: readonly Task[]): string {
-  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${detailIn(task)}` : newsOf(task)))
+/**
+ * The line each prompt carries while asks are open, for a Claude that lost
+ * sight of them (after a compaction, say): the open asks, Later ones
+ * included, and the unread answers: a move Claude has not been told of, or a
+ * reply it has not answered or closed. One a batch is about to send (`held`)
+ * is not unread yet. Undefined while no ask is open.
+ */
+export function reminderOf(tasks: readonly Task[], held: ReadonlySet<number>): string | undefined {
+  const open = tasks.filter(isOpenAsk).length
+  const unread = tasks.filter(task => !held.has(task.id) && (task.update === 'pending' || task.isWaitingForClaude)).length
 
-  return [
-    'Items you gave the user, through the Open items tools (add_item, reply_item, close_item, list_items):',
-    ...lines,
-    'The user sees them in their Open items pane, or with /open-items. Close any you no longer need with close_item.',
-  ].join('\n')
+  return open === 0 ? undefined : `Open items: ${open} open, ${plural(unread, 'unread answer')}; call list_items.`
 }
 
 /** `just now`, `4m ago`. */
@@ -530,27 +527,24 @@ export function addedOf(task: Task): string {
   ].join(' ')
 }
 
-/** The status line under the prompt: what waits on the user by kind, and responses not sent yet; nothing when neither is left. */
+/** The status line under the prompt: what waits on the user, by kind; nothing when nothing does. */
 export function statusOf(shown: readonly Task[]): string | undefined {
-  if (!shown.some(task => waitsOnUser(task) || task.update === 'pending')) {
+  if (!shown.some(waitsOnUser)) {
     return undefined
   }
 
-  const { glyph, headline, note } = waitingOf(shown)
+  const { glyph, headline } = waitingOf(shown)
 
-  return `${glyph}${headline}${note} · /open-items`
+  return `${glyph}${headline} · /open-items`
 }
 
 /**
  * What waits among `shown`, as the pane's head and the status line lead with
- * it: `☐ 1 decision · 2 questions · 1 not sent yet` (what waits on the user,
- * by kind), `✓ 1 not sent yet` with none of that, or `⋯ 1 waiting for Claude`
- * with only replies Claude has not answered; the responses named `noun` where
- * there's room.
+ * it: `☐ 1 decision · 2 questions` (what waits on the user, by kind), or
+ * `⋯ 1 waiting for Claude` with only replies Claude has not answered.
  */
-export function waitingOf(shown: readonly Task[], noun?: string): { glyph: string; headline: string; note: string } {
+export function waitingOf(shown: readonly Task[]): { glyph: string; headline: string } {
   const asks = shown.filter(waitsOnUser)
-  const saved = shown.filter(task => task.update === 'pending').length
 
   if (asks.length > 0) {
     // "info" keeps its form for any count.
@@ -559,14 +553,10 @@ export function waitingOf(shown: readonly Task[], noun?: string): { glyph: strin
       .map(({ kind, count }) => (kind === 'info' ? `${count} info` : plural(count, kind)))
       .join(' · ')
 
-    return { glyph: '☐ ', headline: kinds, note: saved > 0 ? ` · ${saved} not sent yet` : '' }
+    return { glyph: '☐ ', headline: kinds }
   }
 
-  if (saved > 0) {
-    return { glyph: '✓ ', headline: `${noun === undefined ? saved : plural(saved, noun)} not sent yet`, note: '' }
-  }
-
-  return { glyph: '⋯ ', headline: `${shown.filter(isActive).length} waiting for Claude`, note: '' }
+  return { glyph: '⋯ ', headline: `${shown.filter(isActive).length} waiting for Claude` }
 }
 
 const BRIDGE = /^\s*↳?\s*Answer to #(\d+):[ \t]*\n?/i

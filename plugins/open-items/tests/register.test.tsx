@@ -89,6 +89,8 @@ const ROTATE = {
 function seat(on: On, store: Record<string, unknown> = {}) {
   const world = {
     submitted: [] as string[],
+    /** What the plugin's own prompts carried beside their words, one entry per prompt. */
+    ownContexts: [] as (readonly string[] | undefined)[],
     appended: [] as { type: string; text: string }[],
     toasts: [] as string[],
     /** Every `$.ui.notify` the plugin made. */
@@ -292,6 +294,9 @@ function seat(on: On, store: Record<string, unknown> = {}) {
   })
   on('ui.focus', () => ({}))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.step', async function* ($, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
+  })
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('prompt.submit', ($, e) => {
     if (e.origin.kind === 'plugin' && world.refusing !== undefined) {
@@ -313,6 +318,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
 
     if (e.origin.kind === 'plugin') {
       world.submitted.push(e.text)
+      world.ownContexts.push(e.context)
     }
 
     const rewrite = (e.origin.kind === 'composer' ? world.rewriting : undefined) ?? world.masking
@@ -359,6 +365,33 @@ async function start($: Engine) {
 
 function typed(text: string, turnId?: string): PromptSubmitInput {
   return { text, wait: false, origin: { kind: 'composer' }, ...(turnId === undefined ? {} : { turnId }) }
+}
+
+/** A subagent's hand-back, as the engine raises it once the agent is done. */
+const HAND_BACK: PromptSubmitInput = {
+  text: '<agent-message from="tester">[Subagent hand-back] The tests pass.</agent-message>',
+  wait: false,
+  origin: { kind: 'peer' },
+}
+
+/** How Claude reads a message of the user's: a response to one item, then its head. */
+const ONE = 'My response to an item you gave me (Open items):\n\n'
+
+/** What follows an item's head in a reply of the user's, before the reply's own lines. */
+const REPLY_WORDS = 'my reply (the item stays open; answer in it with reply_item, or close it with close_item):'
+
+/** The prompt that wakes Claude for an answer its turn ended without reading. */
+const WAKE_UP = 'I answered an item while you were finishing your reply; my answer is above.'
+
+/** One model request of turn `turnId`, in the main loop or in agent `agentId`'s. */
+async function step($: Engine, turnId: string, agentId?: string) {
+  const stream = $.turn.step({ turnId, index: 0, model: 'claude-opus-5-5', messageCount: 1, ...(agentId === undefined ? {} : { agentId }) })
+
+  for await (const chunk of stream) {
+    void chunk
+  }
+
+  await stream.result
 }
 
 async function runTasks($: Engine) {
@@ -582,7 +615,6 @@ describe('long titles', () => {
       editing: null,
       draft: '',
       nowMs: NOW,
-      isWorking: false,
       canType: true,
       isFocused: true,
       isTyping: false,
@@ -1082,14 +1114,14 @@ describe('long titles', () => {
 
   test('a title past 80 characters, an older version left, is drawn whole', async ($, on) => {
     const title = `Rotate the deploy key ${'and check every runner that holds it '.repeat(3).trim()}`
-    seat(on, earlierItems(asItems([{ ...INSTRUMENTS, title }, { ...XCODE_LONG, title }]).map(item => (item.id === 2 ? movedBy(item, DONE_PRESS, NOW) : item))))
+    seat(on, earlierItems(asItems([{ ...INSTRUMENTS, title }, { ...XCODE_LONG, title }])))
     await start($)
 
     const ui = await $.ui.mount(inline(32))
 
     expect(title.length).toBeGreaterThan(80)
     expect(await textOf(ui, 'task-1')).toContain(title)
-    expect(await textOf(ui, 'saved-2')).toContain(`#2 ${title} · not sent yet`)
+    expect(await textOf(ui, 'task-2')).toContain(title)
   })
 
   test('a focused field wraps its text a column short of the field, for the cursor', () => {
@@ -1128,16 +1160,16 @@ describe('long titles', () => {
     // At 28 columns Claude Code 2.1.296 squeezes `⏎ send` under the empty field: 12 rows in all.
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'answer' })
-    expect(world.opens.at(-1)?.rows).toBe(13)
+    expect(world.opens.at(-1)?.rows).toBe(12)
 
     // A short answer leaves the hint room on its row.
     await ui.input({ key: 'answer-2', text: 'abc', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(11)
 
     await ui.input({ key: 'answer-2', text: 'abcdefghijk', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(13)
+    expect(world.opens.at(-1)?.rows).toBe(12)
   })
 
   test('an empty field in a narrow pane, hidden and opened again, takes the ring and asks for the row it squeezes onto', async ($, on) => {
@@ -1150,7 +1182,7 @@ describe('long titles', () => {
     // Out of the keys, the field draws no hint: one row.
     await $.ui.focus(ringTo('long'))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(11)
 
     // Hidden and opened again, the field's autoFocus takes the ring, and `⏎ send` squeezes under it.
     await ui.press({ key: 'hide' })
@@ -1158,7 +1190,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(24))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(13)
+    expect(world.opens.at(-1)?.rows).toBe(12)
   })
 
   test('the transcript row keeps its label whole and wraps the title after it', async ($, on) => {
@@ -1409,7 +1441,7 @@ describe('the answer field', () => {
     expect(world.opens.at(-1)?.rows).toBe(rows + 2)
 
     // Tab moves the keys on, and Shift+Tab brings them back.
-    await $.ui.focus(ringTo('other-way'))
+    await $.ui.focus(ringTo('long'))
     await clock.settle()
     expect(world.opens.at(-1)?.rows).toBe(rows + 1)
 
@@ -1463,7 +1495,7 @@ describe('the answer field', () => {
       text: 'LoginTests.testExpiredToken failed, and CartTests.testCouponRounding failed with a rounding error',
       kind: 'change',
     })
-    await $.ui.focus(ringTo('other-way'))
+    await $.ui.focus(ringTo('long'))
     await clock.settle()
     expect(world.opens.at(-1)?.rows).toBe(rows + 1)
 
@@ -1485,9 +1517,9 @@ describe('the answer field', () => {
 
     // Tab moves the keys on, and that re-size reads slowly once it has the
     // draft; the person comes back to the field and types meanwhile.
-    world.slowRead = 'isWorking'
+    world.slowRead = 'selectedId'
     world.readMs = 100
-    await $.ui.focus(ringTo('other-way'))
+    await $.ui.focus(ringTo('long'))
     await clock.settle()
     const typing = ui.input({
       key: 'answer-1',
@@ -1514,6 +1546,14 @@ describe('the answer field', () => {
 })
 
 describe('responding', () => {
+  const QUESTION = { ...ROTATE, id: 1, title: XCODE_TASK.title, why: XCODE_TASK.detail, kind: 'question' } as const
+  const ACTION = { ...ROTATE, id: 2, title: KEY_TASK.title, why: KEY_TASK.detail, doneWhen: KEY_TASK.done_when } as const
+
+  /** The store as a session left #1 answered with `answer` and #2 open, the answer never told to Claude: as a send that failed leaves it. */
+  function unsent(answer = 'LoginTests.testExpiredToken failed') {
+    return earlierItems(asItems([QUESTION, ACTION]).map(item => (item.id === 1 ? movedBy(item, { text: answer }, NOW) : item)))
+  }
+
   test('Done while Claude is idle is sent to Claude as a message, and the pane closes', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
@@ -1530,74 +1570,9 @@ describe('responding', () => {
     expect(world.status).toBeUndefined()
   })
 
-  test('an answer while Claude works is saved, and goes when its turn ends', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-
-    await ui.press({ key: 'answer' })
-    expect((await ui.find({ type: 'Input', key: 'answer-1' }))?.props.placeholder).toBe('Enter saves it; Claude gets it when this turn ends')
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(0)
-    expect(world.appended).toHaveLength(0)
-    expect(await textOf(ui, 'saved-1')).toContain('not sent yet')
-    // The pane has the room to say what is not sent; the status line says it short.
-    expect(await textOf(ui, 'head')).toContain('✓ 1 response not sent yet')
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
-
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
-
-    expect(world.submitted).toEqual([
-      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nLoginTests.testExpiredToken failed',
-    ])
-    expect(world.status).toBeUndefined()
-  })
-
-  test('with a task still open, a saved answer waits for it, or rides along with the next prompt', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-
-    await ui.press({ key: 'answer' })
-    expect((await ui.find({ type: 'Input', key: 'answer-1' }))?.props.placeholder).toBe('Enter saves it; Claude gets it with your other answers')
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(0)
-    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
-
-    const next = await $.prompt.submit(typed('now the cart'))
-
-    expect(next.context?.[0]).toContain('#1 open: Run xcodebuild test on your Mac, paste the failures.')
-    expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
-  })
-
   test('a saved answer riding a typed prompt that a hook beneath drops waits for the next one', async ($, on) => {
-    const { world, clock } = seat(on)
+    const { world } = seat(on, unsent())
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
 
     world.refusingTyped = 'Blocked by your organization.'
     const blocked = await $.prompt.submit(typed('now the cart'))
@@ -1605,35 +1580,25 @@ describe('responding', () => {
     expect(blocked.drop).toBe('Blocked by your organization.')
     // The engine shows why the prompt didn't enter; the answer waits, as it did.
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
+    expect(itemOf(world, 1)?.update).toBe('pending')
 
     world.refusingTyped = undefined
     const next = await $.prompt.submit(typed('now the cart'))
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
-    expect(world.status).toBe('☐ 1 action · /open-items')
+    expect(itemOf(world, 1)?.update).toBe('delivered')
   })
 
   test('a saved answer that a hook beneath takes out of a typed prompt waits for the next one, and a toast says so', async ($, on) => {
-    const { world, clock } = seat(on)
+    const { world } = seat(on, unsent())
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
 
     world.isStripping = true
     const stripped = await $.prompt.submit(typed('now the cart'))
 
     expect(stripped.context).toBeUndefined()
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved, and goes to Claude with the next message.")
+    expect(itemOf(world, 1)?.update).toBe('pending')
 
     world.isStripping = false
     const next = await $.prompt.submit(typed('now the cart'))
@@ -1642,63 +1607,35 @@ describe('responding', () => {
   })
 
   test('a saved answer a hook beneath takes out of a typed prompt that quotes its head still waits for the next one', async ($, on) => {
-    const { world, clock } = seat(on)
+    const { world } = seat(on, unsent())
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
 
     world.isStripping = true
     const stripped = await $.prompt.submit(typed('Earlier you wrote "#1 open: Run xcodebuild test on your Mac, paste the failures." Why?'))
 
     expect(stripped.context).toBeUndefined()
-    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
+    expect(itemOf(world, 1)?.update).toBe('pending')
   })
 
   test('a saved answer that a hook beneath rewrites as it rides a typed prompt reaches Claude', async ($, on) => {
-    const { world, clock } = seat(on)
+    const { world } = seat(on, unsent('LoginTests.testExpiredToken failed with token abc123'))
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed with token abc123' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
 
     world.rewriting = text => text.replace('abc123', '******')
     const next = await $.prompt.submit(typed('now the cart'))
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed with token ******')
     expect(world.toasts).toEqual([])
-    expect(world.status).toBe('☐ 1 action · /open-items')
+    expect(itemOf(world, 1)?.update).toBe('delivered')
   })
 
   test('of two saved answers riding a typed prompt, the one a hook beneath takes out waits for the next', async ($, on) => {
-    const { world, clock } = seat(on)
+    const decision = { ...ROTATE, id: 2, title: PAGING_TASK.title, why: PAGING_TASK.detail, kind: 'decision', options: PAGING_TASK.options }
+    const items = asItems([QUESTION, decision, { ...ACTION, id: 3 }]).map(item =>
+      item.id === 3 ? item : movedBy(item, item.id === 1 ? { text: 'LoginTests.testExpiredToken failed' } : { text: 'Cursor', event: 'chose' }, NOW),
+    )
+    const { world } = seat(on, earlierItems(items))
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(PAGING_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await ui.press({ key: 'option-1' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
 
     // A hook beneath cuts #2's line out of what rides along.
     world.rewriting = text => text.split('\n').filter(line => !line.startsWith('#2 ')).join('\n')
@@ -1706,8 +1643,8 @@ describe('responding', () => {
 
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
     expect(next.context?.[0]).not.toContain('#2 ')
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #2: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #2: a hook took it out of the prompt. It's saved, and goes to Claude with the next message.")
+    expect(itemOf(world, 2)?.update).toBe('pending')
 
     world.rewriting = undefined
     const again = await $.prompt.submit(typed('and the docs'))
@@ -1716,7 +1653,7 @@ describe('responding', () => {
     expect(again.context?.[0]).not.toContain('LoginTests.testExpiredToken failed')
   })
 
-  test('a response a hook beneath takes out of the message that wakes Claude waits for Send now: the turn that message starts ends without sending it again', async ($, on) => {
+  test("a response a hook beneath takes out of Claude's message goes with the next prompt: the turns after that message send nothing again", async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
@@ -1729,7 +1666,7 @@ describe('responding', () => {
     await clock.settle()
 
     expect(world.submitted).toHaveLength(1)
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved; press Send now in /open-items.")
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: a hook took it out of the prompt. It's saved, and goes to Claude with the next message.")
 
     // The turn that message starts ends, and another after it.
     for (const turnId of ['t1', 't2']) {
@@ -1739,37 +1676,26 @@ describe('responding', () => {
     }
 
     expect(world.submitted).toHaveLength(1)
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
+    expect(itemOf(world, 1)?.update).toBe('pending')
 
     world.masking = undefined
-    await ui.press({ key: 'send-1' })
-    await clock.settle()
+    const next = await $.prompt.submit(typed('and the docs'))
 
-    expect(world.submitted).toHaveLength(2)
-    expect(world.status).toBeUndefined()
+    expect(next.context?.[0]).toContain('#1 resolved: Add STRIPE_SECRET_KEY to .env.')
+    expect(itemOf(world, 1)?.update).toBe('delivered')
   })
 
   test('a typed prompt that fails beneath keeps its own error, and its answer waits, though the store fails too', async ($, on) => {
-    const { world, clock } = seat(on)
+    const { world } = seat(on, unsent())
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
 
     world.isTypedFailing = true
     world.isStoreFailing = true
     await expect($.prompt.submit(typed('now the cart'))).rejects.toThrow('no implementation for prompt.submit')
 
     expect(world.toasts.at(-1)).toContain("Claude didn't get your response to #1: no implementation for prompt.submit")
-    expect(world.toasts.at(-1)).toContain("It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('☐ 1 action · 1 not sent yet · /open-items')
+    expect(world.toasts.at(-1)).toContain("It's saved, and goes to Claude with the next message.")
+    expect(itemOf(world, 1)?.update).toBe('pending')
 
     world.isTypedFailing = false
     world.isStoreFailing = false
@@ -1778,50 +1704,7 @@ describe('responding', () => {
     expect(next.context?.[0]).toContain('LoginTests.testExpiredToken failed')
   })
 
-  test("of two saved responses, the first row's Send now answers s and the other a click", async ($, on) => {
-    seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(PAGING_TASK)
-    await $.turn.start({ text: 'go', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'Two failures' })
-    await ui.press({ key: 'option-1' })
-
-    expect((await ui.find({ type: 'Button', key: 'send-1' }))?.props.hotkey).toBe('s')
-    expect((await ui.find({ type: 'Button', key: 'send-2' }))?.props.hotkey).toBeUndefined()
-  })
-
-  test('Send now while Claude works reaches it in the turn', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'CartTests.testCouponRounding', kind: 'change' })
-    await ui.press({ key: 'other-way' })
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.appended.map(row => row.type)).toEqual(['user', 'system'])
-    expect(world.appended[0]?.text).toContain('CartTests.testCouponRounding')
-    expect(world.appended[1]?.text).toBe('Sent your response to #1 to Claude')
-    expect(world.toasts).toHaveLength(0)
-
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
-
-    // Claude has the row already, so the answer doesn't go again; but no step
-    // read it before the turn ended, so a one-line prompt wakes Claude for it.
-    expect(world.submitted).toEqual(['I answered an item while you were finishing your reply; my answer is above.'])
-  })
-
-  test('a prompt typed while Send now joins the turn carries no second copy of the answer', async ($, on) => {
+  test('a prompt typed while an answer joins the turn carries no second copy of it', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
@@ -1830,22 +1713,20 @@ describe('responding', () => {
     await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-
     // The row takes a moment to join the conversation, and the user types meanwhile.
     world.appendMs = 500
-    await ui.press({ key: 'send-1' })
-    await clock.settle()
+    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
+    await clock.advance(800)
     const typedMeanwhile = await $.prompt.submit(typed('and the cart', 't1'))
     await clock.advance(500)
+    await clock.settle()
 
-    expect(typedMeanwhile.context).toBeUndefined()
+    expect(typedMeanwhile.context).toEqual(['Open items: 2 open, 1 unread answer; call list_items.'])
     expect(world.appended.filter(row => row.type === 'user')).toHaveLength(1)
     expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
-  test('Send now that the running turn refuses goes the moment the turn ends', async ($, on) => {
+  test('an answer the running turn refuses goes as a prompt, which the engine runs once the turn ends', async ($, on) => {
     const { world, clock } = seat(on)
     world.refusingRows = 'No conversation to append to.'
     await start($)
@@ -1853,88 +1734,40 @@ describe('responding', () => {
     await $.tool.call(XCODE_TASK)
     await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
     const ui = await $.ui.mount(PANE)
-
     await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'CartTests.testCouponRounding', kind: 'change' })
-    await ui.press({ key: 'other-way' })
+    await ui.input({ key: 'answer-1', text: 'CartTests.testCouponRounding' })
     await clock.advance(1000)
     await clock.settle()
 
-    expect(world.toasts.at(-1)).toBe('Claude gets your response to #1 when it finishes this turn.')
-    expect(world.appended).toHaveLength(0)
-    expect(world.submitted).toHaveLength(0)
-
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(1)
-    expect(world.submitted[0]).toContain('CartTests.testCouponRounding')
+    expect(world.appended).toEqual([])
+    expect(world.submitted).toEqual([`${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nCartTests.testCouponRounding`])
+    expect(world.toasts).toEqual([])
   })
 
-  test('Send now that the running turn refuses as it ends goes at once', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'CartTests.testCouponRounding', kind: 'change' })
-
-    // The row is refused a moment after it goes, and the turn ends meanwhile.
-    world.refusingRows = 'No conversation to append to.'
-    world.appendMs = 500
-    await ui.press({ key: 'other-way' })
-    await clock.advance(800)
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.advance(500)
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(1)
-    expect(world.submitted[0]).toContain('CartTests.testCouponRounding')
-    expect(world.status).toBeUndefined()
-  })
-
-  test('Send now pressed twice at once sends the answer once', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-
-    await Promise.all([ui.press({ key: 'send-1' }), ui.press({ key: 'send-1' })])
-    await clock.settle()
-
-    expect(world.appended.filter(row => row.type === 'user')).toHaveLength(1)
-  })
-
-  test("a response whose prompt doesn't enter stays saved, and Send now tries again", async ($, on) => {
+  test("a response whose prompt doesn't enter stays saved, and goes with the next response", async ($, on) => {
     const { world, clock } = seat(on)
     world.refusing = 'Another plugin held the prompt.'
     await start($)
 
     await $.tool.call(KEY_TASK)
+    await $.tool.call(PAGING_TASK)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'done' })
     await clock.advance(1000)
     await clock.settle()
 
     expect(world.submitted).toHaveLength(0)
-    expect(world.toasts.at(-1)).toBe(
-      "Claude didn't get your response to #1: Another plugin held the prompt. It's saved; press Send now in /open-items.",
-    )
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1: Another plugin held the prompt. It's saved, and goes to Claude with the next message.")
+    expect(itemOf(world, 1)?.update).toBe('pending')
 
     world.refusing = undefined
-    await runTasks($)
-    await ui.press({ key: 'send-1' })
+    await ui.press({ key: 'option-1' })
+    await clock.advance(1000)
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.submitted).toEqual([
+      'My responses to items you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.\n\n#2 Pick a pagination strategy for /feed: I chose "Cursor".',
+    ])
     expect(world.status).toBeUndefined()
   })
 
@@ -1986,49 +1819,32 @@ describe('responding', () => {
   })
 
   test('list_items shows a saved answer and marks it heard', async ($, on) => {
-    const { world } = seat(on)
+    const { world } = seat(on, unsent('Two failures'))
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.turn.start({ text: 'go', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'Two failures' })
 
     const listed = await $.tool.call({ tool: LIST })
     expect(String((listed as { result?: unknown }).result)).toContain('Two failures')
-    expect(world.status).toBeUndefined()
+    expect(itemOf(world, 1)?.update).toBe('delivered')
   })
 
   test('list_items for one item marks only that one heard', async ($, on) => {
-    const { world } = seat(on)
+    const decision = { ...ROTATE, id: 2, title: PAGING_TASK.title, why: PAGING_TASK.detail, kind: 'decision', options: PAGING_TASK.options }
+    const items = asItems([QUESTION, decision]).map(item => movedBy(item, item.id === 1 ? { text: 'Two failures' } : { text: 'Cursor', event: 'chose' }, NOW))
+    const { world } = seat(on, earlierItems(items))
     await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(PAGING_TASK)
-    await $.turn.start({ text: 'go', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'Two failures' })
-    await ui.press({ key: 'option-1' })
-
-    expect(world.status).toBe('✓ 2 not sent yet · /open-items')
 
     const listed = await $.tool.call({ tool: LIST, id: 1 })
     expect(String((listed as { result?: unknown }).result)).toContain('Two failures')
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
+    expect([itemOf(world, 1)?.update, itemOf(world, 2)?.update]).toEqual(['delivered', 'pending'])
   })
 
   test('a response that comes in while list_items reads is not marked heard: it goes later', async ($, on) => {
-    const { world, clock } = seat(on)
+    const { world, clock } = seat(on, unsent('Two failures'))
     await start($)
 
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(KEY_TASK)
     await $.turn.start({ text: 'go', turnId: 't1' })
     const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await ui.press({ key: 'select-2' })
     // list_items reads the task list late: Done on #2 lands meanwhile, and
     // its write of #1 heard reads the list again.
     world.slowRead = 'tasks'
@@ -2041,12 +1857,12 @@ describe('responding', () => {
 
     expect(result).toContain('Two failures')
     expect(result).toContain('#2 open')
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
+    expect(itemOf(world, 2)?.update).toBe('pending')
 
-    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.advance(1000)
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#2 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.appended[0]?.text).toBe(`${ONE}#2 Add STRIPE_SECRET_KEY to .env: Done.`)
   })
 
   test('a withdraw that meets an answer given a moment before leaves the answer, and Claude hears it', async ($, on) => {
@@ -2067,10 +1883,10 @@ describe('responding', () => {
     expect(((await withdrawn) as { deny?: string }).deny).toBe('Item #1 is already resolved; there is nothing to close.')
     expect(world.toasts).toEqual([])
 
-    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.advance(1000)
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Add STRIPE_SECRET_KEY to .env: Done.'])
+    expect(world.appended[0]?.text).toBe(`${ONE}#1 Add STRIPE_SECRET_KEY to .env: Done.`)
   })
 
   test('a press from a render older than a withdraw leaves the task withdrawn, and a toast says so', async ($, on) => {
@@ -2095,49 +1911,38 @@ describe('responding', () => {
     expect(world.status).toBe('☐ 1 question · /open-items')
   })
 
-  test('Save for later with nothing typed asks for an answer, or, pressed as Claude withdraws its task, says the task is gone', async ($, on) => {
+  test('Enter with nothing typed asks for an answer, or, entered as Claude withdraws its task, says the task is gone', async ($, on) => {
     const { world } = seat(on)
-    const held = holdingPresses(on)
+    // Held, an input reaches its field once the test lets it go.
+    let isHeld = false
+    let letGo = () => {}
+    on('ui.input', async ($, e, next) => {
+      if (isHeld) {
+        isHeld = false
+        await new Promise<void>(resolve => {
+          letGo = resolve
+        })
+      }
+
+      return next(e)
+    })
     await start($)
 
     await $.tool.call(XCODE_TASK)
     await $.tool.call(ANDROID_TASK)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'answer' })
-    await ui.press({ key: 'other-way' })
+    await ui.input({ key: 'answer-1', text: '' })
 
     expect(world.toasts.at(-1)).toBe('Type an answer first, or press Cancel.')
 
-    held.isOn = true
-    const pressed = ui.press({ key: 'other-way' })
+    isHeld = true
+    const entered = ui.input({ key: 'answer-1', text: '' })
     await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
-    held.letGo()
-    await pressed
+    letGo()
+    await entered
 
     expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved.")
-  })
-
-  test('Save for later pressed as Claude withdraws its task puts what was typed in the prompt box', async ($, on) => {
-    const { world, clock } = seat(on)
-    const held = holdingPresses(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(ANDROID_TASK)
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed', kind: 'change' })
-    await clock.settle()
-    // Save for later reaches its button as Claude withdraws the task, the
-    // draft gone with it, before the drawing that withdraw wakes.
-    held.isOn = true
-    const pressed = ui.press({ key: 'other-way' })
-    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
-    held.letGo()
-    await pressed
-
-    expect(world.toasts.at(-1)).toBe("Item #1 isn't open any more, so your response wasn't saved. What you typed is in the prompt box.")
-    expect(world.composer).toBe('LoginTests.testExpiredToken failed')
   })
 
   test('Long answer… pressed as Claude withdraws its task says the task is gone, and puts what was typed in the prompt box', async ($, on) => {
@@ -2181,27 +1986,6 @@ describe('responding', () => {
 
     expect(await ui.find({ type: 'Input', key: 'answer-2' })).toBeDefined()
     expect(world.toasts.at(-1)).toBe('Claude withdrew the item: Run xcodebuild test on your Mac, paste the failures')
-  })
-
-  test('Save for later pressed as the same answer lands from the prompt box says nothing, as a second press does', async ($, on) => {
-    const { world, clock } = seat(on)
-    const held = holdingPresses(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(ANDROID_TASK)
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'Two failures', kind: 'change' })
-    await clock.settle()
-    held.isOn = true
-    const pressed = ui.press({ key: 'other-way' })
-    await $.prompt.submit(typed('↳ Answer to #1: Two failures'))
-    held.letGo()
-    await pressed
-
-    expect(world.toasts).toEqual([])
-    expect(world.composer).toBe('')
   })
 
   test('an answer held for looking like a secret, entered as Claude withdraws its task, says the task is gone', async ($, on) => {
@@ -2267,10 +2051,10 @@ describe('responding', () => {
     await ui.press({ key: 'option-1' })
     await clock.advance(500)
     await pressed
-    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.advance(1000)
     await clock.settle()
 
-    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Pick a pagination strategy for /feed: I chose "Cursor".'])
+    expect(world.appended[0]?.text).toBe(`${ONE}#1 Pick a pagination strategy for /feed: I chose "Cursor".`)
     expect(world.toasts).toEqual(["Item #1 isn't open any more, so your response wasn't saved."])
   })
 
@@ -2347,32 +2131,6 @@ describe('responding', () => {
     expect(world.toasts).toEqual(["Item #1 isn't open any more, so your response wasn't saved."])
     expect(world.composer).toBe('')
   })
-
-  test('Send now repeating an answer saved for later a moment before sends it', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'Two failures', kind: 'change' })
-    await clock.settle()
-    // Send now reads the task list late: Enter saves the same answer meanwhile.
-    world.slowRead = 'tasks'
-    world.readMs = 500
-    const pressed = ui.press({ key: 'other-way' })
-    await clock.advance(1)
-    await ui.input({ key: 'answer-1', text: 'Two failures' })
-    await clock.advance(500)
-    await pressed
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.appended.map(row => row.type)).toEqual(['user', 'system'])
-    expect(world.appended[0]?.text).toContain('Two failures')
-    expect(world.toasts).toEqual([])
-  })
 })
 
 describe('long answers in the prompt box', () => {
@@ -2388,7 +2146,7 @@ describe('long answers in the prompt box', () => {
 
     const sent = await $.prompt.submit(typed('↳ Answer to #1: LoginTests.testExpiredToken\nCartTests.testCouponRounding'))
 
-    expect(sent.text).toContain('#1 Run xcodebuild test on your Mac, paste the failures:\nLoginTests.testExpiredToken\nCartTests.testCouponRounding')
+    expect(sent.text).toContain(`#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nLoginTests.testExpiredToken\nCartTests.testCouponRounding`)
   })
 
   test('a draft goes with Long answer… into the prompt box, and the field opens empty after', async ($, on) => {
@@ -2418,8 +2176,8 @@ describe('long answers in the prompt box', () => {
 
     expect(blocked.drop).toBe('Blocked by your organization.')
     // The engine shows why; the toast says the answer is kept.
-    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1. It's saved; press Send now in /open-items.")
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
+    expect(world.toasts.at(-1)).toBe("Claude didn't get your response to #1. It's saved, and goes to Claude with the next message.")
+    expect(itemOf(world, 1)?.update).toBe('pending')
   })
 
   test('typed while Claude is idle and a response is about to go, the prompt carries both', async ($, on) => {
@@ -2438,43 +2196,40 @@ describe('long answers in the prompt box', () => {
     await clock.settle()
 
     expect(sent.text).toContain('#1 Add STRIPE_SECRET_KEY to .env: Done.')
-    expect(sent.text).toContain('#2 Run xcodebuild test on your Mac, paste the failures:\nTwo failures')
+    expect(sent.text).toContain(`#2 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nTwo failures`)
     expect(world.submitted).toEqual([])
   })
 
-  test('typed while Claude is idle as Send now takes the same answer, it goes once', async ($, on) => {
+  test('typed while Claude is idle after the pane sent the same answer, it goes once', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
-    await $.tool.call(KEY_TASK)
     await $.tool.call(XCODE_TASK)
     const ui = await $.ui.mount(PANE)
-    world.setMs = 1000
-    const sending = $.prompt.submit(typed('↳ Answer to #2: Two failures'))
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
     await clock.settle()
-    await ui.press({ key: 'send-2' })
-    await clock.advance(3000)
-    const sent = await sending
-    await clock.settle()
+    const sent = await $.prompt.submit(typed('↳ Answer to #1: Two failures'))
 
-    expect(sent.drop).toBe('Your answer to #2 already went to Claude.')
-    expect(world.submitted).toEqual([
-      'My response to an item you gave me (Open items):\n\n#2 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
-    ])
+    expect(sent.drop).toBe('Your answer to #1 already went to Claude.')
+    expect(world.submitted).toEqual([`${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nTwo failures`])
   })
 
-  test('typed while Claude works, it is saved instead of sent', async ($, on) => {
-    seat(on)
+  test('typed while Claude works, it joins the running turn at once, and the prompt does not enter', async ($, on) => {
+    const { world, clock } = seat(on)
     await start($)
 
     await $.tool.call(XCODE_TASK)
     await $.turn.start({ text: 'go', turnId: 't1' })
     const result = await $.prompt.submit(typed('↳ Answer to #1: Two failures', 't1'))
+    await clock.advance(1000)
+    await clock.settle()
 
-    expect(result.drop).toContain('Saved as your answer to #1')
-
-    const listed = await $.tool.call({ tool: LIST })
-    expect(String((listed as { result?: unknown }).result)).toContain('Two failures')
+    expect(result.drop).toBe('Your answer to #1 goes to Claude now.')
+    expect(world.appended[0]?.text).toBe(`${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nTwo failures`)
+    expect(world.submitted).toEqual([])
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true }))
   })
 
   test('typed while Claude works, an answer to a task Claude withdraws meanwhile goes as typed', async ($, on) => {
@@ -2498,6 +2253,300 @@ describe('long answers in the prompt box', () => {
     expect(sent.text).toBe('↳ Answer to #1: Two failures')
     expect(sent.context).toBeUndefined()
     expect(world.submitted).toEqual([])
+  })
+})
+
+describe('delivery', () => {
+  const INFO = { tool: ADD, title: 'The migration ran clean', detail: 'Nothing for you to do; the schema is current.', kind: 'info' } as const
+
+  const resultOf = (call: unknown) => call as { result?: string; deny?: string }
+
+  /** The reply on item #1, Run xcodebuild…, as Claude reads it. */
+  const repliedOn1 = (text: string) => `${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\n${text}`
+
+  test('an answer while another item is open goes at once', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'option-1' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([`${ONE}#1 Pick a pagination strategy for /feed: I chose "Cursor".`])
+    expect(world.appended).toEqual([])
+  })
+
+  test('a reply mid-turn is appended at once', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.appended).toEqual([
+      { type: 'user', text: repliedOn1('Two failures') },
+      { type: 'system', text: 'Sent your response to #1 to Claude' },
+    ])
+    expect(world.submitted).toEqual([])
+  })
+
+  test("an appended answer still unread at the main turn's end wakes Claude", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(KEY_TASK)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+
+    expect(world.submitted).toEqual([WAKE_UP])
+
+    // A step of the turn reads the row: that turn ends without a wake-up.
+    await $.turn.start({ text: WAKE_UP, turnId: 't2' })
+    await ui.press({ key: 'done' })
+    await clock.advance(1000)
+    await step($, 't2')
+    await $.turn.complete({ ...DONE, turnId: 't2' })
+    await clock.settle()
+
+    expect(world.appended.filter(row => row.type === 'user').map(row => row.text)).toEqual([repliedOn1('Two failures'), `${ONE}#2 Add STRIPE_SECRET_KEY to .env: Done.`])
+    expect(world.submitted).toEqual([WAKE_UP])
+  })
+
+  test('an answer appended as the main turn ends wakes Claude', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    // The row takes a moment to join the conversation, and the turn ends meanwhile.
+    world.appendMs = 500
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(800)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.appended[0]?.text).toBe(repliedOn1('Two failures'))
+    expect(world.submitted).toEqual([WAKE_UP])
+  })
+
+  test("a subagent's turn.start does not clear an unread append", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await $.turn.start({ text: 'Run the tests', turnId: 'tester-1', agentId: 'tester' })
+    await step($, 'tester-1', 'tester')
+    await $.turn.complete({ ...DONE, turnId: 'tester-1', agentId: 'tester' })
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+
+    expect(world.appended[0]?.text).toBe(repliedOn1('Two failures'))
+    expect(world.submitted).toEqual([WAKE_UP])
+  })
+
+  test('a reply never closes the item', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Which one is faster?' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true, update: 'delivered' }))
+    expect(world.submitted).toEqual([`${ONE}#1 Pick a pagination strategy for /feed: ${REPLY_WORDS}\nWhich one is faster?`])
+
+    await $.turn.start({ text: '', turnId: 't1' })
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'And which one is cheaper?' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true }))
+    expect(await ui.find({ type: 'Button', key: 'option-1' })).toBeDefined()
+  })
+
+  test('a composer-bridge answer is a reply and keeps the item open', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const sent = await $.prompt.submit(typed('↳ Answer to #1: Two failures'))
+
+    expect(sent.text).toBe(repliedOn1('Two failures'))
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true, update: 'delivered' }))
+  })
+
+  test('the same answer typed again in the prompt box mid-turn leaves the batch under way to send it once', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    const again = await $.prompt.submit(typed('↳ Answer to #1: Two failures', 't1'))
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(again.drop).toBe('Your answer to #1 goes to Claude now.')
+    expect(world.appended.filter(row => row.type === 'user').map(row => row.text)).toEqual([repliedOn1('Two failures')])
+  })
+
+  test('before any main turn event, an answer goes as a prompt', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    // A subagent's turn says nothing of the main loop's.
+    await $.turn.start({ text: 'Run the tests', turnId: 'tester-1', agentId: 'tester' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'done' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([`${ONE}#1 Add STRIPE_SECRET_KEY to .env: Done.`])
+    expect(world.appended).toEqual([])
+  })
+
+  test('presses within 800 ms go as one message', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(KEY_TASK)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'option-1' })
+    await clock.advance(500)
+    await ui.press({ key: 'done' })
+    await clock.advance(799)
+
+    expect(world.appended).toEqual([])
+
+    await clock.advance(1)
+    await clock.settle()
+
+    expect(world.appended.filter(row => row.type === 'user').map(row => row.text)).toEqual([
+      'My responses to items you gave me (Open items):\n\n#1 Pick a pagination strategy for /feed: I chose "Cursor".\n\n#2 Add STRIPE_SECRET_KEY to .env: Done.',
+    ])
+    expect(world.submitted).toEqual([])
+  })
+
+  test("every prompt not of the mod's own origin carries the reminder while items are open", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(KEY_TASK)
+    await $.tool.call(INFO)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    // The info item asks nothing, so it is not counted; the reply waits for Claude.
+    const reminder = 'Open items: 2 open, 1 unread answer; call list_items.'
+    expect((await $.prompt.submit(typed('now the cart'))).context).toEqual([reminder])
+    expect((await $.prompt.submit(HAND_BACK)).context).toEqual([reminder])
+    // The mod's own prompt is the answer itself.
+    expect(world.ownContexts).toEqual([undefined])
+    expect((await $.prompt.context({ blocks: [] })).blocks).toEqual([])
+
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'resolved', note: 'Fixed both' })
+    await $.tool.call({ tool: CLOSE, id: 2, as: 'withdrawn' })
+
+    expect((await $.prompt.submit(typed('and the docs'))).context).toBeUndefined()
+  })
+
+  test("a press the batch holds goes in the user's own words: an unrelated prompt and list_items leave it to the batch", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'option-1' })
+    const handBack = await $.prompt.submit({ ...HAND_BACK, turnId: 't1' })
+    const listed = resultOf(await $.tool.call({ tool: LIST }))
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(handBack.context).toEqual(['Open items: 1 open, 0 unread answers; call list_items.'])
+    expect(listed.result).toContain('chose "Cursor"')
+    expect(world.appended[0]?.text).toBe(`${ONE}#1 Pick a pagination strategy for /feed: I chose "Cursor".`)
+  })
+
+  test('a secret pasted as a reply is held and not sent', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: KEY_SHAPED })
+    const bridged = await $.prompt.submit(typed(`↳ Answer to #1: ${KEY_SHAPED}`, 't1'))
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(await textOf(ui, 'held')).toContain('looks like a secret')
+    expect(bridged.drop).toContain("This looks like a secret, so it wasn't sent.")
+    expect(world.appended).toEqual([])
+    expect(world.submitted).toEqual([])
+    expect(itemOf(world, 1)?.thread).toHaveLength(1)
+  })
+
+  test('a v0.1 Seen saved unsent sends nothing with the next response: no bare head line', async ($, on) => {
+    const seen = { ...ROTATE, id: 1, kind: 'info', title: INFO.title, state: 'seen', update: 'pending' }
+    const { world, clock } = seat(on, earlier([seen, { ...ROTATE, id: 2 }]))
+    await start($)
+
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'done' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([`${ONE}#2 Rotate the leaked token in Vault: Done.`])
+    expect(itemOf(world, 1)?.update).toBe('delivered')
+  })
+
+  test('a v0.1 Seen saved unsent sends nothing beside the next prompt: no bare head line', async ($, on) => {
+    const seen = { ...ROTATE, id: 1, kind: 'info', title: INFO.title, state: 'seen', update: 'pending' }
+    const { world } = seat(on, earlier([seen, { ...ROTATE, id: 2 }]))
+    await start($)
+
+    const sent = await $.prompt.submit(typed('go on'))
+
+    expect(sent.context).toEqual(['Open items: 1 open, 0 unread answers; call list_items.'])
+    expect(itemOf(world, 1)?.update).toBe('delivered')
   })
 })
 
@@ -2653,8 +2702,8 @@ describe('saving', () => {
     const { world } = seat(on, earlierItems(items.map(item => (item.id === 2 ? movedBy(item, DONE_PRESS, NOW) : item))))
     await start($)
 
-    expect(world.status).toContain('1 not sent yet')
     expect(world.opens).toHaveLength(1)
+    expect((await $.prompt.submit(typed('go on'))).context?.[0]).toContain('#2 resolved: Rotate the leaked token in Vault.')
   })
 
   test("writes the session's key on every change", async ($, on) => {
@@ -3129,7 +3178,7 @@ describe('saving', () => {
 })
 
 describe('the README example', () => {
-  test('two answers while Claude works, the third after it stops, reach Claude as one message', async ($, on) => {
+  test('two answers while Claude works reach it at once as one message, and the third after it stops goes as its own', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 
@@ -3143,7 +3192,7 @@ describe('the README example', () => {
     })
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'done' })
-    expect(world.status).toBe('✓ 1 not sent yet · /open-items')
+    expect(world.status).toBeUndefined()
 
     await $.tool.call({
       tool: ADD,
@@ -3160,44 +3209,36 @@ describe('the README example', () => {
       detail: 'stripe-webhooks is taken. The name goes in package.json and the README.',
       kind: 'question',
     })
-    expect(world.status).toBe('☐ 1 question · 2 not sent yet · /open-items')
+    expect(world.status).toBe('☐ 1 question · /open-items')
     await clock.advance(1000)
-    expect(world.submitted).toHaveLength(0)
 
-    // #3 is still open when Claude stops, so #1 and #2 wait to go with it.
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
-    expect(world.submitted).toHaveLength(0)
-
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-3', text: '@acme/stripe-hooks' })
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.submitted).toEqual([
+    expect(world.appended.filter(row => row.type === 'user').map(row => row.text)).toEqual([
       [
         'My responses to items you gave me (Open items):',
         '',
         '#1 Add STRIPE_SECRET_KEY to .env: Done.',
         '',
         '#2 Decide whether to make the repo public: I chose "Make it public".',
-        '',
-        "#3 Choose the package's name on npm:",
-        '@acme/stripe-hooks',
       ].join('\n'),
     ])
+    expect(world.submitted).toHaveLength(0)
+
+    // Claude stops before a step reads the row: a prompt wakes it for it.
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+    expect(world.submitted).toEqual([WAKE_UP])
+
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-3', text: '@acme/stripe-hooks' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.submitted).toEqual([WAKE_UP, `${ONE}#3 Choose the package's name on npm: ${REPLY_WORDS}\n@acme/stripe-hooks`])
     expect(world.status).toBeUndefined()
   })
 })
 
 describe('knowing whether Claude works', () => {
-  const BAND = {
-    plugin: 'open-items',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
-  } as const
-
   test('a turn another loop begins and ends under its agent id leaves Claude idle', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
@@ -3205,7 +3246,7 @@ describe('knowing whether Claude works', () => {
     await $.tool.call(KEY_TASK)
     await $.turn.start({ text: 'fix it', turnId: 't1' })
     await $.turn.complete({ ...DONE, turnId: 't1' })
-    await $.turn.start({ text: '', turnId: 'side' })
+    await $.turn.start({ text: '', turnId: 'side', agentId: 'side-request' })
     await $.turn.complete({ ...DONE, turnId: 'side', agentId: 'side-request' })
 
     const ui = await $.ui.mount(PANE)
@@ -3214,26 +3255,7 @@ describe('knowing whether Claude works', () => {
     await clock.settle()
 
     expect(world.submitted).toHaveLength(1)
-  })
-
-  test("the engine's word that no turn runs wins over a turn that never ended", async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(KEY_TASK)
-    await $.turn.start({ text: '', turnId: 'never-ends' })
-    const band = await $.ui.mount(BAND)
-    await band.redraw({ ...BAND.props, isWorking: true })
-    await band.redraw({ ...BAND.props, isWorking: false })
-    await clock.advance(1)
-
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'done' })
-    await clock.advance(1000)
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(1)
-    expect(await band.find({ key: 'engine' })).toBeDefined()
+    expect(world.appended).toEqual([])
   })
 })
 
@@ -3365,7 +3387,7 @@ describe('the four kinds', () => {
     expect(task?.state).toBe('open')
     expect(task?.isWaitingForClaude).toBe(true)
     expect(task?.thread.at(-1)).toEqual({ from: 'user', text: 'Two failures', atMs: NOW })
-    expect(world.submitted).toEqual(['My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures'])
+    expect(world.submitted).toEqual([`${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nTwo failures`])
     expect(await textOf(ui, 'task-1')).toContain('waiting for Claude')
     expect(world.status).toBeUndefined()
   })
@@ -3385,8 +3407,8 @@ describe('the four kinds', () => {
     await clock.settle()
 
     expect(world.submitted).toEqual([
-      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
-      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures: Done.',
+      `${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nTwo failures`,
+      `${ONE}#1 Run xcodebuild test on your Mac, paste the failures: Done.`,
     ])
   })
 
@@ -3426,12 +3448,13 @@ describe('the four kinds', () => {
     await clock.advance(1000)
     await clock.settle()
     world.refusing = undefined
-    await ui.press({ key: 'send-1' })
+    await ui.press({ key: 'done' })
+    await clock.advance(1000)
     await clock.settle()
 
     expect(world.submitted).toEqual([
-      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nTwo failures',
-      'My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nAnd CartTests.testCouponRounding',
+      `${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nTwo failures`,
+      `${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nAnd CartTests.testCouponRounding\n#1 Run xcodebuild test on your Mac, paste the failures: Done.`,
     ])
   })
 
@@ -3483,38 +3506,15 @@ describe('the four kinds', () => {
     expect(world.status).toBe('☐ 6 info · /open-items')
   })
 
-  test('an unseen info item does not hold back saved answers at turn end', async ($, on) => {
-    const { world, clock } = seat(on)
-    await start($)
-
-    await $.tool.call(XCODE_TASK)
-    await $.tool.call(INFO)
-    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'answer' })
-    await ui.input({ key: 'answer-1', text: 'LoginTests.testExpiredToken failed' })
-    await clock.advance(1000)
-    expect(world.submitted).toHaveLength(0)
-
-    await $.turn.complete({ ...DONE, turnId: 't1' })
-    await clock.settle()
-
-    expect(world.submitted).toHaveLength(1)
-    expect(world.submitted[0]).toContain('LoginTests.testExpiredToken failed')
-    expect(world.submitted[0]).not.toContain('migration')
-  })
-
   test('an info item stays out of the context Claude reads', async ($, on) => {
     seat(on)
     await start($)
 
     await $.tool.call(INFO)
     await $.tool.call(XCODE_TASK)
-    const context = await $.prompt.context({ blocks: [] })
+    const sent = await $.prompt.submit(typed('go on'))
 
-    const text = JSON.stringify(context)
-    expect(text).toContain('Run xcodebuild test')
-    expect(text).not.toContain('The migration ran clean')
+    expect(sent.context).toEqual(['Open items: 1 open, 0 unread answers; call list_items.'])
   })
 
   test('the status line counts by kind', async ($, on) => {
@@ -3624,7 +3624,6 @@ describe('the pane groups items by kind', () => {
       editing: null,
       draft: '',
       nowMs: NOW,
-      isWorking: false,
       canType: true,
       isFocused: true,
       isTyping: false,
@@ -3831,7 +3830,7 @@ describe('threads', () => {
     await $.tool.call({ tool: REPLY, id: 1, text: 'Which test file are they in?' })
     const sent = await $.prompt.submit(typed('↳ Answer to #1: CartTests.swift'))
 
-    expect(sent.text).toBe('My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nCartTests.swift')
+    expect(sent.text).toBe(`${ONE}#1 Run xcodebuild test on your Mac, paste the failures: ${REPLY_WORDS}\nCartTests.swift`)
   })
 
   test('reply_item tells Claude of an answer the user gave meanwhile, which then is not sent again', async ($, on) => {
@@ -3843,15 +3842,16 @@ describe('threads', () => {
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'answer' })
     await ui.input({ key: 'answer-1', text: 'Two failures' })
-    await clock.advance(1000)
-    expect(world.submitted).toEqual([])
+    await clock.advance(100)
 
     const replied = resultOf(await $.tool.call({ tool: REPLY, id: 1, text: 'Which test file are they in?' }))
     await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.advance(1000)
     await clock.settle()
 
     expect(replied.result).toContain('Two failures')
     expect(itemOf(world, 1)?.update).toBe('delivered')
+    expect(world.appended).toEqual([])
     expect(world.submitted).toEqual([])
   })
 

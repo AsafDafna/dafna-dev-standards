@@ -87,7 +87,6 @@ declare module 'claude-code' {
       restoredFor: string | null
       /** The folder the session started in, or its saved key names: a reload of the code, or a later cd, keeps it. */
       folder: string | null
-      isWorking: boolean
       /** The remote clients attached, by surface: two phones are two clients on one. */
       clients: Readonly<Partial<Record<RenderSurface, readonly string[]>>>
     }

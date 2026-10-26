@@ -59,8 +59,8 @@ OLDER = [
     {'id': 36, 'title': 'Approve the staging migration', 'why': 'w', 'ageMs': 5 * DAY_MS},
 ]
 
-SAVED = [
-    {'id': 5, 'title': LONG, 'why': 'It leaked.', 'state': 'done', 'update': 'pending'},
+LONG_TITLED = [
+    {'id': 5, 'title': LONG, 'why': 'It leaked.'},
 ]
 
 # Emoji the terminal draws two cells wide, below U+1F300 too: the title wraps at 100 columns.
@@ -122,7 +122,7 @@ class Pane(unittest.TestCase):
                 self.assertIn(f'#1 {INSTRUMENTS} 3m', text, context)
                 # The first item of the first section is the one drawn whole.
                 self.assertIn('1: Approve' if JAPANESE in [task['title'] for task in tasks] else 'd: Done', text, context)
-                self.assertIn('x: Reject…', text, context)
+                self.assertIn('l: Later', text, context)
 
                 if XCODE in [task['title'] for task in tasks]:
                     self.assertIn(f'#2 {XCODE} 3m', text, context)
@@ -219,16 +219,14 @@ class Pane(unittest.TestCase):
                 self.assert_fits(body, context)
                 self.assertIn(f'#7 {EMOJI} 3m', joined(body), context)
 
-    def test_saved_responses_and_titles_past_80_characters_show_whole(self):
+    def test_titles_past_80_characters_show_whole(self):
         for columns in (48, 64, 110):
             with self.subTest(columns=columns):
-                body, context = self.draw(TASKS[1:2] + SAVED, columns)
-                # Send now sits beside the title's first row.
-                text = joined(body).replace(' s: Send now', '')
+                body, context = self.draw(TASKS[1:2] + LONG_TITLED, columns)
+                text = joined(body)
 
                 self.assert_fits(body, context)
-                self.assertIn(f'#5 {LONG} · not sent yet', text, context)
-                self.assertIn('s: Send now', body[next(i for i, row in enumerate(body) if '#5' in row)], context)
+                self.assertIn(f'#5 {LONG} 3m', text, context)
 
     def test_an_open_answer_field_fits(self):
         for columns in (36, 64, 110, 200):
