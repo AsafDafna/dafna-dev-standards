@@ -5,6 +5,10 @@ export const MAX_TITLE = 80
 export const MAX_OPTION = 60
 /** The longest detail, done-when or thread message Claude writes: the tools refuse a longer one, and cut nothing. */
 export const MAX_DETAIL = 4000
+/** The longest note Claude closes an item with: one line the user reads in a toast. */
+export const MAX_NOTE = 200
+/** How many of a thread's last entries `list_items` shows, when it is not asked for one item. */
+const TAIL = 3
 /** Answers longer than this are named in a digest, not quoted. */
 const MAX_INLINE_ANSWER = 2000
 
@@ -50,7 +54,18 @@ export type Reply = {
   change?: Partial<Pick<Task, 'title' | 'options' | 'recommended' | 'link' | 'doneWhen'>>
 }
 
+export type Close = { id: number; as: 'resolved' | 'withdrawn'; note?: string }
+
 const LINK = /^https?:\/\/\S+$/
+
+const ID_ERROR = "id is required: the item's number, a whole number."
+
+/** `args.id` when it is a whole number. */
+function idIn(args: Record<string, unknown>): number | undefined {
+  const id = args['id']
+
+  return typeof id === 'number' && Number.isInteger(id) ? id : undefined
+}
 
 /** `args[key]` as typed, its line breaks kept: '' when it is no text. */
 function textIn(args: Record<string, unknown>, key: string): string {
@@ -141,9 +156,13 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
   }
 }
 
-/** Reads `reply_item`'s arguments: Claude's message, a change to the item, or both; or says what is wrong with them. */
+/**
+ * Reads `reply_item`'s arguments: Claude's message, a change to the item, or
+ * both; or says what is wrong with them. Whether the change fits the item is
+ * `replyErrorOf`'s to say.
+ */
 export function parseReply(args: Record<string, unknown>): Reply | { error: string } {
-  const id = args['id']
+  const id = idIn(args)
   const text = textIn(args, 'text')
   const title = lineIn(args, 'title')
   const doneWhen = textIn(args, 'done_when')
@@ -151,8 +170,8 @@ export function parseReply(args: Record<string, unknown>): Reply | { error: stri
   const link = lineIn(args, 'link')
   const options = Array.isArray(args['options']) ? optionsIn(args['options']) : undefined
 
-  if (typeof id !== 'number') {
-    return { error: "id is required: the item's number." }
+  if (id === undefined) {
+    return { error: ID_ERROR }
   }
 
   if (options !== undefined && (options.length < 2 || options.length > 4)) {
@@ -185,6 +204,81 @@ export function parseReply(args: Record<string, unknown>): Reply | { error: stri
   return { id, ...(text === '' ? {} : { text }), ...(isChanged ? { change } : {}) }
 }
 
+/** Why Claude's `reply` cannot go on `task`; undefined when it can. */
+export function replyErrorOf(task: Task, reply: Reply): string | undefined {
+  const change = reply.change ?? {}
+
+  if (!isActive(task)) {
+    return `Item #${task.id} is already ${task.state}; add a new item if you need more from the user.`
+  }
+
+  if (task.kind !== 'decision' && (change.options !== undefined || change.recommended !== undefined)) {
+    return 'options and recommended are for a decision only.'
+  }
+
+  return change.recommended !== undefined && !(change.options ?? task.options ?? []).includes(change.recommended)
+    ? 'recommended must be one of the options, spelled the same.'
+    : undefined
+}
+
+/**
+ * `task` after Claude's `reply` at `atMs`: the change and the message in its
+ * thread, the user's turn again, and a recommended option kept only while it
+ * is one of the options.
+ */
+export function repliedBy(task: Task, reply: Reply, atMs: number): Task {
+  const { recommended, ...changed } = { ...task, ...reply.change }
+  const entries: Message[] = [
+    ...(reply.change === undefined ? [] : [{ from: 'claude' as const, text: '', event: 'changed' as const, atMs }]),
+    ...(reply.text === undefined ? [] : [{ from: 'claude' as const, text: reply.text, atMs }]),
+  ]
+
+  return {
+    ...changed,
+    ...(recommended !== undefined && changed.options?.includes(recommended) ? { recommended } : {}),
+    thread: [...task.thread, ...entries],
+    isWaitingForClaude: false,
+    hasNewReply: true,
+  }
+}
+
+/** Reads `close_item`'s arguments, or says what is wrong with them. */
+export function parseClose(args: Record<string, unknown>): Close | { error: string } {
+  const id = idIn(args)
+  const as = args['as']
+  const note = lineIn(args, 'note')
+
+  if (id === undefined) {
+    return { error: ID_ERROR }
+  }
+
+  if (as !== 'resolved' && as !== 'withdrawn') {
+    return { error: 'as must be "resolved" or "withdrawn".' }
+  }
+
+  if (note.length > MAX_NOTE) {
+    return { error: `note is ${note.length} characters; keep it to ${MAX_NOTE} or fewer.` }
+  }
+
+  return { id, as, ...(note === '' ? {} : { note }) }
+}
+
+/** Whether the user wrote in `task`'s thread: a press is no answer. */
+export function hasAnswerIn(task: Task): boolean {
+  return task.thread.some(message => message.from === 'user' && message.event === undefined)
+}
+
+/** `task` closed by Claude as `close` says. A move of the user's Claude has not heard is still told. */
+export function closedAs(task: Task, close: Close): Task {
+  return {
+    ...task,
+    state: close.as,
+    isWaitingForClaude: false,
+    update: task.update === 'pending' ? 'pending' : 'delivered',
+    ...(close.note === undefined ? {} : { note: close.note }),
+  }
+}
+
 /** What the user did with an item, as its thread records it: a reply has no event. */
 export type Move = Pick<Message, 'text' | 'event'>
 
@@ -210,15 +304,16 @@ export function isRepeatOf(task: Task | undefined, move: Move): boolean {
 /**
  * `task` after the user's `move` at `atMs`; the same task when the move
  * repeats their last. A move in the same millisecond as the user's one
- * before it takes the next, so `heardMs` tells the two apart.
+ * before it, a reply of Claude's between them or not, takes the next, so
+ * `heardMs` tells the two apart.
  */
 export function movedBy(task: Task, move: Move, atMs: number): Task {
   if (isRepeatOf(task, move)) {
     return task
   }
 
-  const last = task.thread.at(-1)
-  const thread = [...task.thread, { from: 'user' as const, ...move, atMs: last?.from === 'user' ? Math.max(atMs, last.atMs + 1) : atMs }]
+  const before = task.thread.findLast(message => message.from === 'user')
+  const thread = [...task.thread, { from: 'user' as const, ...move, atMs: before === undefined ? atMs : Math.max(atMs, before.atMs + 1) }]
 
   switch (move.event) {
     case undefined:
@@ -262,11 +357,11 @@ function detailIn(task: Task): string {
   return task.thread[0]?.text ?? ''
 }
 
-/** A move as a digest tells it; `isFull` quotes a long answer whole, where a digest names it and points at `list_items`. */
-function newsLineOf(task: Task, move: Message, isFull: boolean): string {
+/** A move as a digest tells it: a long answer named, and `list_items` pointed at. */
+function newsLineOf(task: Task, move: Message): string {
   switch (move.event) {
     case undefined:
-      return !isFull && move.text.length > MAX_INLINE_ANSWER
+      return move.text.length > MAX_INLINE_ANSWER
         ? `The user's answer (${sizeOf(move.text.length)}) is saved: call list_items with id ${task.id} to read it.`
         : `The user's answer:\n${move.text}`
     case 'chose':
@@ -278,14 +373,10 @@ function newsLineOf(task: Task, move: Message, isFull: boolean): string {
   }
 }
 
-/**
- * What the user did with an item, after its head; '' when there is nothing
- * more to say. `isFull` (`list_items`) tells all they said since Claude's last
- * message; a digest tells only what Claude has not been told of.
- */
-function bodyOf(task: Task, isFull: boolean): string {
-  const lines = (isFull ? movesOf(task) : unheardOf(task))
-    .map(move => newsLineOf(task, move, isFull))
+/** What the user did with an item that Claude has not been told of, after its head; '' when there is nothing more to say. */
+function bodyOf(task: Task): string {
+  const lines = unheardOf(task)
+    .map(move => newsLineOf(task, move))
     .filter(line => line !== '')
 
   if (task.state === 'withdrawn') {
@@ -300,9 +391,9 @@ export function newsHeadOf(task: Task): string {
   return `#${task.id} ${task.state}: ${task.title}.`
 }
 
-/** One task's news for Claude: `#5 resolved: <title>.` and what the user said. */
-export function newsOf(task: Task, isFull: boolean): string {
-  const body = bodyOf(task, isFull)
+/** One task's news for Claude: `#5 resolved: <title>.` and what the user said that Claude has not heard. */
+export function newsOf(task: Task): string {
+  const body = bodyOf(task)
 
   return `${newsHeadOf(task)}${body === '' ? '' : ` ${body}`}`
 }
@@ -349,45 +440,78 @@ export function messageOf(due: readonly Task[]): string {
 
 /** What rides along with the user's next prompt: the updates, long answers named. */
 export function digestOf(due: readonly Task[]): string {
-  const lines = due.map(task => newsOf(task, false))
+  const lines = due.map(newsOf)
 
   return `Item updates since you last checked (Open items):\n${lines.join('\n')}`
 }
 
 /** Read after a compaction or at a session's start: what is still with the user. */
 export function contextOf(shown: readonly Task[]): string {
-  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${detailIn(task)}` : newsOf(task, false)))
+  const lines = shown.map(task => (isActive(task) ? `#${task.id} ${task.state}: ${task.title}. ${detailIn(task)}` : newsOf(task)))
 
   return [
-    'Items you gave the user, through the Open items tools (add_item, list_items, withdraw_item):',
+    'Items you gave the user, through the Open items tools (add_item, reply_item, close_item, list_items):',
     ...lines,
-    'The user sees them in their Open items pane, or with /open-items. Withdraw any you no longer need.',
+    'The user sees them in their Open items pane, or with /open-items. Close any you no longer need with close_item.',
   ].join('\n')
 }
 
-/** `list_items`'s answer. */
-export function listOf(tasks: readonly Task[], nowMs: number): string {
-  if (tasks.length === 0) {
-    return 'No items match.'
+/** `just now`, `4m ago`. */
+function whenOf(ms: number): string {
+  const age = ago(ms)
+
+  return age === 'now' ? 'just now' : `${age} ago`
+}
+
+const PRESSED = { done: 'Done', seen: 'Seen', later: 'Later' } as const
+
+/** A thread entry as `list_items` gives it: a message on the lines under its head, a press or a change on one line. */
+function entryOf(message: Message, nowMs: number): string {
+  const who = message.from === 'claude' ? 'You' : 'The user'
+  const when = whenOf(nowMs - message.atMs)
+
+  switch (message.event) {
+    case undefined:
+      return `- ${who}, ${when}:\n  ${message.text.split('\n').join('\n  ')}`
+    case 'chose':
+      return `- ${who} chose "${message.text}", ${when}.`
+    case 'changed':
+      return `- ${who} changed the item, ${when}.`
+    case 'took':
+      return `- The item moved here from an earlier session, ${when}.`
+    default:
+      return `- ${who} pressed ${PRESSED[message.event]}, ${when}.`
   }
+}
 
-  return tasks
-    .map(task => {
-      const age = ago(nowMs - task.createdMs)
-      const detail = isActive(task)
-        ? [
-            `Detail: ${detailIn(task)}`,
-            task.doneWhen ? `Done when: ${task.doneWhen}` : '',
-            task.options ? `Options: ${task.options.join(' | ')}` : '',
-            task.recommended ? `Recommended: ${task.recommended}` : '',
-          ]
-        : []
+/**
+ * One item as `list_items` gives it: its state, what it waits on, and its
+ * thread whole (`isWhole`) or its last TAIL entries, with every entry since
+ * Claude's last however many that is, so no answer goes unseen.
+ */
+function listedOf(task: Task, nowMs: number, isWhole: boolean): string {
+  const lastOwn = task.thread.findLastIndex(message => message.from === 'claude')
+  const shown = task.thread.slice(isWhole ? 0 : Math.max(0, Math.min(task.thread.length - TAIL, lastOwn)))
+  const threadHead =
+    shown.length === task.thread.length ? 'Thread:' : `Thread, the last ${shown.length} of ${task.thread.length} entries (list_items with id ${task.id} gives all):`
+  const lines = [
+    task.isWaitingForClaude ? 'The user replied and waits for you: answer in the item with reply_item, or close it with close_item.' : '',
+    task.hasNewReply ? 'The user has not opened your last reply yet.' : '',
+    task.options ? `Options: ${task.options.join(' | ')}` : '',
+    task.recommended ? `Recommended: ${task.recommended}` : '',
+    task.doneWhen ? `Done when: ${task.doneWhen}` : '',
+    task.link ? `Link: ${task.link}` : '',
+    task.note ? `Note: ${task.note}` : '',
+    shown.length === 0 ? '' : threadHead,
+    ...shown.map(message => entryOf(message, nowMs)),
+  ].filter(line => line !== '')
 
-      return [`#${task.id} ${task.state} · added ${age === 'now' ? 'just now' : `${age} ago`} · ${task.title}`, ...detail, ...bodyOf(task, true).split('\n')]
-        .filter(line => line.trim() !== '')
-        .join('\n  ')
-    })
-    .join('\n\n')
+  return [`#${task.id} ${task.state} · ${task.kind} · added ${whenOf(nowMs - task.createdMs)} · ${task.title}`, ...lines.join('\n').split('\n').map(line => `  ${line}`)].join('\n')
+}
+
+/** `list_items`'s answer; `isWhole` gives each item's whole thread. */
+export function listOf(tasks: readonly Task[], nowMs: number, isWhole = false): string {
+  return tasks.length === 0 ? 'No items match.' : tasks.map(task => listedOf(task, nowMs, isWhole)).join('\n\n')
 }
 
 /** `add_item`'s answer. */

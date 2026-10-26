@@ -5,14 +5,17 @@ import type { Editing, Saved, Task } from '../types'
 import {
   DONE,
   LATER,
+  MAX_NOTE,
   MAX_TITLE,
   SEEN,
-  answerIn,
   addedOf,
+  answerIn,
   bridgeOf,
   choseOf,
+  closedAs,
   contextOf,
   digestOf,
+  hasAnswerIn,
   isActive,
   isOpenAsk,
   isRepeatOf,
@@ -23,9 +26,14 @@ import {
   messageOf,
   movedBy,
   newsHeadOf,
+  newsOf,
   overLimitOf,
   ownHeadOf,
   parseAsk,
+  parseClose,
+  parseReply,
+  repliedBy,
+  replyErrorOf,
   replyOf,
   sameAsk,
   statusOf,
@@ -62,7 +70,7 @@ import {
 } from './pane'
 import type { PaneView } from './pane'
 import { isExpired, isSavedKey, keyOf, savedIn, trimmed } from './saved'
-import { numbersOf, oneLine, printable } from './text'
+import { numbersOf, printable } from './text'
 
 const PLUGIN = 'open-items'
 
@@ -70,18 +78,32 @@ const PLUGIN = 'open-items'
 const ALERT_QUIET_MS = 120_000
 
 const ADD = 'mcp__open-items__add_item'
+const REPLY = 'mcp__open-items__reply_item'
+const CLOSE = 'mcp__open-items__close_item'
 const LIST = 'mcp__open-items__list_items'
-const WITHDRAW = 'mcp__open-items__withdraw_item'
+const HANDOFF = 'mcp__open-items__handoff_items'
+const TAKE = 'mcp__open-items__take_items'
+
+/** The hand-off pair waits behind ToolSearch: the hand-off steps load it. */
+const DEFERRED: readonly string[] = [HANDOFF, TAKE]
+
+/** How recent the user's last typed prompt is in a live chat. */
+const LIVE_CHAT_MS = 300_000
+
+const LIVE_CHAT = 'live chat: ask in the chat'
+
+/** Ends `add_item`'s result when the live-chat gate cannot tell whether background work runs. */
+const LIVE_CHAT_NOTE = 'This looks like a live chat: if the user is here and replying, withdraw it with close_item and ask in the chat.'
 
 /**
- * The end of the system prompt, said as what to do. It also covers the
- * person answering in chat, and background agents running.
+ * A short copy of the rules the tool descriptions carry, at the end of the
+ * system prompt where it loads: on some seats only the descriptions reach Claude.
  */
 const STEERING = [
-  'When you need something from the user, add it with mcp__open-items__add_item so it stays in their Open items pane until they resolve it: a decision that is theirs, a question only they can answer, an action only they can do, or info they must see (a failure, a finding that changes their plan).',
-  'Add it even when you also ask in your reply. When they answer in chat instead, withdraw the item with reason "answered in chat".',
-  'While background agents run, add the item and write no chat text about it until the batch ends.',
-  'If add_item fails, ask in chat.',
+  'Open items: while background agents, shell commands or monitors run, or after the user went quiet, put every ask for the user in their Open items pane with mcp__open-items__add_item. In a live chat, ask in the chat only.',
+  'One item per ask: answer the user and change the item with reply_item, and close it with close_item when it is resolved. When the user answers in the chat instead, close it as withdrawn with the note "answered in chat".',
+  'Before the session ends, resolve, record or hand off every open and Later item.',
+  'If an Open items tool call fails, ask in the chat.',
 ].join('\n')
 
 /** Resolutions pressed this close together go to Claude as one message. */
@@ -129,40 +151,49 @@ const TOOLS: readonly ToolSpec[] = [
   {
     name: 'add_item',
     description: [
-      'Put an item in front of the user and keep it in their Open items pane until they resolve it.',
-      'There are four kinds. decision: they pick one of 2 to 4 options, and you mark the one you suggest with recommended.',
-      'question: you need their words (an error, a log, test results).',
-      'action: they do something on their machine or on an account you cannot reach, then mark it done.',
-      'info: something they should see (a failure, a finding that changes their plan); it asks nothing and sends you no response.',
-      'Add it even when you also ask in your reply: the user may be busy with other things, and the item keeps the ask in front of them.',
-      'An item does not block: you keep working while it waits, and the response reaches you whenever the user gets to it.',
-      'AskUserQuestion is the blocking kind: it waits for the answer, so it suits what you need before you can go on.',
-      'One item per need: list_items shows what is already open.',
-      'Write the title as an imperative the user can act on without scrolling back.',
-      'For a secret, ask the user to put it where it belongs and mark the item done, rather than paste it.',
-      'The user sees open items in their Open items pane, or opens it with /open-items.',
-      'Their response reaches you as a message, or when you call list_items.',
-    ].join(' '),
+      "Put an item in the user's Open items pane. It stays there until the user acts on it. Their response reaches you as a message, or when you call list_items. An item does not block: you keep working while it waits.",
+      '',
+      'Kinds:',
+      '- decision: the user picks one of 2 to 4 options. Mark the option you suggest with recommended.',
+      "- question: you need the user's words (an error, a log, test results).",
+      '- action: the user does something on their machine or on an account you cannot reach, then marks it done.',
+      '- info: something the user must see (a failure, a finding that changes their plan). It asks nothing, and no response reaches you.',
+      '',
+      'When to add an item:',
+      '- Add an item for every ask while background agents, shell commands or monitors run, or after the user went quiet. While background work runs, add the item and write no chat text about it until the batch ends.',
+      '- In a live chat, ask in the chat only. A live chat is a back-and-forth: the user typed their last two prompts in the chat, the last one a short time ago, and no background work runs. There, add_item refuses with "live chat: ask in the chat".',
+      "- Add only what is the user's: a decision that is theirs, a question only they can answer, an action only they can do, or a finding they must see. Ask no unnecessary questions.",
+      '- One item per ask. Never add the same ask again: change the item in place with reply_item. list_items shows what is open.',
+      '- When only the user\'s consent is missing (for example, to run a command), add a decision with options such as "Run it" and "Don\'t", not an action. Then one press lets you go on.',
+      '- AskUserQuestion is the blocking kind: use it only for what you need before you can go on.',
+      '',
+      'How to write an item:',
+      '- Write the title and the detail in plain, simple English. Make them self-contained, so the user understands them without the chat. Use no internal IDs.',
+      '- Write the title as an imperative of under 80 characters. Put the rest in the detail.',
+      '- Write numbers that are not item numbers without "#": "PR 787", not "#787". "#5" always means item 5.',
+      '- The detail keeps its line breaks, up to 4000 characters. If you can publish artifact pages, put tables, diffs and long step lists on the one artifact page of the session, and give the URL of its section in link.',
+      '- For a secret, ask the user to put it where it belongs and to mark the item done. Never ask them to paste it.',
+      '',
+      'Before the session ends, resolve, record or hand off every open and Later item. To record an item, write it and its state in the hand-off file or in the final summary of the session, then close it with close_item as withdrawn, with the note "recorded in <where>". To give the items to a new session, use handoff_items.',
+      '',
+      'If an Open items tool call fails, ask in the chat.',
+    ].join('\n'),
     inputSchema: {
       type: 'object',
       properties: {
-        title: {
-          type: 'string',
-          description: 'What the user should do, as an imperative they can act on without scrolling back. Under 80 characters.',
-        },
-        detail: {
-          type: 'string',
-          description: 'What you need from the user and why, in full: it keeps its line breaks, up to 4000 characters.',
-        },
-        done_when: {
-          type: 'string',
-          description: "Optional, for action only: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
-        },
         kind: {
           type: 'string',
           enum: ['decision', 'question', 'action', 'info'],
           description:
-            'decision: they pick one of options. question: you need their words (an error, a log, test results). action: the user does something and marks it done. info: something for them to see; it asks nothing and sends you no response.',
+            "decision: the user picks one of the options. question: you need the user's words. action: the user does something and marks it done. info: something the user must see; it asks nothing.",
+        },
+        title: {
+          type: 'string',
+          description: 'What the user should do, as an imperative in plain English that is clear without the chat. Under 80 characters.',
+        },
+        detail: {
+          type: 'string',
+          description: 'What you need from the user and why, in full and self-contained. It keeps its line breaks, up to 4000 characters.',
         },
         options: {
           type: 'array',
@@ -175,15 +206,78 @@ const TOOLS: readonly ToolSpec[] = [
           type: 'string',
           description: 'For decision only: the option you suggest, spelled exactly as in options.',
         },
+        done_when: {
+          type: 'string',
+          description: "Optional, for action only: what counts as done. For a secret: \"It is in .env. Don't paste it here.\"",
+        },
+        link: {
+          type: 'string',
+          description: 'Optional: the URL of the section of the session\'s artifact page that holds the long detail.',
+        },
       },
-      required: ['title', 'detail', 'kind'],
+      required: ['kind', 'title', 'detail'],
+    },
+  },
+  {
+    name: 'reply_item',
+    description: [
+      "Add your message to the thread of an item, change the item in place, or both. The item stays open: a reply never closes it. The user reads the thread in their Open items pane.",
+      '',
+      '- When the user replies on an item, answer in the item with reply_item, not in the chat.',
+      '- To change the ask, change the item in place: a new title, options, recommended option, done_when or link. Never add a new item for the same ask. Say in text why you changed it.',
+      '- When the user answers in the chat instead of in the item, close the item with close_item as withdrawn, with the note "answered in chat".',
+      '- When the user pressed Later, go on without the item. It stays in the pane until they act on it, and you can still reply on it.',
+      '- Close the item with close_item when it is resolved.',
+      '- Write in plain, simple English, self-contained, with no internal IDs. Write numbers that are not item numbers without "#".',
+      '- text keeps its line breaks, up to 4000 characters. Put tables, diffs and long step lists on the artifact page of the session and give its URL in link.',
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: "The item's number." },
+        text: { type: 'string', description: 'Your message to the user, up to 4000 characters. It keeps its line breaks.' },
+        title: { type: 'string', description: 'A new title, under 80 characters.' },
+        options: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 4,
+          description: 'For a decision only: new options, 2 to 4. A recommended option that is not among them is dropped.',
+        },
+        recommended: { type: 'string', description: 'For a decision only: the option you suggest, spelled exactly as in its options.' },
+        link: { type: 'string', description: 'A new URL for the long detail.' },
+        done_when: { type: 'string', description: 'For an action: what counts as done, now.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'close_item',
+    description: [
+      "Close an item, so it leaves the user's Open items pane. The user sees your note.",
+      '',
+      '- as "resolved": the answer of the user in the thread settles the item. You can resolve an item only after the user wrote in its thread.',
+      '- as "withdrawn": you no longer need the item (you found another way, or the plan changed), the user answered in the chat (note "answered in chat"), or you recorded it before the session ends (note "recorded in <where>").',
+      '- When the user pressed an option or Done, the item is closed already. Do not close it again.',
+      '- When the user replies, answer in the item with reply_item. Close the item when nothing more is needed: do not leave a settled item open.',
+      '- When the user answers in the chat instead of in the item, close it as withdrawn with the note "answered in chat".',
+      '- Before the session ends, resolve, record or hand off every open and Later item.',
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: "The item's number." },
+        as: { type: 'string', enum: ['resolved', 'withdrawn'], description: 'resolved: the user answered it. withdrawn: you no longer need it.' },
+        note: { type: 'string', description: 'One short line the user sees, up to 200 characters: "answered in chat", "recorded in <where>", or why.' },
+      },
+      required: ['id', 'as'],
     },
   },
   {
     name: 'list_items',
     description: [
-      'List the items you gave the user and what they did with them: their choice, Done, Later, or their answer. It also lists open info items.',
-      'Call it when you are about to need an item\'s result, when told an answer is saved for you, or before adding, to avoid a duplicate.',
+      'List the items you gave the user: the state of each item, whether the user replied and waits for you, whether they opened your last reply, and the last 3 entries of its thread. With id, one item with its whole thread.',
+      'Call it when you need the result of an item, when told an answer is saved for you, or before you add an item, so you do not add the same ask twice.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -191,22 +285,32 @@ const TOOLS: readonly ToolSpec[] = [
         show: {
           type: 'string',
           enum: ['updates', 'open', 'all'],
-          description: 'updates (the default): open items and responses you have not seen. open: open items only. all: every item this session.',
+          description: 'updates (the default): open items and responses you have not seen. open: open and Later items only. all: every item of this session.',
         },
-        id: { type: 'number', description: 'One item, whole, by its number.' },
+        id: { type: 'number', description: 'One item, with its whole thread, by its number.' },
       },
     },
   },
   {
-    name: 'withdraw_item',
-    description: 'Take back an item you gave the user when you no longer need it: you found another way, or the plan changed. The user sees the reason.',
+    name: 'handoff_items',
+    description: [
+      'Mark every open and Later item for the session that takes over from this one. It returns how many items, and a short hand-off code.',
+      'Call it before you start the new session. Put the code in the prompt of the new session; its first step calls take_items with the code. Without the code, no session can take the items.',
+    ].join(' '),
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'take_items',
+    description: [
+      'Take the items a previous session handed off to this one, with the hand-off code from your prompt.',
+      'It moves the items, with their threads, to this session, and gives you the number, kind, title and thread of each item and the answers you have not read.',
+    ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'The item\'s number.' },
-        reason: { type: 'string', description: 'One short sentence the user sees.' },
+        code: { type: 'string', description: 'The hand-off code from your prompt.' },
       },
-      required: ['id'],
+      required: ['code'],
     },
   },
 ]
@@ -308,6 +412,88 @@ const live = {
   closes: 0,
   /** The re-sizes keys and ring moves asked for and not yet done: each waits for the one before (see `refit`). */
   refitQueue: Promise.resolve() as Promise<unknown>,
+  /** The user's last two inputs, oldest first: what `isLiveChat` reads. */
+  inputs: [] as readonly UserInput[],
+  /**
+   * The ids of the main loop's background shell commands and monitors
+   * started and not yet ended; null when the mod cannot know them, as it did
+   * not see them all start.
+   */
+  background: null as Set<string> | null,
+}
+
+/** One of the user's inputs: a prompt typed in the chat, a long answer through the composer bridge, or a press in the pane. */
+type UserInput = { kind: 'typed' | 'bridge' | 'press'; atMs: number }
+
+function noteInput(kind: UserInput['kind'], atMs: number) {
+  live.inputs = [...live.inputs, { kind, atMs }].slice(-2)
+}
+
+/**
+ * Whether the user chats live with Claude, so `add_item` refuses: their last
+ * two inputs were prompts typed in the chat, the last one under LIVE_CHAT_MS
+ * ago, and no agent, background shell command or monitor runs. 'unknown'
+ * when the rest holds but what runs cannot be told.
+ */
+async function isLiveChat($: EngineInterface, nowMs: number): Promise<boolean | 'unknown'> {
+  const [before, last] = live.inputs
+
+  if (before?.kind !== 'typed' || last?.kind !== 'typed' || nowMs - last.atMs >= LIVE_CHAT_MS) {
+    return false
+  }
+
+  const agents = await $.agent.list().catch(() => undefined)
+
+  if (agents?.some(agent => agent.status === 'running')) {
+    return false
+  }
+
+  return agents === undefined || live.background === null ? 'unknown' : live.background.size === 0
+}
+
+/**
+ * Notes a background start that a Bash or Monitor result reports, in the
+ * words of Claude Code 2.1.310. A start whose id cannot be read leaves what
+ * runs unknown.
+ */
+function noteStart(tool: string, text: string | undefined) {
+  if (text === undefined || live.background === null) {
+    return
+  }
+
+  if (tool !== 'Monitor' && !(tool === 'Bash' && /^Command\b[^\n]*\bbackground/i.test(text))) {
+    return
+  }
+
+  const id = (tool === 'Monitor' ? /^Monitor started \(task ([\w-]+)/ : /(?:with ID: |\(ID: )([\w-]+)/).exec(text)?.[1]
+  live.background = id === undefined ? null : live.background.add(id)
+}
+
+/** Drops the tasks a notification reports ended: an end carries a status, a monitor's event none. */
+function noteEnds(text: string) {
+  for (const [, block = ''] of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const id = /<task-id>([^<]+)<\/task-id>/.exec(block)?.[1]
+
+    if (id !== undefined && block.includes('<status>')) {
+      live.background?.delete(id)
+    }
+  }
+}
+
+/** The text of a tool's result row, unless the tool failed. */
+function resultTextOf(content: readonly Record<string, unknown>[]): string | undefined {
+  const block = content.find(one => one['type'] === 'tool_result')
+  const inner = block?.['content']
+
+  if (block === undefined || block['is_error'] === true) {
+    return undefined
+  }
+
+  if (typeof inner === 'string') {
+    return inner
+  }
+
+  return Array.isArray(inner) ? inner.map(part => (typeof part?.text === 'string' ? part.text : '')).join('\n') : undefined
 }
 
 /** Whether Claude is at work: the engine's word when it has given one, else the turns begun and not ended. */
@@ -323,6 +509,10 @@ export const register: Register = on => {
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
     await update($, folder, known => known ?? e.cwd)
+    // A reload of the code finds the session read (see `takeUp`), and has lost the background tasks that started before it.
+    const isReload = (await read($, restoredFor)) === (await $.session.id())
+    live.background = isReload ? null : new Set()
+    live.inputs = []
     await restore($)
 
     return next(e)
@@ -361,12 +551,12 @@ export const register: Register = on => {
     return {}
   })
 
-  // The tools stay in the prompt's list, descriptions and all, where an MCP
-  // tool would wait behind ToolSearch: the description is what steers Claude
-  // to add an item, so the ask stays in front of the user.
-  on('tool.describe', { tool: ADD }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
-  on('tool.describe', { tool: LIST }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
-  on('tool.describe', { tool: WITHDRAW }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
+  // The four tools of every turn stay in the prompt's list, descriptions and
+  // all, where an MCP tool would wait behind ToolSearch: their descriptions
+  // carry the steering, the one prompt text that reaches Claude on every seat.
+  for (const tool of [ADD, REPLY, CLOSE, LIST, HANDOFF, TAKE]) {
+    on('tool.describe', { tool }, async ($, e, next) => ({ ...(await next(e)), isDeferred: DEFERRED.includes(tool) }))
+  }
 
   on('tool.call', { tool: ADD }, async ($, e) => {
     if (e.agentId !== undefined) {
@@ -383,6 +573,13 @@ export const register: Register = on => {
       return { deny: LOADING }
     }
 
+    const nowMs = await $.clock.now()
+    const isLive = await isLiveChat($, nowMs)
+
+    if (isLive === true) {
+      return { deny: LIVE_CHAT }
+    }
+
     const active = (await read($, tasks)).filter(isActive)
     const same = active.find(task => sameAsk(task.title, ask.title))
 
@@ -391,7 +588,6 @@ export const register: Register = on => {
     }
 
     const id = (await update($, nextId, n => n + 1)) - 1
-    const nowMs = await $.clock.now()
     const { detail, ...fields } = ask
     const task: Task = {
       id,
@@ -408,17 +604,92 @@ export const register: Register = on => {
     await change($, list => [...list, task])
     await reselect($)
     await update($, selectedId, chosen => chosen ?? id)
+    const title = printable(task.title, MAX_TITLE)
+    await present($, task, nowMs, { toast: `Claude added an item for you: ${title}. See /open-items`, notice: title })
 
-    if (!(await show($, false))) {
-      $.ui.toast(`Claude added an item for you: ${printable(task.title, MAX_TITLE)}. See /open-items`)
+    return { result: isLive === 'unknown' ? `${addedOf(task)} ${LIVE_CHAT_NOTE}` : addedOf(task) }
+  })
+
+  on('tool.call', { tool: REPLY }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent replies on items. Say what you need from the user in your result instead.' }
     }
 
-    if (task.kind !== 'info' && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
-      live.alertedTurn = true
-      $.ui.notify(printable(task.title, MAX_TITLE), { title: 'Open items' }).catch(() => undefined)
+    const reply = parseReply(e as unknown as Record<string, unknown>)
+
+    if ('error' in reply) {
+      return { deny: reply.error }
     }
 
-    return { result: addedOf(task) }
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    // A move of the user's Claude has not heard would go unsent once Claude's
+    // reply follows it in the thread: the result tells it instead.
+    const found = await edit($, reply.id, (task, nowMs) =>
+      replyErrorOf(task, reply) === undefined ? repliedBy(task.update === 'pending' ? toldOf(task) : task, reply, nowMs) : task,
+    )
+
+    if (found === undefined) {
+      return { deny: `No item #${reply.id}.` }
+    }
+
+    const error = replyErrorOf(found, reply)
+
+    if (error !== undefined) {
+      return { deny: error }
+    }
+
+    const title = printable(found.title, MAX_TITLE)
+    await present($, found, await $.clock.now(), { toast: `Claude replied on an item: ${title}. See /open-items`, notice: `Claude replied: ${title}` })
+    const unheard = found.update === 'pending' ? `\nThe user had already responded on it, which you had not heard:\n${newsOf(found)}` : ''
+
+    return {
+      result: `Added your reply to item #${found.id}. It stays open in the user's Open items pane; their response reaches you as a message, or through list_items.${unheard}`,
+    }
+  })
+
+  on('tool.call', { tool: CLOSE }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { deny: 'Only the main agent closes items.' }
+    }
+
+    const close = parseClose(e as unknown as Record<string, unknown>)
+
+    if ('error' in close) {
+      return { deny: close.error }
+    }
+
+    if (live.loading !== null) {
+      return { deny: LOADING }
+    }
+
+    const isRefused = (task: Task) => close.as === 'resolved' && !hasAnswerIn(task)
+    const found = await edit($, close.id, task => (isRefused(task) ? task : closedAs(task, close)))
+
+    if (found === undefined) {
+      return { deny: `No item #${close.id}.` }
+    }
+
+    if (!isActive(found)) {
+      return { deny: `Item #${found.id} is already ${found.state}; there is nothing to close.` }
+    }
+
+    if (isRefused(found)) {
+      return {
+        deny: `Item #${found.id} has no answer from the user yet, so it cannot be resolved. Wait for their answer, or close it as withdrawn if you no longer need it.`,
+      }
+    }
+
+    // Its fields go with it, and what was typed in them: put in the prompt
+    // box unasked, it would join whatever the user is writing there.
+    await settle($, found.id)
+    const why = close.note === undefined ? '' : `. ${printable(close.note, MAX_NOTE)}`
+    const action = close.as === 'resolved' ? 'Claude marked the item resolved' : 'Claude withdrew the item'
+    $.ui.toast(`${action}: ${printable(found.title, MAX_TITLE)}${why}`, { timeoutMs: 8000 })
+
+    return { result: `${close.as === 'resolved' ? 'Resolved' : 'Withdrew'} item #${found.id}; it is gone from the user's Open items pane.` }
   })
 
   on('tool.call', { tool: LIST }, async ($, e) => {
@@ -450,49 +721,26 @@ export const register: Register = on => {
       await claim($, task => picked.some(one => one.id === task.id && one.update === 'pending'))
     }
 
-    return { result: listOf(picked, await $.clock.now()) }
+    return { result: listOf(picked, await $.clock.now(), id !== undefined) }
   })
 
-  on('tool.call', { tool: WITHDRAW }, async ($, e) => {
-    if (e.agentId !== undefined) {
-      return { deny: 'Only the main agent withdraws items.' }
+  for (const tool of [HANDOFF, TAKE] as const) {
+    on('tool.call', { tool }, async ($, e) => ({ deny: e.agentId === undefined ? 'Not ready yet.' : 'Only the main agent hands items off.' }))
+  }
+
+  // Observes only: the mod hooks no tool of Claude Code's own, so it reads a
+  // background start from the main loop's result row. A subagent's background
+  // work counts while the subagent runs, which `$.agent.list()` tells.
+  on('session.append', { door: 'tool-result' }, async ($, e, next) => {
+    try {
+      if (e.agentId === undefined && e.origin.kind === 'tool') {
+        noteStart(e.origin.tool, resultTextOf(e.message.content))
+      }
+    } catch {
+      live.background = null
     }
 
-    if (live.loading !== null) {
-      return { deny: LOADING }
-    }
-
-    const args = e as unknown as Record<string, unknown>
-    const id = args['id']
-    const reason = typeof args['reason'] === 'string' ? oneLine(args['reason']) : ''
-    const task = (await read($, tasks)).find(one => one.id === id)
-    // Withdrawn only while it is open: an answer the user gave a moment
-    // before stands, and a reply Claude has not heard yet still goes to it.
-    const found =
-      task === undefined || !isActive(task)
-        ? task
-        : await edit($, task.id, one => ({
-            ...one,
-            state: 'withdrawn',
-            update: one.update === 'pending' ? 'pending' : 'delivered',
-            ...(reason === '' ? {} : { note: reason }),
-          }))
-
-    if (found === undefined) {
-      return { deny: `No item #${String(id)}.` }
-    }
-
-    if (!isActive(found)) {
-      return { deny: `Item #${found.id} is already ${found.state}; there is nothing to withdraw.` }
-    }
-
-    // Its fields go with it, and what was typed in them: put in the prompt
-    // box unasked, it would join whatever the user is writing there.
-    await settle($, found.id)
-    const why = reason === '' ? '' : `. ${printable(reason, 200)}`
-    $.ui.toast(`Claude withdrew the item: ${printable(found.title, MAX_TITLE)}${why}`, { timeoutMs: 8000 })
-
-    return { result: `Withdrew item #${found.id}; it is gone from the user's Open items pane.` }
+    return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
@@ -565,6 +813,7 @@ export const register: Register = on => {
 
   on('ui.press', { plugin: PLUGIN }, async ($, e, next) => {
     live.lastPersonMs = await $.clock.now()
+    noteInput('press', live.lastPersonMs)
 
     return next(e)
   })
@@ -572,6 +821,7 @@ export const register: Register = on => {
   on('ui.input', { plugin: PLUGIN }, async ($, e, next) => {
     if (e.kind === 'submit') {
       live.lastPersonMs = await $.clock.now()
+      noteInput('press', live.lastPersonMs)
     }
 
     return next(e)
@@ -582,11 +832,18 @@ export const register: Register = on => {
       return next(e)
     }
 
+    const bridged = answerIn(e.text)
+
+    // A prompt from the Remote Control bridge (a phone) is one the user typed in the chat too.
     if (e.origin.kind === 'composer' || e.origin.kind === 'bridge') {
       live.lastPersonMs = await $.clock.now()
+      noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
     }
 
-    const bridged = answerIn(e.text)
+    if (e.origin.kind === 'task-notification') {
+      noteEnds(e.text)
+    }
+
     const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isOpenAsk(one))
     let isAnswered = false
 
@@ -989,6 +1246,8 @@ async function startCleared($: EngineInterface, endingId: string) {
 
 /** Goes on as the session a resume took up after `endingId`, with the items it saved; as `startCleared` when the engine never names it. */
 async function startResumed($: EngineInterface, endingId: string) {
+  // Whether the background tasks of a resumed conversation still run is not known.
+  live.background = null
   const sessionId = await newIdAfter($, endingId)
 
   await switchTo($, sessionId ?? endingId)
@@ -1298,6 +1557,22 @@ async function claim($: EngineInterface, isWanted: (task: Task) => boolean = () 
   })
 
   return due
+}
+
+/**
+ * Puts an item new or changed in front of the user: the pane, or a toast
+ * where it cannot be seated unasked, and an alert when they have been away;
+ * one alert a turn, none for info.
+ */
+async function present($: EngineInterface, task: Task, nowMs: number, words: { toast: string; notice: string }) {
+  if (!(await show($, false))) {
+    $.ui.toast(words.toast)
+  }
+
+  if (task.kind !== 'info' && !live.alertedTurn && nowMs - live.lastPersonMs >= ALERT_QUIET_MS) {
+    live.alertedTurn = true
+    $.ui.notify(words.notice, { title: 'Open items' }).catch(() => undefined)
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { On, PaneOpenArgs, PromptSubmitInput } from 'claude-code'
+import type { AgentInfo, On, PaneOpenArgs, PromptSubmitInput, SessionAppendInput, ToolSpec } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -7,11 +7,14 @@ import { register } from '../hooks/register'
 import { savedIn } from '../hooks/saved'
 import { DONE as DONE_PRESS, movedBy } from '../hooks/tasks'
 import { cellsOf, rowsOf, wrapRows } from '../hooks/text'
-import type { Task } from '../types'
+import type { Message, Task } from '../types'
 
 const ADD = 'mcp__open-items__add_item'
 const LIST = 'mcp__open-items__list_items'
-const WITHDRAW = 'mcp__open-items__withdraw_item'
+const REPLY = 'mcp__open-items__reply_item'
+const CLOSE = 'mcp__open-items__close_item'
+const HANDOFF = 'mcp__open-items__handoff_items'
+const TAKE = 'mcp__open-items__take_items'
 
 const PANE = {
   plugin: 'open-items',
@@ -145,6 +148,12 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     tasksRead: 0,
     /** The task list as the plugin last wrote it to its state. */
     items: [] as readonly Task[],
+    /** The agents `$.agent.list()` answers with. */
+    agents: [] as AgentInfo[],
+    /** Set, `$.agent.list()` fails. */
+    isAgentListFailing: false,
+    /** The tools the plugin registered, as it described them. */
+    tools: [] as ToolSpec[],
   }
 
   const clock = mock.clock(on, { now: NOW })
@@ -230,7 +239,11 @@ function seat(on: On, store: Record<string, unknown> = {}) {
   })
   on('session.detach', ($, e) => ({ clientId: e.clientId }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('tool.register', ($, e) => ({ value: { tool: `mcp__open-items__${e.name}` } }))
+  on('tool.register', ($, e) => {
+    world.tools.push(e)
+    return { value: { tool: `mcp__open-items__${e.name}` } }
+  })
+  on('agent.list', () => (world.isAgentListFailing ? { deny: 'The agent list is out of reach.' } : { value: world.agents }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)
@@ -375,9 +388,6 @@ function holdingPresses(on: On) {
   return held
 }
 
-/** The kit has no `test.skip`: a test given to this does not run. */
-const skip: typeof test = () => {}
-
 type Drawn = Pick<Mounted<'terminal', 'Pane'>, 'find'>
 
 async function textOf(ui: Drawn, key: string): Promise<string> {
@@ -426,7 +436,7 @@ describe('adding', () => {
     expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
-  test('the same ask twice is one item, one the user put off for later too', async ($, on) => {
+  test('the same ask twice is still one item', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
@@ -441,47 +451,26 @@ describe('adding', () => {
     expect(world.items.map(task => task.id)).toEqual([1])
   })
 
-  // Task 3: there is no cap now; Task 3 rewrites this test.
-  skip('a sixth open item is refused', async ($, on) => {
-    seat(on)
+  test('a seventh open item is added: there is no cap', async ($, on) => {
+    const { world } = seat(on)
     await start($)
 
-    for (const n of [1, 2, 3, 4, 5]) {
-      await $.tool.call({ ...KEY_TASK, title: `Do thing number ${n}` })
+    for (const n of [1, 2, 3, 4, 5, 6, 7]) {
+      const added = await $.tool.call({ ...KEY_TASK, title: `Do thing number ${n}` })
+
+      expect(String((added as { result?: unknown }).result)).toContain(`Added item #${n}`)
     }
 
-    const sixth = await $.tool.call({ ...KEY_TASK, title: 'One item too many' })
-    expect((sixth as { deny?: string }).deny).toContain('already has 5 open items')
+    expect(world.items.filter(task => task.state === 'open').map(task => task.id)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(world.status).toBe('☐ 7 actions · /open-items')
   })
 
-  test("the tools stay in the prompt's list, where the engine puts an MCP tool behind ToolSearch", async ($, on) => {
-    seat(on)
-    on('tool.describe', ($, e) => ({ description: e.description, isDeferred: true }))
-    await start($)
-
-    for (const tool of [ADD, LIST, WITHDRAW]) {
-      const described = await $.tool.describe({ tool, description: 'From the server.', isDeferred: true, provider: { plugin: 'open-items', tier: 'user' } })
-
-      expect(described).toEqual({ description: 'From the server.', isDeferred: false })
-    }
-  })
-
-  test('a subagent cannot add items', async ($, on) => {
-    seat(on)
-    await start($)
-
-    const call = { ...KEY_TASK, agentId: 'agent-1' } as unknown as Parameters<Engine['tool']['call']>[0]
-    const refused = await $.tool.call(call)
-
-    expect((refused as { deny?: string }).deny).toContain('Only the main agent')
-  })
-
-  test('a withdrawn item leaves: the pane closes and the status line clears', async ($, on) => {
+  test('an item closed as withdrawn leaves: the pane closes and the status line clears', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
     await $.tool.call(KEY_TASK)
-    await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found the key in the vault' })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'Found the key in the vault' })
 
     expect(world.isPaneOpen).toBe(false)
     expect(world.status).toBeUndefined()
@@ -995,7 +984,7 @@ describe('long titles', () => {
     const opens = world.opens.length
     // Drawn empty while the withdraw writes the store, before the pane closes.
     world.setMs = 1000
-    const withdrawn = $.tool.call({ tool: WITHDRAW, id: 1 })
+    const withdrawn = $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     await clock.advance(1)
     await ui.redraw(inline(60).props)
     await clock.advance(1000)
@@ -1022,7 +1011,7 @@ describe('long titles', () => {
     world.readMs = 500
     const typing = ui.input({ key: 'answer-1', text: 'Two failures', kind: 'change' })
     await clock.advance(1)
-    await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found them in the CI logs' })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'Found them in the CI logs' })
     await clock.advance(500)
     await typing
     await clock.settle()
@@ -1044,7 +1033,7 @@ describe('long titles', () => {
     world.panesMs = 500
     const typing = ui.input({ key: 'answer-1', text: 'Two failures: LoginTests.testExpiredToken and CartTests.testCouponRounding', kind: 'change' })
     await clock.advance(1)
-    await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found them in the CI logs' })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'Found them in the CI logs' })
     await clock.advance(500)
     await typing
     await clock.settle()
@@ -2067,12 +2056,12 @@ describe('responding', () => {
     // The withdraw reads the task list late: Done lands meanwhile.
     world.slowRead = 'tasks'
     world.readMs = 500
-    const withdrawn = $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found the key in the vault' })
+    const withdrawn = $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'Found the key in the vault' })
     await clock.advance(1)
     await ui.press({ key: 'done' })
     await clock.advance(500)
 
-    expect(((await withdrawn) as { deny?: string }).deny).toBe('Item #1 is already resolved; there is nothing to withdraw.')
+    expect(((await withdrawn) as { deny?: string }).deny).toBe('Item #1 is already resolved; there is nothing to close.')
     expect(world.toasts).toEqual([])
 
     await $.turn.complete({ ...DONE, turnId: 't1' })
@@ -2093,7 +2082,7 @@ describe('responding', () => {
     world.readMs = 500
     const pressed = ui.press({ key: 'done' })
     await clock.advance(1)
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     await clock.advance(500)
     await pressed
     await clock.settle()
@@ -2118,7 +2107,7 @@ describe('responding', () => {
 
     held.isOn = true
     const pressed = ui.press({ key: 'other-way' })
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     held.letGo()
     await pressed
 
@@ -2140,7 +2129,7 @@ describe('responding', () => {
     // draft gone with it, before the drawing that withdraw wakes.
     held.isOn = true
     const pressed = ui.press({ key: 'other-way' })
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     held.letGo()
     await pressed
 
@@ -2161,7 +2150,7 @@ describe('responding', () => {
     await clock.settle()
     held.isOn = true
     const pressed = ui.press({ key: 'long' })
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     held.letGo()
     await pressed
 
@@ -2183,7 +2172,7 @@ describe('responding', () => {
     await clock.settle()
     held.isOn = true
     const pressed = ui.press({ key: 'select-1' })
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     held.letGo()
     await pressed
 
@@ -2235,7 +2224,7 @@ describe('responding', () => {
     await ui.press({ key: 'answer' })
     isHeld = true
     const entered = ui.input({ key: 'answer-1', text: KEY_SHAPED })
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     letGo()
     await entered
 
@@ -2254,7 +2243,7 @@ describe('responding', () => {
     await ui.press({ key: 'cancel' })
     await clock.settle()
     world.composer = 'Also bump the version'
-    await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'Found it in the CI logs' })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'Found it in the CI logs' })
 
     expect(world.composer).toBe('Also bump the version')
     expect(world.toasts.at(-1)).toBe('Claude withdrew the item: Run xcodebuild test on your Mac, paste the failures. Found it in the CI logs')
@@ -2496,7 +2485,7 @@ describe('long answers in the prompt box', () => {
     world.readMs = 500
     const sending = $.prompt.submit(typed('↳ Answer to #1: Two failures', 't1'))
     await clock.advance(1)
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
     await clock.advance(500)
     const sent = await sending
     await $.turn.complete({ ...DONE, turnId: 't1' })
@@ -2517,14 +2506,7 @@ describe('the system prompt', () => {
     outputStyle: null,
   } as const
 
-  const STEERING_LINES = [
-    'When you need something from the user, add it with mcp__open-items__add_item so it stays in their Open items pane until they resolve it: a decision that is theirs, a question only they can answer, an action only they can do, or info they must see (a failure, a finding that changes their plan).',
-    'Add it even when you also ask in your reply. When they answer in chat instead, withdraw the item with reason "answered in chat".',
-    'While background agents run, add the item and write no chat text about it until the batch ends.',
-    'If add_item fails, ask in chat.',
-  ]
-
-  test('the system prompt carries the four steering lines', async ($, on) => {
+  test('the system prompt carries a short copy of the steering, where add_item can be reached', async ($, on) => {
     seat(on)
     on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
     await start($)
@@ -2532,10 +2514,14 @@ describe('the system prompt', () => {
     const offered = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', ADD], traits: [] })
     const deferred = await $.prompt.compose({ ...COMPOSE, tools: ['Bash', 'ToolSearch'], traits: [] })
     const without = await $.prompt.compose({ ...COMPOSE, tools: ['Bash'], traits: [] })
+    const steering = offered.sections.at(-1)
 
-    expect(offered.sections.at(-1)?.id).toBe('open-items:steering')
-    expect(offered.sections.at(-1)?.scope).toBe('session')
-    expect(offered.sections.at(-1)?.text).toBe(STEERING_LINES.join('\n'))
+    expect(steering?.id).toBe('open-items:steering')
+    expect(steering?.scope).toBe('session')
+    for (const rule of ['live chat', 'reply_item', 'close_item', 'answered in chat', 'Before the session ends']) {
+      expect(steering?.text).toContain(rule)
+    }
+    expect(steering?.text).not.toContain('withdraw_item')
     expect(deferred.sections.at(-1)?.id).toBe('open-items:steering')
     expect(without.sections).toHaveLength(1)
   })
@@ -2554,7 +2540,11 @@ describe('the system prompt', () => {
 })
 
 describe('the mod\'s own tools', () => {
-  test('every tool.call hook matches one of the mod\'s own tools', () => {
+  const SIX = [ADD, REPLY, CLOSE, LIST, HANDOFF, TAKE]
+
+  const descriptionOf = (world: ReturnType<typeof seat>['world'], name: string) => world.tools.find(tool => tool.name === name)?.description ?? ''
+
+  test('every tool.call hook matches one of the six tools', () => {
     const calls: { event: string; matcher: unknown }[] = []
     const record = ((event: string, ...rest: unknown[]) => {
       calls.push({ event, matcher: typeof rest[0] === 'object' ? rest[0] : undefined })
@@ -2564,10 +2554,85 @@ describe('the mod\'s own tools', () => {
 
     const matchers = calls.filter(call => call.event === 'tool.call').map(call => (call.matcher as { tool?: string } | undefined)?.tool)
 
-    expect(matchers.length).toBeGreaterThan(0)
-    for (const tool of matchers) {
-      expect([ADD, LIST, WITHDRAW]).toContain(tool)
+    expect([...new Set(matchers)].sort()).toEqual([...SIX].sort())
+  })
+
+  test('add_item, reply_item, close_item, list_items are not deferred; handoff_items and take_items are', async ($, on) => {
+    seat(on)
+    let isDeferredBelow = true
+    on('tool.describe', ($, e) => ({ description: e.description, isDeferred: isDeferredBelow }))
+    await start($)
+
+    for (const below of [true, false]) {
+      isDeferredBelow = below
+
+      for (const tool of SIX) {
+        const described = await $.tool.describe({ tool, description: 'From the server.', isDeferred: true, provider: { plugin: 'open-items', tier: 'user' } })
+
+        expect(described).toEqual({ description: 'From the server.', isDeferred: tool === HANDOFF || tool === TAKE })
+      }
     }
+  })
+
+  test('every tool but list_items refuses a subagent', async ($, on) => {
+    seat(on)
+    await start($)
+    await $.tool.call(XCODE_TASK)
+
+    const calls = [
+      { ...KEY_TASK },
+      { tool: REPLY, id: 1, text: 'Which test file?' },
+      { tool: CLOSE, id: 1, as: 'withdrawn' },
+      { tool: HANDOFF },
+      { tool: TAKE, code: 'abc123' },
+    ] as const
+
+    for (const call of calls) {
+      const refused = (await $.tool.call({ ...call, agentId: 'agent-1' })) as { deny?: string }
+
+      expect(refused.deny, call.tool).toContain('Only the main agent')
+    }
+
+    const listed = (await $.tool.call({ tool: LIST, agentId: 'agent-1' })) as { result?: string; deny?: string }
+
+    expect(listed.deny).toBeUndefined()
+    expect(listed.result).toContain('#1 open')
+  })
+
+  test('handoff_items and take_items are not ready yet', async ($, on) => {
+    seat(on)
+    await start($)
+
+    for (const call of [{ tool: HANDOFF }, { tool: TAKE, code: 'abc123' }] as const) {
+      expect(((await $.tool.call(call)) as { deny?: string }).deny).toBe('Not ready yet.')
+    }
+  })
+
+  test('every tool description is at most 4096 characters', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    expect(world.tools.map(tool => `mcp__open-items__${tool.name}`).sort()).toEqual([...SIX].sort())
+    for (const tool of world.tools) {
+      expect(tool.description.length, tool.name).toBeLessThanOrEqual(4096)
+    }
+  })
+
+  test("add_item's description carries the live-chat rule and the session-end rule", async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    expect(descriptionOf(world, 'add_item')).toContain('live chat')
+    expect(descriptionOf(world, 'add_item')).toContain('Before the session ends')
+  })
+
+  test('reply_item and close_item carry the rule for an answer in the chat, and handoff_items says how to pass the code', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    expect(descriptionOf(world, 'reply_item')).toContain('answered in chat')
+    expect(descriptionOf(world, 'close_item')).toContain('answered in chat')
+    expect(descriptionOf(world, 'handoff_items')).toContain('take_items')
   })
 })
 
@@ -2605,7 +2670,7 @@ describe('saving', () => {
       taken: [],
     })
 
-    await $.tool.call({ tool: WITHDRAW, id: 1 })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
 
     // A closed item keeps its number, title and state, without its thread.
     expect(world.store['session:session-1']).toEqual({
@@ -2733,7 +2798,7 @@ describe('saving', () => {
     // Every write takes a minute.
     world.setMs = 60_000
     let isWithdrawn = false
-    const withdrawn = $.tool.call({ tool: WITHDRAW, id: 7 }).then(result => {
+    const withdrawn = $.tool.call({ tool: CLOSE, id: 7, as: 'withdrawn' }).then(result => {
       isWithdrawn = true
       return result
     })
@@ -2755,7 +2820,7 @@ describe('saving', () => {
     await clock.advance(5000)
     await started
 
-    for (const call of [KEY_TASK, { tool: LIST }, { tool: WITHDRAW, id: 7 }] as const) {
+    for (const call of [KEY_TASK, { tool: LIST }, { tool: CLOSE, id: 7, as: 'withdrawn' }] as const) {
       const refused = await $.tool.call(call)
       expect((refused as { deny?: string }).deny).toBe("Open items is still loading this session's items. Try again in a moment.")
     }
@@ -3400,34 +3465,19 @@ describe('the four kinds', () => {
     expect(world.isPaneOpen).toBe(false)
   })
 
-  // Task 3: there is no cap now; Task 3 rewrites this test.
-  skip('info items do not count toward the cap of 5 asks', async ($, on) => {
-    seat(on)
-    await start($)
-
-    for (const n of [1, 2, 3, 4, 5]) {
-      expect(resultOf(await $.tool.call({ ...INFO, title: `Note number ${n}` })).result).toContain('Added item')
-      expect(resultOf(await $.tool.call({ ...XCODE_TASK, title: `Question number ${n}` })).result).toContain('Added item')
-    }
-
-    expect(resultOf(await $.tool.call({ ...XCODE_TASK, title: 'Question number 6' })).deny).toContain('already has 5 open items')
-  })
-
-  // Task 3: info items stay until Seen now; Task 3 rewrites this test.
-  skip('a sixth info item drops the oldest', async ($, on) => {
+  test('a sixth info item drops none: info items stay until Seen', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
     for (const n of [1, 2, 3, 4, 5, 6]) {
-      await $.tool.call({ ...INFO, title: `Note number ${n}` })
+      expect(resultOf(await $.tool.call({ ...INFO, title: `Note number ${n}` })).result).toContain(`Added item #${n}`)
     }
 
     const ui = await $.ui.mount(PANE)
 
-    expect(await ui.find({ key: 'task-1' })).toBeUndefined()
-    expect(await textOf(ui, 'task-2')).toContain('Note number 2')
+    expect(await textOf(ui, 'task-1')).toContain('Note number 1')
     expect(await textOf(ui, 'task-6')).toContain('Note number 6')
-    expect(world.status).toBe('☐ 5 info · /open-items')
+    expect(world.status).toBe('☐ 6 info · /open-items')
   })
 
   test('an unseen info item does not hold back saved answers at turn end', async ($, on) => {
@@ -3486,7 +3536,7 @@ describe('the four kinds', () => {
     await start($)
 
     await $.tool.call(XCODE_TASK)
-    await $.tool.call({ tool: WITHDRAW, id: 1, reason: 'answered in chat' })
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'answered in chat' })
 
     expect(world.isPaneOpen).toBe(false)
     expect(world.status).toBeUndefined()
@@ -3695,5 +3745,439 @@ describe('the alert', () => {
     expect(added.deny).toBeUndefined()
     expect(added.result).toContain('#1')
     expect(world.notices).toHaveLength(1)
+  })
+
+  test('a Claude reply alerts like a new item', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await $.tool.call(QUESTION)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.turn.start({ text: 'go on', turnId: 't2' })
+    await $.tool.call({ tool: REPLY, id: 1, text: 'The release branch is named release.' })
+    await $.turn.complete({ ...DONE, turnId: 't2' })
+    await clock.settle()
+
+    expect(world.notices.map(one => one.text)).toEqual([QUESTION.title, `Claude replied: ${QUESTION.title}`])
+
+    await (await $.ui.mount(PANE)).press({ key: 'answer' })
+    await clock.advance(30_000)
+    await $.turn.start({ text: 'go on', turnId: 't3' })
+    await $.tool.call({ tool: REPLY, id: 1, text: 'Its last tag is v2.3.0.' })
+    await clock.settle()
+
+    expect(world.notices).toHaveLength(2)
+  })
+})
+
+describe('threads', () => {
+  const DECISION = {
+    tool: ADD,
+    title: 'Ship the feed rewrite this week',
+    detail: 'It unblocks the mobile release.',
+    kind: 'decision',
+    options: ['Yes', 'Not yet'],
+    recommended: 'Yes',
+  } as const
+
+  const resultOf = (call: unknown) => call as { result?: string; deny?: string }
+
+  /** An open question as v0.2 saves it, with `thread`. */
+  const itemWith = (id: number, thread: readonly Message[]): Task => ({
+    id,
+    kind: 'question',
+    title: `Question number ${id}`,
+    thread,
+    state: 'open',
+    isWaitingForClaude: false,
+    hasNewReply: false,
+    update: 'none',
+    createdMs: NOW,
+    updatedMs: NOW,
+  })
+
+  test("reply_item adds Claude's message, keeps the item open, and marks it hasNewReply", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    await clock.settle()
+    const replied = resultOf(await $.tool.call({ tool: REPLY, id: 1, text: 'Which test file are they in?\nI need the path.' }))
+    const task = itemOf(world, 1)
+
+    expect(replied.deny).toBeUndefined()
+    expect(replied.result).toContain('#1')
+    expect(task?.state).toBe('open')
+    expect(task?.thread.at(-1)).toEqual({ from: 'claude', text: 'Which test file are they in?\nI need the path.', atMs: NOW + 1000 })
+    expect(task?.hasNewReply).toBe(true)
+    expect(task?.isWaitingForClaude).toBe(false)
+    expect(world.status).toBe('☐ 1 question · /open-items')
+  })
+
+  test("after Claude's reply, the user's next answer reaches Claude, in the same millisecond too", async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.prompt.submit(typed('↳ Answer to #1: Two failures'))
+    await $.tool.call({ tool: REPLY, id: 1, text: 'Which test file are they in?' })
+    const sent = await $.prompt.submit(typed('↳ Answer to #1: CartTests.swift'))
+
+    expect(sent.text).toBe('My response to an item you gave me (Open items):\n\n#1 Run xcodebuild test on your Mac, paste the failures:\nCartTests.swift')
+  })
+
+  test('reply_item tells Claude of an answer the user gave meanwhile, which then is not sent again', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.turn.start({ text: 'fix the login bug', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'answer' })
+    await ui.input({ key: 'answer-1', text: 'Two failures' })
+    await clock.advance(1000)
+    expect(world.submitted).toEqual([])
+
+    const replied = resultOf(await $.tool.call({ tool: REPLY, id: 1, text: 'Which test file are they in?' }))
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+
+    expect(replied.result).toContain('Two failures')
+    expect(itemOf(world, 1)?.update).toBe('delivered')
+    expect(world.submitted).toEqual([])
+  })
+
+  test('reply_item changes the options in place and logs a changed event', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const changed = resultOf(await $.tool.call({ tool: REPLY, id: 1, options: ['Ship Tuesday', 'Ship Friday', 'Hold'], recommended: 'Ship Friday' }))
+    const task = itemOf(world, 1)
+    const ui = await $.ui.mount(PANE)
+
+    expect(changed.deny).toBeUndefined()
+    expect(world.items).toHaveLength(1)
+    expect(task?.options).toEqual(['Ship Tuesday', 'Ship Friday', 'Hold'])
+    expect(task?.recommended).toBe('Ship Friday')
+    expect(task?.thread.at(-1)).toEqual({ from: 'claude', text: '', event: 'changed', atMs: NOW })
+    expect((await ui.find({ type: 'Button', key: 'option-2' }))?.props.label).toBe('Ship Friday (recommended)')
+
+    // A recommended option the new options leave out goes with it.
+    await $.tool.call({ tool: REPLY, id: 1, options: ['Ship now', 'Hold'] })
+
+    expect(itemOf(world, 1)?.recommended).toBeUndefined()
+  })
+
+  test('reply_item refuses an id that is not a whole number, and a recommended that is not an option', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    await $.tool.call(XCODE_TASK)
+
+    expect(resultOf(await $.tool.call({ tool: REPLY, id: 1.5, text: 'Hello' })).deny).toContain('whole number')
+    expect(resultOf(await $.tool.call({ tool: CLOSE, id: 1.5, as: 'withdrawn' })).deny).toContain('whole number')
+    expect(resultOf(await $.tool.call({ tool: REPLY, id: 9, text: 'Hello' })).deny).toBe('No item #9.')
+    expect(resultOf(await $.tool.call({ tool: REPLY, id: 1, recommended: 'Maybe' })).deny).toContain('recommended must be one of the options')
+    expect(resultOf(await $.tool.call({ tool: REPLY, id: 1, recommended: 'Not yet' })).deny).toBeUndefined()
+    expect(resultOf(await $.tool.call({ tool: REPLY, id: 2, options: ['Yes', 'No'] })).deny).toContain('for a decision only')
+  })
+
+  test("list_items shows each item's state, whether it waits, and its thread's last 3 messages; with id, the whole thread", async ($, on) => {
+    const thread: Message[] = [
+      { from: 'claude', text: 'Which branch is the release cut from?', atMs: NOW },
+      { from: 'user', text: 'main, I think', atMs: NOW + 1 },
+      { from: 'claude', text: 'main has two release tags.\nWhich one?', atMs: NOW + 2 },
+      { from: 'user', text: 'v2.3.0', atMs: NOW + 3 },
+    ]
+    seat(on, earlierItems([{ ...itemWith(1, thread), isWaitingForClaude: true, update: 'delivered', heardMs: NOW + 3 }]))
+    await start($)
+
+    const listed = resultOf(await $.tool.call({ tool: LIST })).result ?? ''
+    const whole = resultOf(await $.tool.call({ tool: LIST, id: 1 })).result ?? ''
+
+    expect(listed).toStartWith('#1 open · question')
+    expect(listed).toContain('waits for you')
+    expect(listed).not.toContain('Which branch is the release cut from?')
+    expect(listed).toContain('main has two release tags.\n')
+    expect(listed).toContain('Which one?')
+    expect(listed).toContain('v2.3.0')
+    expect(whole).toContain('Which branch is the release cut from?')
+  })
+
+  test('close_item resolved is refused until the thread holds a message from the user', async ($, on) => {
+    const asked = itemWith(1, [{ from: 'claude', text: 'Which branch is the release cut from?', atMs: NOW }])
+    const answered = itemWith(2, [
+      { from: 'claude', text: 'Which tag is the release?', atMs: NOW },
+      { from: 'user', text: 'v2.3.0', atMs: NOW + 1 },
+    ])
+    const putOff = itemWith(3, [
+      { from: 'claude', text: 'Which day do we ship?', atMs: NOW },
+      { from: 'user', text: '', event: 'later', atMs: NOW + 1 },
+    ])
+    const { world } = seat(
+      on,
+      earlierItems([asked, { ...answered, isWaitingForClaude: true, update: 'delivered', heardMs: NOW + 1 }, { ...putOff, state: 'later', update: 'delivered', heardMs: NOW + 1 }]),
+    )
+    await start($)
+
+    for (const id of [1, 3]) {
+      expect(resultOf(await $.tool.call({ tool: CLOSE, id, as: 'resolved' })).deny).toContain('no answer from the user yet')
+      expect(itemOf(world, id)?.state).not.toBe('resolved')
+    }
+
+    const resolved = resultOf(await $.tool.call({ tool: CLOSE, id: 2, as: 'resolved', note: 'The release is v2.3.0' }))
+
+    expect(resolved.deny).toBeUndefined()
+    expect(itemOf(world, 2)?.state).toBe('resolved')
+    expect(itemOf(world, 2)?.note).toBe('The release is v2.3.0')
+  })
+
+  test('close_item withdrawn with note "answered in chat"', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const closed = resultOf(await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn', note: 'answered in chat' }))
+
+    expect(closed.result).toContain('#1')
+    expect(itemOf(world, 1)?.state).toBe('withdrawn')
+    expect(itemOf(world, 1)?.note).toBe('answered in chat')
+    expect(world.toasts.at(-1)).toBe('Claude withdrew the item: Run xcodebuild test on your Mac, paste the failures. answered in chat')
+  })
+
+  test('close_item refuses an item already closed, and a state it does not know; reply_item refuses a closed item', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+
+    expect(resultOf(await $.tool.call({ tool: CLOSE, id: 1, as: 'done' })).deny).toContain('"resolved" or "withdrawn"')
+
+    await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })
+
+    expect(resultOf(await $.tool.call({ tool: CLOSE, id: 1, as: 'withdrawn' })).deny).toContain('already withdrawn')
+    expect(resultOf(await $.tool.call({ tool: REPLY, id: 1, text: 'One more thing' })).deny).toContain('already withdrawn')
+  })
+})
+
+describe('the live-chat gate', () => {
+  const LIVE = 'live chat: ask in the chat'
+  const NOTE = 'This looks like a live chat: if the user is here and replying, withdraw it with close_item and ask in the chat.'
+  const ANDROID = { ...XCODE_TASK, title: 'Paste the Android test failures' } as const
+
+  const resultOf = (call: unknown) => call as { result?: string; deny?: string }
+
+  /** A Bash or Monitor result as the engine appends it, at door `tool-result`; in a subagent's conversation with `agentId`. */
+  const rowOf = (tool: 'Bash' | 'Monitor', text: string, agentId?: string): SessionAppendInput => ({
+    message: { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: `call-${tool}`, content: text }] },
+    door: 'tool-result',
+    origin: { kind: 'tool', tool },
+    uuid: `row-${tool}-${text.length}`,
+    ...(agentId === undefined ? {} : { agentId }),
+  })
+
+  const shellStarted = (id: string) => `Command running in background with ID: ${id}. Output is being written to: /tmp/tasks/${id}.output. You will be notified when it completes.`
+  const monitorStarted = (id: string) => `Monitor started (task ${id}, expires in 1m unless the command exits first). You will be notified on each event.`
+
+  /** A task notification, as the engine words one: an end carries a status, a monitor's event none. */
+  const notified = (id: string, body: string): PromptSubmitInput => ({
+    text: `<task-notification>\n<task-id>${id}</task-id>\n${body}\n</task-notification>`,
+    wait: false,
+    origin: { kind: 'task-notification' },
+  })
+  const ENDED = '<status>completed</status>\n<summary>Background command "npm run e2e" completed (exit code 0)</summary>'
+  const EVENT = '<summary>Monitor event: "the build log"</summary>\n<event>step 2 of 5</event>'
+
+  async function twoTyped($: Engine) {
+    await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
+    await $.prompt.submit(typed('I like the short ones'))
+  }
+
+  test('a brainstorm: an add after the second typed prompt, no agent running, is refused; 5 minutes on, it is added', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).deny).toBe(LIVE)
+    expect(world.items).toEqual([])
+
+    await clock.advance(300_000)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
+  })
+
+  test('a COO first turn: an add before the first agent is allowed', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.prompt.submit(typed('/coo run the release checklist'))
+    const added = resultOf(await $.tool.call(XCODE_TASK))
+
+    expect(added.result).toContain('Added item #1')
+    expect(added.result).not.toContain(NOTE)
+  })
+
+  test('a pane press, then an add with no agent running, is allowed', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(KEY_TASK)
+    await twoTyped($)
+    await (await $.ui.mount(PANE)).press({ key: 'done' })
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #2')
+  })
+
+  test('two long answers through the composer bridge, no agent running, are allowed', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.tool.call(ANDROID)
+    await $.prompt.submit(typed('↳ Answer to #1: LoginTests.testExpiredToken'))
+    await $.prompt.submit(typed('↳ Answer to #2: CartTest.kt, line 40'))
+
+    expect(resultOf(await $.tool.call(KEY_TASK)).result).toContain('Added item #3')
+  })
+
+  test('two typed prompts while a background shell command runs are allowed, and refused once it ends', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.prompt.submit(typed('Run the e2e suite in the background'))
+    await $.session.append(rowOf('Bash', shellStarted('baq8qimnb')))
+    // The wording of a command the user moved to the background with ctrl+B.
+    await $.session.append(rowOf('Bash', 'Command was manually backgrounded by user with ID: bk3x9. Output is being written to: /tmp/tasks/bk3x9.output.'))
+    await $.prompt.submit(typed('While it runs, which flags did we pass?'))
+    const added = resultOf(await $.tool.call(XCODE_TASK))
+
+    expect(added.result).toContain('Added item #1')
+    expect(added.result).not.toContain(NOTE)
+
+    await $.prompt.submit(notified('baq8qimnb', ENDED))
+
+    expect(resultOf(await $.tool.call(ANDROID)).result).toContain('Added item #2')
+
+    await $.prompt.submit(notified('bk3x9', ENDED))
+
+    expect(resultOf(await $.tool.call(KEY_TASK)).deny).toBe(LIVE)
+  })
+
+  test('typed, press, typed is allowed', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    await $.prompt.submit(typed('What do you need from the tests?'))
+    await (await $.ui.mount(PANE)).press({ key: 'answer' })
+    await $.prompt.submit(typed('I will run them after lunch'))
+
+    expect(resultOf(await $.tool.call(ANDROID)).result).toContain('Added item #2')
+  })
+
+  test('two typed prompts while an agent runs are allowed, and refused once it is done', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    const agent: AgentInfo = { id: 'agent-1', description: 'Review the diff', type: 'general-purpose', status: 'running' }
+    world.agents = [agent]
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
+
+    world.agents = [{ ...agent, status: 'completed' }]
+
+    expect(resultOf(await $.tool.call(ANDROID)).deny).toBe(LIVE)
+  })
+
+  test('a monitor counts until its stream ends, not at its first event', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.session.append(rowOf('Monitor', monitorStarted('bh1vck1dz')))
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
+
+    await $.prompt.submit(notified('bh1vck1dz', EVENT))
+
+    expect(resultOf(await $.tool.call(ANDROID)).result).toContain('Added item #2')
+
+    await $.prompt.submit(notified('bh1vck1dz', ENDED))
+
+    expect(resultOf(await $.tool.call(KEY_TASK)).deny).toBe(LIVE)
+  })
+
+  test('a shell command a subagent started does not count once that subagent is done', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.session.append(rowOf('Bash', shellStarted('b7k2'), 'agent-1'))
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).deny).toBe(LIVE)
+  })
+
+  test('a background start whose id cannot be read: the item is added, with the live-chat note', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.session.append(rowOf('Bash', 'Command running in background as job 12; its output goes to /tmp/tasks/12.output.'))
+    await twoTyped($)
+    const added = resultOf(await $.tool.call(XCODE_TASK))
+
+    expect(added.result).toContain('Added item #1')
+    expect(added.result).toEndWith(NOTE)
+    expect(world.items).toHaveLength(1)
+  })
+
+  test('after a code reload, which loses what ran before it, the item is added with the live-chat note', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await start($)
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toEndWith(NOTE)
+  })
+
+  test('after a resume, the item is added with the live-chat note', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.session.end({ reason: 'resume', sessionId: 'session-1', resume: { id: 'session-2' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toEndWith(NOTE)
+  })
+
+  test('when the agents cannot be listed, the item is added with the live-chat note', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    world.isAgentListFailing = true
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toEndWith(NOTE)
+  })
+
+  test('the gate reads tool-result rows and passes each on unchanged', async ($, on) => {
+    seat(on)
+    await start($)
+
+    const row = rowOf('Bash', shellStarted('baq8qimnb'))
+    const stored = await $.session.append(row)
+
+    expect(stored).toEqual({ message: row.message, uuid: row.uuid })
   })
 })
