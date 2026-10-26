@@ -594,9 +594,9 @@ export const register: Register = on => {
     // After /clear or a resume the process goes on as another session, with
     // no session.start; the engine names it only once this hook is done.
     if (e.reason === 'clear') {
-      $.clock.after(0, () => void startCleared($, e.sessionId))
+      $.clock.after(0, () => void startCleared($, e.sessionId).catch(() => undefined))
     } else if (e.reason === 'resume') {
-      $.clock.after(0, () => void startResumed($, e.sessionId))
+      $.clock.after(0, () => void startResumed($, e.sessionId).catch(() => undefined))
     }
 
     return ended
@@ -1767,6 +1767,8 @@ function rostered($: EngineInterface, rewrite: (all: Roster) => Roster): Promise
  */
 async function awaited($: EngineInterface, work: Promise<unknown>) {
   if (live.stalled > 0) {
+    // The caller may be all that holds `work` (a turn's scan and write): its failure must not go unhandled.
+    void work.catch(() => undefined)
     return
   }
 
@@ -2456,7 +2458,7 @@ function armBatch($: EngineInterface) {
   live.batch = $.clock.after(BATCH_MS, () => {
     const ids = [...live.batchIds]
     cancelBatch()
-    void deliver($, ids)
+    void deliver($, ids).catch(() => undefined)
   })
 }
 

@@ -3431,6 +3431,23 @@ describe('saving', () => {
     expect(String((added as { result?: unknown }).result)).toContain('Added item #8')
   })
 
+  test('a write a turn asks for behind a stuck one, failing once nothing waits for it, shows "could not save"', async ($, on) => {
+    const { world, clock } = seat(on, { 'session:session-1': { tasks: [MINE], nextId: 8, savedMs: NOW } })
+    await start($)
+
+    world.setMs = 60_000
+    const withdrawn = $.tool.call({ tool: CLOSE, id: 7, as: 'withdrawn' })
+    await clock.advance(5000)
+    await withdrawn
+
+    // Left to fail unhandled, the turn's write fails this file's "ran to its end" check.
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    world.isWriteFailing = true
+    await clock.advance(60_000)
+
+    expect(world.status).toContain('could not save')
+  })
+
   test("a store stuck at start holds the tools back until the session's items are read", async ($, on) => {
     const { world, clock } = seat(on, { 'session:session-1': { tasks: [MINE], nextId: 8, savedMs: NOW } })
     world.isStuck = true
