@@ -1,5 +1,13 @@
 # Changelog
 
+## coo 1.0.5 — hand open items to the successor session
+
+- `coo` orchestration.md: new hand-off bullet. With the `open-items` tools
+  listed (0.2.0 or later is the minimum), the session calls `handoff_items`
+  before it starts a successor and puts the code and the artifact URL in the
+  successor's prompt; the successor calls `take_items` first. Before the
+  session ends, every open and Later item is resolved, recorded or handed off.
+
 ## open-items 0.2.0 — threads, Later, hand-off
 
 - Each item is a thread: Claude answers inside it with `reply_item`, and a
