@@ -45,6 +45,7 @@ import {
   takenByCodeOf,
   toldOf,
   tookBy,
+  waitingOf,
   waitsOnUser,
 } from './tasks'
 import type { Move } from './tasks'
@@ -75,7 +76,6 @@ import {
   focusOrderOf,
   groupsOf,
   hasReplyField,
-  headlineOf,
   heldNoticeOf,
   heldOf,
   hiddenOf,
@@ -84,6 +84,7 @@ import {
   linkOf,
   marksOf,
   movingOf,
+  numberCellsOf,
   offerOf,
   openTaskOf,
   placeholderOf,
@@ -92,7 +93,6 @@ import {
   rowBackTo,
   rowTitleOf,
   rowsFor,
-  screenOf,
   titleOf,
 } from './pane'
 import type { Entry, PaneView } from './pane'
@@ -152,13 +152,11 @@ const STORE_WAIT_MS = 5000
 const NEW_ID_READS = 3
 const NEW_ID_GAP_MS = 100
 
-/** What a tool answers while the session's saved items are still being read at its start. */
 const LOADING = "Open items is still loading this session's items. Try again in a moment."
 
-/** A hand-off code: CODE_LENGTH characters of CODE_CHARS, as CODE_SHAPE reads it. */
 const CODE_LENGTH = 6
 const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
-const CODE_SHAPE = /^[a-z0-9]{6}$/
+const CODE_SHAPE = new RegExp(`^[${CODE_CHARS}]{${CODE_LENGTH}}$`)
 
 /** What a tool answers when the store cannot be read, which a hand-off needs. */
 const STORE_DOWN = 'Open items could not read the store, so nothing changed. Try again in a moment.'
@@ -458,7 +456,7 @@ const live = {
   moved: new Set<number>(),
 }
 
-/** One of the user's inputs: a prompt typed in the chat, a long answer through the composer bridge, or a press in the pane. */
+/** `bridge`: a prompt that answers an item (`↳ Answer to #5:`, see `answerIn`), from any surface. */
 type UserInput = { kind: 'typed' | 'bridge' | 'press'; atMs: number }
 
 function noteInput(kind: UserInput['kind'], atMs: number) {
@@ -532,14 +530,25 @@ function resultTextOf(content: readonly Record<string, unknown>[]): string | und
   return Array.isArray(inner) ? inner.map(part => (typeof part?.text === 'string' ? part.text : '')).join('\n') : undefined
 }
 
-/** Whether the main loop's turn runs: true from its `turn.start` to its `turn.complete`, undefined before the mod has seen either. */
-function isMainTurnRunning(): boolean | undefined {
-  return live.mainTurn
-}
-
 /** Whether the batch under way, or a press still writing, sends `task`'s update. */
 function isHeld(task: Task): boolean {
   return live.batchIds.has(task.id) || live.writing.has(task.id)
+}
+
+/** What `list_items` gives: item `id`, or the items `show` names, `updates` when it names none. */
+function pickedOf(list: readonly Task[], id: number | undefined, show: unknown): readonly Task[] {
+  if (id !== undefined) {
+    return list.filter(task => task.id === id)
+  }
+
+  switch (show) {
+    case 'all':
+      return list
+    case 'open':
+      return list.filter(isActive)
+    default:
+      return list.filter(task => isShown(task) || task.update === 'pending')
+  }
 }
 
 export const register: Register = on => {
@@ -551,9 +560,8 @@ export const register: Register = on => {
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
     await update($, folder, known => known ?? e.cwd)
     await noteActive($)
-    // Background tasks may have started unseen in a conversation that holds
-    // rows already (a resume, or the mod loaded mid-session), or before a
-    // reload of the code, which finds the session read (see `takeUp`).
+    // Background tasks may have started unseen in a conversation with rows already (a resume, the mod
+    // loaded mid-session), or before a reload of the code, which finds the session read (see `takeUp`).
     const isReload = (await read($, restoredFor)) === (await $.session.id())
     const isFresh = !isReload && (await $.session.messages().then(rows => rows.length === 0, () => false))
     live.background = isFresh ? new Set() : null
@@ -600,9 +608,8 @@ export const register: Register = on => {
     return {}
   })
 
-  // The four tools of every turn stay in the prompt's list, descriptions and
-  // all, where an MCP tool would wait behind ToolSearch: their descriptions
-  // carry the steering, the one prompt text that reaches Claude on every seat.
+  // The four tools of every turn stay in the prompt's list, where an MCP tool would wait behind ToolSearch:
+  // their descriptions carry the steering, the one prompt text that reaches Claude on every seat.
   for (const tool of [ADD, REPLY, CLOSE, LIST, HANDOFF, TAKE]) {
     on('tool.describe', { tool }, async ($, e, next) => ({ ...(await next(e)), isDeferred: DEFERRED.includes(tool) }))
   }
@@ -672,8 +679,8 @@ export const register: Register = on => {
       return { deny: LOADING }
     }
 
-    // A move of the user's Claude has not heard would go unsent once Claude's
-    // reply follows it in the thread: the result tells it instead.
+    // A move by the user that Claude has not heard is never sent once Claude's
+    // reply follows it in the thread, so this result tells Claude of it.
     const found = await edit($, reply.id, (task, nowMs) =>
       replyErrorOf(task, reply) === undefined ? repliedBy(task.update === 'pending' ? toldOf(task) : task, reply, nowMs) : task,
     )
@@ -746,26 +753,14 @@ export const register: Register = on => {
 
     const args = e as unknown as Record<string, unknown>
     const id = typeof args['id'] === 'number' ? args['id'] : undefined
-    const scope = args['show'] === 'open' || args['show'] === 'all' ? args['show'] : 'updates'
-    const list = await read($, tasks)
-
-    const picked =
-      id !== undefined
-        ? list.filter(task => task.id === id)
-        : scope === 'all'
-          ? list
-          : scope === 'open'
-            ? list.filter(isActive)
-            : list.filter(task => isShown(task) || task.update === 'pending')
+    const picked = pickedOf(await read($, tasks), id, args['show'])
 
     if (id !== undefined && picked.length === 0) {
       return { result: `No item #${id}.` }
     }
 
-    // A subagent's read tells the main agent nothing. Claude hears the
-    // responses this shows: one that came in after it read goes later, and
-    // one the batch sends goes in the user's own words, which auto mode reads
-    // as their consent.
+    // Only the main agent's read tells Claude the responses it shows, and not one held for the batch:
+    // the batch sends that one in the user's own words, which auto mode reads as their consent.
     if (e.agentId === undefined) {
       await claim($, task => !isHeld(task) && picked.some(one => one.id === task.id && one.update === 'pending'))
     }
@@ -869,9 +864,8 @@ export const register: Register = on => {
     return { result: takenByCodeOf(code, came.map(({ arrived, was }) => ({ task: arrived, was })), nowMs) }
   })
 
-  // Observes only: the mod hooks no tool of Claude Code's own, so it reads a
-  // background start from the main loop's result row. A subagent's background
-  // work counts while the subagent runs, which `$.agent.list()` tells.
+  // Observes only: the mod hooks no tool of Claude Code's own, so it reads a background start from the main
+  // loop's result row. A subagent's background work counts while the subagent runs (`$.agent.list()`).
   on('session.append', { door: 'tool-result' }, async ($, e, next) => {
     try {
       if (e.agentId === undefined && e.origin.kind === 'tool') {
@@ -915,9 +909,8 @@ export const register: Register = on => {
       live.mainTurn = false
       live.wasStopped = e.reason === 'aborted'
 
-      // A row that joined the turn during its last request has no step left
-      // to read it. After the user's Esc the next prompt reads it: a wake-up
-      // would start the turn they just stopped.
+      // A row that joined the turn during its last request has no step left to read it. After the
+      // user's Esc the next prompt reads it: a wake-up would start the turn they just stopped.
       if (live.unreadAppend.length > 0 && !live.wasStopped) {
         wakeUp($)
       }
@@ -976,9 +969,8 @@ export const register: Register = on => {
         return { drop: overLimit }
       }
 
-      // While Claude is idle, this prompt is the answer, sent with every other
-      // update Claude has not heard, the batch's among them: the batch waits
-      // until the prompt is known to be one.
+      // While Claude is idle, this prompt is the answer, sent with every other update Claude has not
+      // heard, the batch's among them: the batch waits until the prompt is known to be one.
       const isPaused = e.turnId === undefined && live.batch !== null
 
       if (isPaused) {
@@ -1116,27 +1108,22 @@ export const register: Register = on => {
     return moved
   })
 
-  // In a list longer than the pane, the engine spends an arrow on scrolling
-  // the body, so no row would take the ring: the arrow moves the ring a row
-  // instead, and the window follows it. Past the first or last row, the body scrolls.
-  // The engine sums the arrows that come while this hook runs into one `by`,
-  // and a page key is `bodyRows`: each moves the ring as many rows.
+  // In a list longer than the pane, the engine spends an arrow on scrolling the body: here it moves the ring
+  // a row instead (arrows summed into one `by`, and a page key, as many rows), and the window follows.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
     const isKey = e.origin.kind === 'person' && e.pointer === undefined && e.by !== 0 && e.contentRows > e.bodyRows
     const view = isKey ? await paneView($, FIRST_SEAT) : undefined
-    const to = view !== undefined && screenOf(view) === 'list' ? arrowTargetOf(focusOrderOf(view.shown, view), live.ring, e.by) : undefined
+    const to = view !== undefined && openTaskOf(view) === undefined ? arrowTargetOf(focusOrderOf(view.shown, view), live.ring, e.by) : undefined
 
     if (to === undefined) {
       return next(e)
     }
 
-    // Set before the move lands, as an arrow that comes first (a held key)
-    // moves on from here; put back if the engine refuses the move and no
-    // later one came. A call that fails leaves it, as `toList` does.
+    // Set before the move lands, so a held key's next arrow moves on from here; put back if the engine
+    // refuses the move and no later one came (a call that fails leaves it, as `toList` does).
     const was = live.ring
     live.ring = to
 
-    // Not awaited, as the live probe ran it (docs/superpowers/notes/2026-10-26-open-items-v0.2-probes.md, Step 2).
     void $.ui
       .focus({ requestId: PANE, key: to })
       .then(moved => {
@@ -1157,9 +1144,8 @@ export const register: Register = on => {
     const emptied = live.emptied.get(e.surface)
     const elements = $.ui.resolve(e)
     const { Box, Text, Button, Link } = elements
-    // The mobile app draws no field yet: answers and reasons wait for a surface
-    // that does. The engine fills an element a surface lacks with one that draws
-    // nothing, so the surface says, not the table.
+    // The mobile app draws no field yet: replies wait for a surface that does. The engine fills an element
+    // a surface lacks with one that draws nothing, so the surface says, not the table.
     const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
     const view = await paneView($, { canType: Input !== undefined, isFocused: e.props.isFocused })
 
@@ -1226,7 +1212,7 @@ export const register: Register = on => {
       const thread = entriesOf(task, view.nowMs)
       const [detail, ...newest] = thread.entries
       const actions = actionsOf(task)
-      const isField = Input !== undefined && hasReplyField(task, view)
+      const isField = hasReplyField(task, view)
       const drawn = focusOrderOf(shown)
 
       // A Text keeps no key: each entry's Box holds it.
@@ -1247,8 +1233,6 @@ export const register: Register = on => {
         </Box>,
       ]
 
-      // The terminal sizes a field by the pane's body, whatever box holds it:
-      // it goes out of the item's indent, across the body's whole width.
       return (
         <Box flexDirection="column">
           {unsaved}
@@ -1315,7 +1299,9 @@ export const register: Register = on => {
                 </Box>
               )}
             </Box>
-            {!isField ? null : (
+            {/* The terminal sizes a field by the pane's body, whatever box holds it:
+                it goes out of the item's indent, across the body's whole width. */}
+            {!isField || Input === undefined ? null : (
               <Input
                 key={key}
                 label={REPLY_LABEL}
@@ -1339,7 +1325,8 @@ export const register: Register = on => {
       )
     }
 
-    const head = headlineOf(view)
+    const head = waitingOf(shown)
+    const numberCells = numberCellsOf(shown)
     const cameHere = arrivedOf(view)
     const offered = offerOf(view)
     const ownKey = keyOf(live.sessionId)
@@ -1359,7 +1346,7 @@ export const register: Register = on => {
 
       return (
         <Button key={`row-${one.id}`} plain onPress={() => openItem($, one.id, view.canType)}>
-          {rowTitleOf(one, view, columns)}
+          {rowTitleOf(one, numberCells, columns)}
           {newReply === '' ? '' : <Text color="yellow">{newReply}</Text>}
           {waiting === '' ? '' : <Text dimColor>{waiting}</Text>}
         </Button>
@@ -1656,7 +1643,6 @@ async function withOwnTaken($: EngineInterface, all: Record<string, unknown>): P
   return withTaken(all, keyOf(live.sessionId), (await read($, header)).taken)
 }
 
-/** Every session's key in the store, as stored, by key. */
 async function readAll($: EngineInterface): Promise<Record<string, unknown>> {
   const keys = (await $.store.keys()).filter(isSavedKey)
   const values = await Promise.all(keys.map(key => $.store.get(key)))
@@ -1912,11 +1898,8 @@ function closePane($: EngineInterface): Promise<void> {
  * surface seated it: one opened unasked waits on a narrow terminal.
  */
 async function show($: EngineInterface, isAsked: boolean): Promise<boolean> {
-  // A closed pane's fields are drawn with their drafts as it opens again:
-  // the surfaces forget what they held as it closes, and its ring starts on
-  // nothing. Asked only when there is a draft to draw or a field on screen;
-  // when the engine can't say, they are drawn so anyway, and a field still
-  // drawn gets back the text typed in it.
+  // The surfaces forget a closed pane's fields and ring: it opens again with its fields drawn from their
+  // drafts and its ring on nothing. When the engine can't say, a field still drawn gets its draft back.
   if (live.drafts.size > 0 || (await read($, screen)).kind === 'item') {
     const panes = await $.ui.panes().catch(() => undefined)
 
@@ -1957,6 +1940,7 @@ async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 
   }
   const task = openTaskOf(state)
 
+  // The draft is read after every await: a key typed while a read is slow counts.
   return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? '') }, surface)
 }
 
@@ -2210,9 +2194,8 @@ async function openItem($: EngineInterface, id: number, canType: boolean) {
   const kept = await update($, held, now => (now?.id === id ? now : null))
   await markRead($, id)
 
-  // The engine keeps the ring at the row's place, on whatever the item
-  // screen draws there: an option a second Enter would choose. In the field,
-  // typed keys stay text (a hotkey there would answer Claude).
+  // The engine keeps the ring at the row's place, on whatever the item screen draws there: an option a
+  // second Enter would choose. In the field, typed keys stay text (a hotkey there would answer Claude).
   const task = (await read($, tasks)).find(one => one.id === id)
   const key = task !== undefined && hasReplyField(task, { canType, held: kept }) ? replyKeyOf(id) : BACK.key
   const was = live.ring
@@ -2277,7 +2260,7 @@ async function resolve($: EngineInterface, id: number, move: Move) {
   try {
     const was = await edit($, id, (task, nowMs) => (isStale(task, move) ? task : movedBy(task, move, nowMs)))
 
-    if (was !== undefined && isActive(was) && isStale(was, move)) {
+    if (isStale(was, move)) {
       return was
     }
 
@@ -2312,7 +2295,7 @@ async function resolve($: EngineInterface, id: number, move: Move) {
 async function respond($: EngineInterface, id: number, move: Move, typedText = ''): Promise<boolean> {
   const was = await resolve($, id, move)
 
-  if (was !== undefined && isActive(was) && isStale(was, move)) {
+  if (isStale(was, move)) {
     $.ui.toast(`Item #${id} changed since the pane showed it, so your choice wasn't saved. Look at its options again.`, { timeoutMs: 8000 })
 
     return false
@@ -2502,7 +2485,7 @@ async function handOver(
   notice?: string,
 ) {
   const isTaken =
-    isMainTurnRunning() === true &&
+    live.mainTurn === true &&
     (await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).then(
       appended => appended.deny === undefined,
       () => false,
@@ -2513,7 +2496,7 @@ async function handOver(
     return
   }
 
-  if (isMainTurnRunning() === true) {
+  if (live.mainTurn === true) {
     live.unreadAppend = [...new Set([...live.unreadAppend, ...ids])]
   } else if (!live.wasStopped) {
     // The turn ended while the row went in.
@@ -2719,7 +2702,6 @@ async function takeIn($: EngineInterface, sources: readonly Source[], make: (arr
   return came
 }
 
-/** Drops from the offer the items of `sources`, which this session took or dismissed. */
 async function dropOffered($: EngineInterface, sources: readonly Source[]) {
   await update($, offer, entries =>
     entries.flatMap(entry => {

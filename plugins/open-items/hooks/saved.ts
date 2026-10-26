@@ -49,20 +49,28 @@ function isMessage(value: unknown): value is Message {
   )
 }
 
-function isItem(value: unknown): value is Task {
+/** The fields a v0.2 item and a v0.1 task both hold. */
+function hasSharedFields(value: Fields): boolean {
   return (
-    isFields(value) &&
     ['id', 'createdMs', 'updatedMs'].every(key => isNumber(value[key])) &&
     isText(value['title']) &&
     KINDS.includes(value['kind'] as TaskKind) &&
+    ['doneWhen', 'recommended'].every(key => isOptional(value[key], isText)) &&
+    isOptional(value['options'], isTexts)
+  )
+}
+
+function isItem(value: unknown): value is Task {
+  return (
+    isFields(value) &&
+    hasSharedFields(value) &&
     STATES.includes(value['state'] as string) &&
     UPDATES.includes(value['update'] as string) &&
     typeof value['isWaitingForClaude'] === 'boolean' &&
     typeof value['hasNewReply'] === 'boolean' &&
     Array.isArray(value['thread']) &&
     value['thread'].every(isMessage) &&
-    ['doneWhen', 'recommended', 'link', 'note'].every(key => isOptional(value[key], isText)) &&
-    isOptional(value['options'], isTexts) &&
+    ['link', 'note'].every(key => isOptional(value[key], isText)) &&
     isOptional(value['heardMs'], isNumber)
   )
 }
@@ -97,17 +105,7 @@ function moveFromV1(task: V1Task): Message {
  * and still to send. Any other is dropped.
  */
 function itemFromV1(value: unknown): Task | undefined {
-  if (
-    !isFields(value) ||
-    !['id', 'createdMs', 'updatedMs'].every(key => isNumber(value[key])) ||
-    !isText(value['title']) ||
-    !isText(value['why']) ||
-    !KINDS.includes(value['kind'] as TaskKind) ||
-    !isOptional(value['doneWhen'], isText) ||
-    !isOptional(value['recommended'], isText) ||
-    !isOptional(value['options'], isTexts) ||
-    !isOptional(value['answer'], isText)
-  ) {
+  if (!isFields(value) || !hasSharedFields(value) || !isText(value['why']) || !isOptional(value['answer'], isText)) {
     return undefined
   }
 

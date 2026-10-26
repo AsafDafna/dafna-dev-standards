@@ -95,7 +95,7 @@ export function arrivedOf(view: Pick<PaneView, 'arrived'>): string | undefined {
 
 /** `#5 Merge #787…`: a row drawn read-only, cut to one line of `columns`. */
 export function readOnlyRowOf(task: Task, columns: number): string {
-  return clipCells(`#${task.id} ${nameOf(task)}`, Math.max(1, columns - ROW_INDENT))
+  return clipCells(titleOf(task), Math.max(1, columns - ROW_INDENT))
 }
 
 /** The keys the list's focus ring walks, in the order drawn: the offer's buttons, each row, Take for an unclaimed hand-off, then Hide. */
@@ -115,9 +115,14 @@ export function focusOrderOf(shown: readonly Task[], view: Pick<PaneView, 'offer
  */
 export function arrowTargetOf(keys: readonly string[], current: string | undefined, by: number): string | undefined {
   const at = current === undefined ? -1 : keys.indexOf(current)
+
+  if (at === -1) {
+    return keys[0]
+  }
+
   const to = Math.min(keys.length - 1, Math.max(0, at + by))
 
-  return at === -1 ? keys[0] : to === at ? undefined : keys[to]
+  return to === at ? undefined : keys[to]
 }
 
 /**
@@ -137,23 +142,11 @@ export function rowBackTo(id: number, drawn: readonly string[], now: readonly st
   return at === -1 ? undefined : (rows(drawn.slice(at + 1))[0] ?? rows(drawn.slice(0, at)).at(-1))
 }
 
-/** The item whose screen the pane shows, while it is the user's to act on; else the list. */
-export function screenOf(view: Pick<PaneView, 'shown' | 'screen'>): 'list' | { id: number } {
+/** The item whose screen the pane shows, while it is the user's to act on; undefined on the list. */
+export function openTaskOf(view: Pick<PaneView, 'shown' | 'screen'>): Task | undefined {
   const { screen } = view
 
-  return screen.kind === 'item' && view.shown.some(task => task.id === screen.id && isActive(task)) ? { id: screen.id } : 'list'
-}
-
-/** The item on screen, as `screenOf` finds it; undefined on the list. */
-export function openTaskOf(view: Pick<PaneView, 'shown' | 'screen'>): Task | undefined {
-  const screen = screenOf(view)
-
-  return screen === 'list' ? undefined : view.shown.find(task => task.id === screen.id)
-}
-
-/** The pane's head: `☐ 1 decision · 2 questions · ● 1 reply · 1 later`, or `⋯ 1 waiting for Claude`. */
-export function headlineOf(view: PaneView): { glyph: string; headline: string } {
-  return waitingOf(view.shown)
+  return screen.kind === 'item' ? view.shown.find(task => task.id === screen.id && isActive(task)) : undefined
 }
 
 /** A task's whole title, safe to draw. */
@@ -179,23 +172,27 @@ export function marksOf(task: Task): { newReply: string; waiting: string } {
   return { newReply: task.hasNewReply ? NEW_REPLY_MARK : '', waiting: task.isWaitingForClaude ? WAITING_MARK : '' }
 }
 
+/** The cells the widest number of the list's rows takes: each row's number is padded to it. */
+export function numberCellsOf(shown: readonly Task[]): number {
+  return Math.max(...groupsOf(shown).flatMap(group => group.tasks.map(task => cellsOf(`#${task.id}`))))
+}
+
 /**
- * `#5  Merge #787…`: a list row's number, as wide as the list's widest, and
- * its title cut so the row, marks and all, takes one line of `columns`.
+ * `#5  Merge #787…`: a list row's number, padded to `numberCells`, and its
+ * title cut so the row, marks and all, takes one line of `columns`.
  */
-export function rowTitleOf(task: Task, view: Pick<PaneView, 'shown'>, columns: number): string {
-  const widest = Math.max(...groupsOf(view.shown).flatMap(group => group.tasks.map(one => cellsOf(`#${one.id}`))))
-  const number = `#${task.id}`.padEnd(widest)
+export function rowTitleOf(task: Task, numberCells: number, columns: number): string {
+  const number = `#${task.id}`.padEnd(numberCells)
   const { newReply, waiting } = marksOf(task)
   const room = columns - ROW_INDENT - cellsOf(`${number} `) - cellsOf(newReply) - cellsOf(waiting)
 
   return `${number} ${clipCells(nameOf(task), Math.max(1, room))}`
 }
 
-function rowTextOf(task: Task, view: Pick<PaneView, 'shown'>, columns: number): string {
+function rowTextOf(task: Task, numberCells: number, columns: number): string {
   const { newReply, waiting } = marksOf(task)
 
-  return `${rowTitleOf(task, view, columns)}${newReply}${waiting}`
+  return `${rowTitleOf(task, numberCells, columns)}${newReply}${waiting}`
 }
 
 /** A thread entry as the item screen draws it: a message, line breaks kept, under its `head` (`Claude · 4m`); an event on one line. */
@@ -272,19 +269,24 @@ export function actionsOf(task: Task): { key: string; hotkey: string; label: str
     return [{ key: 'seen', hotkey: 'd', label: 'Seen', move: SEEN }]
   }
 
-  const choices =
-    task.kind === 'decision' && task.options !== undefined
-      ? task.options.map((option, i) => ({
-          key: `option-${i + 1}`,
-          hotkey: String(i + 1),
-          label: `${printable(option, MAX_OPTION)}${option === task.recommended ? ' (recommended)' : ''}`,
-          move: choseOf(option),
-        }))
-      : task.kind === 'question'
-        ? []
-        : [{ key: 'done', hotkey: 'd', label: 'Done', move: DONE }]
+  const later = task.state === 'open' ? [{ key: 'later', hotkey: 'l', label: 'Later', move: LATER }] : []
 
-  return [...choices, ...(task.state === 'open' ? [{ key: 'later', hotkey: 'l', label: 'Later', move: LATER }] : [])]
+  if (task.kind === 'question') {
+    return later
+  }
+
+  if (task.kind === 'decision' && task.options !== undefined) {
+    const choices = task.options.map((option, i) => ({
+      key: `option-${i + 1}`,
+      hotkey: String(i + 1),
+      label: `${printable(option, MAX_OPTION)}${option === task.recommended ? ' (recommended)' : ''}`,
+      move: choseOf(option),
+    }))
+
+    return [...choices, ...later]
+  }
+
+  return [{ key: 'done', hotkey: 'd', label: 'Done', move: DONE }, ...later]
 }
 
 // The terminal draws a field's label as `Reply: `.
@@ -326,7 +328,7 @@ export function hasReplyField(task: Task, view: Pick<PaneView, 'canType' | 'held
 
 /**
  * The columns the terminal gives a focused field's text: the pane's body,
- * `columns` across, less the label (`Answer: `) and the hint (` ⏎ send`).
+ * `columns` across, less the label (`Reply: `) and the hint (` ⏎ send`).
  */
 export function fieldColumnsOf(label: string, submitLabel: string, columns: number): number {
   return Math.max(MIN_FIELD_COLUMNS, columns - cellsOf(`${label}: `) - cellsOf(` ⏎ ${submitLabel}`))
@@ -422,12 +424,13 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
 }
 
 function listRowsOf(view: PaneView, width: number): number {
-  const head = headlineOf(view)
+  const head = waitingOf(view.shown)
   const offer = offerOf(view)
   const arrived = arrivedOf(view)
   const moving = movingOf(view.shown)
   const moved = view.moved ?? []
   const indented = Math.max(1, width - ROW_INDENT)
+  const numberCells = numberCellsOf(view.shown)
   let rows = savedRowsOf(view, width) + (arrived === undefined ? 0 : rowsOf(arrived, width))
 
   if (offer !== undefined) {
@@ -442,7 +445,7 @@ function listRowsOf(view: PaneView, width: number): number {
     rows += 1
 
     for (const task of group.tasks) {
-      rows += rowsOf(rowTextOf(task, view, width), indented)
+      rows += rowsOf(rowTextOf(task, numberCells, width), indented)
     }
   }
 
@@ -457,7 +460,6 @@ function listRowsOf(view: PaneView, width: number): number {
   return rows + footRowsOf(view, width, [HIDE])
 }
 
-/** The rows the line saying the last store write failed takes, when it did. */
 function savedRowsOf(view: PaneView, width: number): number {
   return view.isSaveFailing === true ? rowsOf(SAVE_FAILED, width) : 0
 }

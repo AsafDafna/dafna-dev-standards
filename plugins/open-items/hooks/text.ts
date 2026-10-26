@@ -19,7 +19,7 @@ export function printable(text: string, max: number): string {
   return clip(oneLine(spaced), max)
 }
 
-/** As `printable`, but its line breaks kept: a step list stays a list. */
+/** As `printable`, but its line breaks and runs of whitespace kept: a step list stays a list. */
 export function printableLines(text: string, max: number): string {
   const lines = text.replace(/\r\n?|[\p{Zl}\p{Zp}]/gu, '\n').replace(/[^\P{Cc}\n]/gu, ' ').replace(/\p{Cf}/gu, '')
 

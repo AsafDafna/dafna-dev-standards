@@ -110,7 +110,6 @@ const LINK = /^https?:\/\/\S+$/
 
 const ID_ERROR = "id is required: the item's number, a whole number."
 
-/** `args.id` when it is a whole number. */
 function idIn(args: Record<string, unknown>): number | undefined {
   const id = args['id']
 
@@ -322,7 +321,7 @@ export function hasAnswerIn(task: Task): boolean {
   return task.thread.some(message => message.from === 'user' && message.event === undefined)
 }
 
-/** `task` closed by Claude as `close` says. A move of the user's Claude has not heard is still told. */
+/** `task` closed by Claude. A move by the user that Claude has not heard yet stays pending, so Claude is still told of it. */
 export function closedAs(task: Task, close: Close): Task {
   return {
     ...task,
@@ -382,9 +381,9 @@ export function movedBy(task: Task, move: Move, atMs: number): Task {
   }
 }
 
-/** Whether `move` picks an option `task` no longer offers: Claude changed its options since the pane drew them. */
-export function isStale(task: Task, move: Move): boolean {
-  return move.event === 'chose' && !(task.options ?? []).includes(move.text)
+/** Whether `move` picks an option the active `task` no longer offers: Claude changed its options since the pane drew them. */
+export function isStale(task: Task | undefined, move: Move): boolean {
+  return task !== undefined && isActive(task) && move.event === 'chose' && !(task.options ?? []).includes(move.text)
 }
 
 const SPOKEN: readonly (ThreadEvent | undefined)[] = [undefined, 'chose', 'done', 'later']
@@ -505,11 +504,8 @@ export function digestOf(due: readonly Task[]): string {
 }
 
 /**
- * The line each prompt carries while asks are open, for a Claude that lost
- * sight of them (after a compaction, say): the open asks, Later ones
- * included, and the unread answers: a move Claude has not been told of, or a
- * reply it has not answered or closed. One about to be sent (`isHeld`) is
- * not unread yet. Undefined while no ask is open.
+ * The line each prompt carries while an ask is open, Later ones too, for a Claude past a compaction. Unread: a move
+ * Claude was not told of, or a reply it has not answered or closed; not one `isHeld` is about to send.
  */
 export function reminderOf(tasks: readonly Task[], isHeld: (task: Task) => boolean): string | undefined {
   const open = tasks.filter(isOpenAsk).length
@@ -528,7 +524,7 @@ function whenOf(ms: number): string {
 export const PRESSED = { done: 'Done', seen: 'Seen', later: 'Later' } as const
 
 /** A thread entry as `list_items` gives it: a message on the lines under its head, a press or a change on one line. */
-function entryOf(message: Message, nowMs: number): string {
+function listedEntryOf(message: Message, nowMs: number): string {
   const who = message.from === 'claude' ? 'You' : 'The user'
   const when = whenOf(nowMs - message.atMs)
 
@@ -565,7 +561,7 @@ function listedOf(task: Task, nowMs: number, isWhole: boolean): string {
     task.link ? `Link: ${task.link}` : '',
     task.note ? `Note: ${task.note}` : '',
     shown.length === 0 ? '' : threadHead,
-    ...shown.map(message => entryOf(message, nowMs)),
+    ...shown.map(message => listedEntryOf(message, nowMs)),
   ].filter(line => line !== '')
 
   return [`#${task.id} ${task.state} · ${task.kind} · added ${whenOf(nowMs - task.createdMs)} · ${task.title}`, ...lines.join('\n').split('\n').map(line => `  ${line}`)].join('\n')
