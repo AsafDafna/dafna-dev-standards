@@ -950,14 +950,18 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const bridged = answerIn(e.text)
-
     // A prompt from the Remote Control bridge (a phone) is one the user typed in the chat too. A slash
     // command is no back-and-forth with Claude, so the live-chat gate does not count it.
-    if (e.origin.kind === 'composer' || e.origin.kind === 'bridge') {
+    const isPerson = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    const isTyped = isPerson && e.command === undefined
+    // Only the user's own prompt answers an item: from any other origin (a hand-back, a notification,
+    // another plugin) the move would reach Claude in the user's words, as their consent.
+    const bridged = isTyped ? answerIn(e.text) : null
+
+    if (isPerson) {
       live.lastPersonMs = await $.clock.now()
 
-      if (e.command === undefined) {
+      if (isTyped) {
         noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
       }
     }

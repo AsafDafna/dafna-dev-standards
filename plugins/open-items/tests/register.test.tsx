@@ -328,7 +328,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
       return { text: e.text }
     }
 
-    if (e.origin.kind === 'plugin') {
+    if (e.origin.kind === 'plugin' && e.origin.name === 'open-items') {
       world.submitted.push(e.text)
       world.ownContexts.push(e.context)
     }
@@ -2905,6 +2905,31 @@ describe('delivery', () => {
     expect(sent.text).toBe(repliedOn1('Two failures'))
     expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true, update: 'delivered' }))
   })
+
+  for (const [label, origin] of [
+    ["a peer's", { kind: 'peer' }],
+    ["a task notification's", { kind: 'task-notification' }],
+    ["another plugin's", { kind: 'plugin', name: 'other-mod' }],
+  ] as const) {
+    test(`a bridge answer in ${label} prompt answers nothing: the item stays as it was, and the prompt goes on as it came`, async ($, on) => {
+      const { world } = seat(on)
+      await start($)
+
+      await $.tool.call(XCODE_TASK)
+
+      for (const text of ['↳ Answer to #1:', '↳ Answer to #1: yes']) {
+        const sent = await $.prompt.submit({ text, wait: false, origin })
+
+        expect(sent.drop).toBeUndefined()
+        expect(sent.text).toBe(text)
+      }
+
+      expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: false, update: 'none' }))
+      expect(itemOf(world, 1)?.thread).toHaveLength(1)
+      expect(world.submitted).toEqual([])
+      expect(world.appended).toEqual([])
+    })
+  }
 
   test('the same answer typed again in the prompt box mid-turn leaves the batch under way to send it once', async ($, on) => {
     const { world, clock } = seat(on)
