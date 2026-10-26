@@ -330,7 +330,13 @@ export function hintOf(view: PaneView): string {
     return 'Click, or press ctrl+x tab to use the keys'
   }
 
-  return screenOf(view) === 'list' ? '↵ open · ↑↓ move · Esc: back to the prompt' : 'Esc: back to the prompt'
+  const task = openTaskOf(view)
+
+  if (task === undefined) {
+    return '↵ open · ↑↓ move · Esc: back to the prompt'
+  }
+
+  return hasReplyField(task, view) ? 'Tab: buttons · ↑↓ scroll · Esc: back to the prompt' : '↑↓ scroll · Esc: back to the prompt'
 }
 
 export const HIDE = 'Hide'

@@ -1204,7 +1204,7 @@ export const register: Register = on => {
       const { newReply, waiting } = marksOf(one)
 
       return (
-        <Button key={`row-${one.id}`} plain onPress={() => openItem($, one.id)}>
+        <Button key={`row-${one.id}`} plain onPress={() => openItem($, one.id, view.canType)}>
           {rowTitleOf(one, view, columns)}
           {newReply === '' ? '' : <Text color="yellow">{newReply}</Text>}
           {waiting === '' ? '' : <Text dimColor>{waiting}</Text>}
@@ -1879,7 +1879,11 @@ async function settle($: EngineInterface, id: number) {
   }
 }
 
-async function openItem($: EngineInterface, id: number) {
+/**
+ * Opens item `id`'s screen, the ring in its reply field where the pressed
+ * drawing's surface draws one (`canType`), else on Back.
+ */
+async function openItem($: EngineInterface, id: number, canType: boolean) {
   // Pressed on a drawing from before its item closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
@@ -1887,14 +1891,27 @@ async function openItem($: EngineInterface, id: number) {
 
   forget(replyKeyOf(id))
   await update($, screen, (): Screen => ({ kind: 'item', id }))
-  await update($, held, now => (now?.id === id ? now : null))
+  const kept = await update($, held, now => (now?.id === id ? now : null))
   await markRead($, id)
-  await fit($)
 
   // The engine keeps the ring at the row's place, on whatever the item
-  // screen draws there: an option a second Enter would choose, or the field.
-  live.ring = BACK.key
-  void $.ui.focus({ requestId: PANE, key: BACK.key }).catch(() => undefined)
+  // screen draws there: an option a second Enter would choose. In the field,
+  // typed keys stay text (a hotkey there would answer Claude).
+  const task = (await read($, tasks)).find(one => one.id === id)
+  const key = task !== undefined && hasReplyField(task, { canType, held: kept }) ? replyKeyOf(id) : BACK.key
+  const was = live.ring
+  live.ring = key
+  await fit($)
+
+  void $.ui
+    .focus({ requestId: PANE, key })
+    .then(moved => {
+      if (moved.deny !== undefined && live.ring === key) {
+        live.ring = was
+        return refit($)
+      }
+    })
+    .catch(() => undefined)
 }
 
 /** The user has seen Claude's last reply on item `id`, which its screen shows. */

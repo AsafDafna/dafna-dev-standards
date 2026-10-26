@@ -1175,21 +1175,19 @@ describe('long titles', () => {
 
     await runTasks($)
     // At 28 columns Claude Code 2.1.296 squeezes `⏎ send` under the empty field, on a row of its own.
+    // The field takes the ring as the item opens.
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-2' })
-    expect(world.opens.at(-1)?.rows).toBe(11)
-    await $.ui.focus(ringTo('reply-2'))
-    await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
     // A short answer leaves the hint room on its row.
     await ui.input({ key: 'reply-2', text: 'abc', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(11)
+    expect(world.opens.at(-1)?.rows).toBe(15)
 
     await ui.input({ key: 'reply-2', text: 'abcdefghijk', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(16)
   })
 
   test('a field in a narrow pane, hidden and opened again, has the ring no more and asks for no squeezed row', async ($, on) => {
@@ -1199,17 +1197,15 @@ describe('long titles', () => {
     await runTasks($)
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-2' })
-    await $.ui.focus(ringTo('reply-2'))
-    await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(12)
+    expect(world.opens.at(-1)?.rows).toBe(16)
 
-    // Opened again, the ring starts on nothing: no field takes it by itself, so the hotkeys work at once.
+    // Opened again, the ring starts on nothing: the field has no autoFocus.
     await ui.press({ key: 'hide' })
     await ui.unmount()
     await runTasks($)
     await $.ui.mount(inline(24))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(11)
+    expect(world.opens.at(-1)?.rows).toBe(15)
   })
 
   test('the transcript row keeps its label whole and wraps the title after it', async ($, on) => {
@@ -1602,14 +1598,13 @@ describe('the reply field', () => {
     await start($)
 
     await $.tool.call(XCODE_TASK)
-    const ui = await $.ui.mount(inline(60))
+    // At 70 columns either hint takes one row beside Back and Hide.
+    const ui = await $.ui.mount(inline(70))
+    // The field takes the ring as the item opens.
     await ui.press({ key: 'row-1' })
-    // Tab takes the keys to the field.
-    await $.ui.focus(ringTo('reply-1'))
-    await clock.settle()
     const rows = world.opens.at(-1)?.rows ?? 0
 
-    // 46 columns for the text beside `Reply: ` and ` ⏎ send`, one kept for the cursor: three rows.
+    // 56 columns for the text beside `Reply: ` and ` ⏎ send`, one kept for the cursor: three rows.
     await ui.input({
       key: 'reply-1',
       text: 'LoginTests.testExpiredToken failed, and CartTests.testCouponRounding failed with a rounding error',
@@ -1618,11 +1613,11 @@ describe('the reply field', () => {
     expect(world.opens.at(-1)?.rows).toBe(rows + 2)
 
     // Out of the keys, the text is cut to one row; the label, squeezed, wraps onto a second.
-    await ui.redraw({ ...inline(60).props, isFocused: false })
+    await ui.redraw({ ...inline(70).props, isFocused: false })
     expect(world.opens.at(-1)?.rows).toBe(rows + 1)
 
     // Back in them, the ring is where it was.
-    await ui.redraw(inline(60).props)
+    await ui.redraw(inline(70).props)
     expect(world.opens.at(-1)?.rows).toBe(rows + 2)
 
     // Tab moves the keys on to Back, and Shift+Tab brings them back.
@@ -1760,6 +1755,32 @@ describe('the item screen', () => {
     expect(await textOf(ui, 'thread')).toMatch(/Claude · 4m.*You · 2m.*Claude · 1m/s)
     expect((await ui.find({ type: 'Text', text: /^Done when:/ }))?.text).toBe('Done when: The tokens are in the vault.\nEach expires in 30 days.')
     expect((await ui.find({ type: 'Link' }))?.props.href).toBe('https://example.com/plan#tokens')
+  })
+
+  test('on an action item, typing "done already" into the open item\'s field and pressing Enter sends a reply, and no Done is pressed', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call({ tool: ADD, kind: 'action', title: 'Add the key', detail: 'Needed.' })
+    const ui = await $.ui.mount(inline(24))
+    await ui.press({ key: 'row-1' })
+    // The ring is in the field as the item opens: `⏎ send` squeezes under it at 24 columns.
+    const rows = world.opens.at(-1)?.rows ?? 0
+    await $.ui.focus(ringTo('back'))
+    await clock.settle()
+    expect(world.opens.at(-1)?.rows).toBe(rows - 1)
+
+    await $.ui.focus(ringTo('reply-1'))
+    await ui.input({ key: 'reply-1', text: 'd', kind: 'change' })
+    await ui.input({ key: 'reply-1', text: 'done already', kind: 'change' })
+    await ui.input({ key: 'reply-1', text: 'done already' })
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.state).toBe('open')
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual({ from: 'user', text: 'done already', atMs: NOW })
+    expect(world.submitted).toEqual([`${ONE}#1 Add the key: ${REPLY_WORDS}\ndone already`])
+    expect(world.screen).toEqual({ kind: 'item', id: 1 })
   })
 
   test('opening an item clears its ●', async ($, on) => {
