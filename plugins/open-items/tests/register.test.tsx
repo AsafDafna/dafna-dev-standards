@@ -3915,7 +3915,6 @@ describe('hand-off', () => {
     expect(taken.result).toContain('#8 later · question')
     expect(taken.result).toContain('The deploy needs its name.')
     expect(taken.result).not.toContain('(was #')
-    expect(world.toasts).toContain('2 items moved from the previous session')
     expect(world.items.map(task => [task.id, task.state])).toEqual([
       [5, 'open'],
       [8, 'later'],
@@ -3930,8 +3929,30 @@ describe('hand-off', () => {
     expect(world.store[OLD]).toEqual(HANDED)
 
     const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'arrived')).toBe('2 items moved from the previous session')
     expect(await textOf(ui, 'row-5')).toContain('Merge PR 787')
     expect(await textOf(ui, 'row-8')).toContain('Which cloud project')
+  })
+
+  test('the successor\'s pane says "N items moved from the previous session" until the user opens one of them, goes Back or hides the pane', async ($, on) => {
+    const { world } = seat(on, { [OLD]: HANDED })
+    await start($)
+
+    await $.tool.call({ tool: TAKE, code: CODE })
+    const ui = await $.ui.mount(PANE)
+    expect(await textOf(ui, 'arrived')).toBe('2 items moved from the previous session')
+
+    await ui.press({ key: 'row-5' })
+    await ui.press({ key: 'back' })
+    expect(await ui.find({ key: 'arrived' })).toBeUndefined()
+
+    // Hide drops it too.
+    world.store['session:session-other'] = keyed([savedItem(4, { state: 'handing-off', title: 'Renew the TLS certificate' })], { handoff: { code: 'p7w2m4', atMs: NOW } })
+    await $.tool.call({ tool: TAKE, code: 'p7w2m4' })
+    expect(await textOf(ui, 'arrived')).toBe('1 item moved from the previous session')
+    await ui.press({ key: 'hide' })
+    await runTasks($)
+    expect(await ui.find({ key: 'arrived' })).toBeUndefined()
   })
 
   test('a number the successor already uses is renumbered, and the result maps old to new', async ($, on) => {
@@ -3981,10 +4002,41 @@ describe('hand-off', () => {
     await $.turn.start({ text: 'is it done?', turnId: 't1' })
 
     expect(world.items.map(task => task.state)).toEqual(['moved', 'moved'])
-    expect(world.toasts).toContain('2 items moved to a new session')
-    expect(world.isPaneOpen).toBe(false)
     expect(world.store[OWN]).toEqual(expect.objectContaining({ tasks: [expect.objectContaining({ id: 1, state: 'moved', thread: [] }), expect.objectContaining({ id: 2, state: 'moved', thread: [] })] }))
     expect(world.store[OWN]).not.toHaveProperty('handoff')
+
+    // The old pane says where they went, read-only.
+    expect(world.isPaneOpen).toBe(true)
+    expect(await ui.find({ key: 'moving' })).toBeUndefined()
+    expect(await textOf(ui, 'moved')).toContain('Moved to a new session')
+    expect(await textOf(ui, 'moved')).toContain(PAGING_TASK.title)
+    expect(await buttonsOf(ui)).toEqual(['hide'])
+    expect(world.status).toBeUndefined()
+    // The label, a row each and the foot.
+    expect(world.opens.at(-1)?.rows).toBe(4)
+  })
+
+  test('a take of part of a re-handed-off hand-off leaves the rest open in the old session', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    await $.tool.call(PAGING_TASK)
+    await $.tool.call(XCODE_TASK)
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    // Claude adds an item and hands off again with the same code, before it learns of a take of the first two.
+    await $.tool.call(KEY_TASK)
+    await $.tool.call({ tool: HANDOFF })
+    expect(itemOf(world, 3)?.state).toBe('handing-off')
+    world.store[NEW] = keyed([savedItem(1), savedItem(2)], { taken: [{ code, fromKey: OWN, ids: [{ was: 1, now: 1 }, { was: 2, now: 2 }] }] })
+    await $.turn.start({ text: 'is it done?', turnId: 't1' })
+
+    expect(world.items.map(task => [task.id, task.state])).toEqual([
+      [1, 'moved'],
+      [2, 'moved'],
+      [3, 'open'],
+    ])
+    expect(world.store[OWN]).not.toHaveProperty('handoff')
+    expect(world.status).toBe('☐ 1 action · /open-items')
   })
 
   test('a press on a moved item sends nothing and says it moved', async ($, on) => {
@@ -4146,6 +4198,43 @@ describe('leftovers', () => {
     // No other session in the folder is offered them either.
     expect(leftoversIn(world.store, '/repo', 'session:session-9', NOW)).toEqual([])
   })
+
+  for (const [label, key] of [
+    ['Take', 'take'],
+    ['Dismiss', 'dismiss'],
+  ] as const) {
+    test(`a ${label} whose write failed is not offered again`, async ($, on) => {
+      const { world, clock } = seat(on, { [OLD]: keyed([savedItem(1), savedItem(2)], { endedMs: NOW - HOUR_MS }) })
+      await start($)
+      const ui = await $.ui.mount(PANE)
+
+      world.isWriteFailing = true
+      await ui.press({ key })
+      await clock.settle()
+      await $.turn.start({ text: 'go on', turnId: 't1' })
+
+      expect(await ui.find({ key: 'offer' })).toBeUndefined()
+      expect(world.items).toHaveLength(2)
+      expect(world.status).toContain('could not save')
+    })
+
+    test(`a ${label} whose write stalls is not offered again`, async ($, on) => {
+      const { world, clock } = seat(on, { [OLD]: keyed([savedItem(1), savedItem(2)], { endedMs: NOW - HOUR_MS }) })
+      await start($)
+      const ui = await $.ui.mount(PANE)
+
+      world.setMs = 60_000
+      const pressing = ui.press({ key })
+      await clock.advance(5000)
+      await pressing
+      await $.turn.start({ text: 'go on', turnId: 't1' })
+      await clock.settle()
+
+      expect(await ui.find({ key: 'offer' })).toBeUndefined()
+      expect(world.items).toHaveLength(2)
+      await clock.advance(60_000)
+    })
+  }
 
   test("after /clear the earlier conversation's items are offered at once, never moved on their own", async ($, on) => {
     const { world, clock } = seat(on)

@@ -56,6 +56,7 @@ import {
   LINK_LABEL,
   LONG_ANSWER,
   MAX_SHOWN_TITLE,
+  MOVED_LABEL,
   MOVING_LABEL,
   OFFER_BUTTONS,
   REPLY_LABEL,
@@ -67,6 +68,7 @@ import {
   UNCLAIMED_NOTE,
   actionsOf,
   ageOf,
+  arrivedOf,
   arrowTargetOf,
   doneWhenOf,
   entriesOf,
@@ -82,10 +84,10 @@ import {
   linkOf,
   marksOf,
   movingOf,
-  movingRowOf,
   offerOf,
   openTaskOf,
   placeholderOf,
+  readOnlyRowOf,
   replyKeyOf,
   rowBackTo,
   rowTitleOf,
@@ -94,7 +96,7 @@ import {
   titleOf,
 } from './pane'
 import type { Entry, PaneView } from './pane'
-import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed } from './saved'
+import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed, withTaken } from './saved'
 import { numbersOf, plural, printable } from './text'
 
 const PLUGIN = 'open-items'
@@ -365,6 +367,7 @@ const clients = atom({ plugin: 'open-items', key: 'clients' } as const, {} as Ro
 const header = atom({ plugin: 'open-items', key: 'header' } as const, { lastActiveMs: 0, taken: [] } as Header)
 const offer = atom({ plugin: 'open-items', key: 'offer' } as const, [] as Offer)
 const saveFailing = atom({ plugin: 'open-items', key: 'isSaveFailing' } as const, false)
+const arrived = atom({ plugin: 'open-items', key: 'arrived' } as const, [] as readonly number[])
 
 /** Items another session's key holds, to take from it, and the hand-off code they go by ('' for leftovers). */
 type Source = { key: string; code: string; tasks: readonly Task[] }
@@ -451,6 +454,8 @@ const live = {
    * not see them all start.
    */
   background: null as Set<string> | null,
+  /** The items another session took while this process ran: the pane draws them where they went, and a reload or another session forgets them. */
+  moved: new Set<number>(),
 }
 
 /** One of the user's inputs: a prompt typed in the chat, a long answer through the composer bridge, or a press in the pane. */
@@ -586,7 +591,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'open-items' }, async $ => {
-    if ((await read($, tasks)).filter(isShown).length === 0 && (await read($, offer)).length === 0) {
+    if (!(await hasPane($))) {
       return { text: 'No items for you right now.' }
     }
 
@@ -777,7 +782,7 @@ export const register: Register = on => {
       return { deny: LOADING }
     }
 
-    const all = await readAll($).catch(() => undefined)
+    const all = await readStore($)
 
     if (all === undefined) {
       return { deny: STORE_DOWN }
@@ -837,20 +842,16 @@ export const register: Register = on => {
       return { deny: LOADING }
     }
 
-    const all = await readAll($).catch(() => undefined)
+    const all = await readStore($)
 
     if (all === undefined) {
       return { deny: STORE_DOWN }
     }
 
-    if (takenCodes(all).has(code)) {
-      return { deny: `The items of hand-off code ${code} were taken already.` }
-    }
-
     const found = handedOffIn(all, code, keyOf(live.sessionId))
 
     if (found === undefined) {
-      return { deny: `No items to take with hand-off code ${code}.` }
+      return { deny: takenCodes(all).has(code) ? `The items of hand-off code ${code} were taken already.` : `No items to take with hand-off code ${code}.` }
     }
 
     const nowMs = await $.clock.now()
@@ -859,8 +860,11 @@ export const register: Register = on => {
     const came = await takeIn($, [source], arrived => tookBy(arrived.update === 'pending' ? toldOf(arrived) : arrived, 'claude', nowMs))
 
     await dropOffered($, [source])
-    $.ui.toast(`${plural(came.length, 'item')} moved from the previous session`)
-    await show($, false)
+    await update($, arrived, () => came.map(({ task }) => task.id))
+
+    if (!(await show($, false))) {
+      $.ui.toast(`${plural(came.length, 'item')} moved from the previous session. See /open-items`)
+    }
 
     return { result: takenByCodeOf(code, came.map(({ arrived, was }) => ({ task: arrived, was })), nowMs) }
   })
@@ -1179,10 +1183,10 @@ export const register: Register = on => {
       live.seats.set(e.surface, isShared ? seatsWith(kept, seat) : [seat])
     }
 
-    const { shown } = view
+    const { shown, moved = [] } = view
 
     // The pane is closing: it asks for no rows, which would open it again.
-    if (shown.length === 0 && offerOf(view) === undefined) {
+    if (shown.length === 0 && offerOf(view) === undefined && moved.length === 0) {
       return <Text dimColor>No items for you right now.</Text>
     }
 
@@ -1201,7 +1205,7 @@ export const register: Register = on => {
     )
     const hide = (
       <Box flexShrink={0}>
-        <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => closePane($)} />
+        <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => hidePane($)} />
       </Box>
     )
     const unsaved =
@@ -1336,10 +1340,18 @@ export const register: Register = on => {
     }
 
     const head = headlineOf(view)
+    const cameHere = arrivedOf(view)
     const offered = offerOf(view)
     const ownKey = keyOf(live.sessionId)
     const drawnOffer = (await read($, offer)).filter(entry => entry.key !== ownKey)
     const moving = movingOf(shown)
+    // A Text keeps no key: each row's Box holds it.
+    const readOnlyRows = (prefix: string, items: readonly Task[]) =>
+      items.map(one => (
+        <Box key={`${prefix}-${one.id}`}>
+          <Text dimColor>{readOnlyRowOf(one, columns)}</Text>
+        </Box>
+      ))
 
     // A row is one line, its title cut to fit: the item screen draws it whole.
     const row = (one: Task) => {
@@ -1357,6 +1369,13 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {unsaved}
+        {cameHere === undefined ? null : (
+          <Box key="arrived" flexShrink={0}>
+            <Text dimColor wrap="wrap">
+              {cameHere}
+            </Text>
+          </Box>
+        )}
         {offered === undefined ? null : (
           <Box key="offer" flexDirection="column" flexShrink={0}>
             <Text wrap="wrap">{offered}</Text>
@@ -1396,11 +1415,7 @@ export const register: Register = on => {
               {MOVING_LABEL}
             </Text>
             <Box flexDirection="column" paddingLeft={ROW_INDENT}>
-              {moving.map(one => (
-                <Box key={`moving-${one.id}`}>
-                  <Text dimColor>{movingRowOf(one, columns)}</Text>
-                </Box>
-              ))}
+              {readOnlyRows('moving', moving)}
               {view.isUnclaimed !== true ? null : (
                 <Box key="unclaimed" flexDirection="column">
                   <Text wrap="wrap">{UNCLAIMED_NOTE}</Text>
@@ -1409,6 +1424,16 @@ export const register: Register = on => {
                   </Box>
                 </Box>
               )}
+            </Box>
+          </Box>
+        )}
+        {moved.length === 0 ? null : (
+          <Box key="moved" flexDirection="column" flexShrink={0}>
+            <Text bold color="yellow">
+              {MOVED_LABEL}
+            </Text>
+            <Box flexDirection="column" paddingLeft={ROW_INDENT}>
+              {readOnlyRows('moved', moved)}
             </Box>
           </Box>
         )}
@@ -1486,6 +1511,7 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.mainTurn = undefined
   live.wasStopped = false
   live.unreadAppend = []
+  live.moved.clear()
   const cwd = await $.session.cwd().catch(() => undefined)
   const nowMs = await $.clock.now()
   await update($, folder, known => cwd ?? known)
@@ -1495,6 +1521,7 @@ async function switchTo($: EngineInterface, sessionId: string) {
   await update($, header, (): Header => ({ lastActiveMs: nowMs, taken: [] }))
   await update($, offer, (): Offer => [])
   await update($, saveFailing, () => false)
+  await update($, arrived, () => [])
   await update($, screen, () => LIST_SCREEN)
   await update($, held, () => null)
   await refresh($)
@@ -1615,6 +1642,18 @@ async function dropExpired($: EngineInterface): Promise<Record<string, unknown>>
   }
 
   return all
+}
+
+/** Every session's key, as `readAll` reads it, with this session's own as `withOwnTaken` has it; undefined when the store cannot be read. */
+async function readStore($: EngineInterface): Promise<Record<string, unknown> | undefined> {
+  const all = await readAll($).catch(() => undefined)
+
+  return all === undefined ? undefined : withOwnTaken($, all)
+}
+
+/** `all` with this session's `taken` records as its state holds them: items it took are not offered again while their write is out, or after it failed. */
+async function withOwnTaken($: EngineInterface, all: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return withTaken(all, keyOf(live.sessionId), (await read($, header)).taken)
 }
 
 /** Every session's key in the store, as stored, by key. */
@@ -1830,16 +1869,34 @@ async function present($: EngineInterface, task: Task, nowMs: number, words: { t
  * nothing is left in it, no item and no offer. Resolves whether anything is shown.
  */
 async function refresh($: EngineInterface): Promise<boolean> {
-  const shown = (await read($, tasks)).filter(isShown)
-  const isShowing = shown.length > 0 || (await read($, offer)).length > 0
+  const list = await read($, tasks)
+  const isShowing = await hasPane($, list)
 
-  $.ui.status(statusOf(shown, await read($, saveFailing)))
+  $.ui.status(statusOf(list.filter(isShown), await read($, saveFailing)))
 
   if (!isShowing) {
     await closePane($).catch(() => undefined)
   }
 
   return isShowing
+}
+
+/** Whether the pane has anything to draw: an item shown, an offer, or items that moved while this process ran. */
+async function hasPane($: EngineInterface, list?: readonly Task[]): Promise<boolean> {
+  const items = list ?? (await read($, tasks))
+
+  return items.some(isShown) || movedOf(items).length > 0 || (await read($, offer)).length > 0
+}
+
+/** The items another session took while this process ran, which the pane draws where they went. */
+function movedOf(list: readonly Task[]): Task[] {
+  return list.filter(task => task.state === 'moved' && live.moved.has(task.id))
+}
+
+/** The user's Hide: the pane closes, and the line naming the items just moved here goes. */
+async function hidePane($: EngineInterface) {
+  await update($, arrived, () => [])
+  await closePane($)
 }
 
 /** Closes the Open items pane, and has a re-size under way leave it closed. */
@@ -1887,13 +1944,16 @@ async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promi
 /** What the pane draws from: the session's state, and what only the surface knows. */
 async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 'isFocused'>): Promise<PaneView> {
   const ownKey = keyOf(live.sessionId)
+  const list = await read($, tasks)
   const state = {
-    shown: (await read($, tasks)).filter(isShown),
+    shown: list.filter(isShown),
     held: await read($, held),
     screen: await read($, screen),
     nowMs: await $.clock.now(),
     ...offeredOf(await read($, offer), ownKey),
     isSaveFailing: await read($, saveFailing),
+    moved: movedOf(list),
+    arrived: (await read($, arrived)).length,
   }
   const task = openTaskOf(state)
 
@@ -2145,6 +2205,7 @@ async function openItem($: EngineInterface, id: number, canType: boolean) {
   }
 
   forget(replyKeyOf(id))
+  await update($, arrived, ids => (ids.includes(id) ? [] : ids))
   await update($, screen, (): Screen => ({ kind: 'item', id }))
   const kept = await update($, held, now => (now?.id === id ? now : null))
   await markRead($, id)
@@ -2180,6 +2241,7 @@ async function markRead($: EngineInterface, id: number) {
  * from there; a draft stays with its item.
  */
 async function toList($: EngineInterface, id: number, drawn: readonly string[] = []) {
+  await update($, arrived, () => [])
   await update($, screen, () => LIST_SCREEN)
   await update($, held, () => null)
   await markRead($, id)
@@ -2492,7 +2554,7 @@ async function pressed($: EngineInterface) {
  */
 async function scan($: EngineInterface, all?: Record<string, unknown>) {
   const sessionId = live.sessionId
-  const stored = all ?? (await readAll($).catch(() => undefined))
+  const stored = all === undefined ? await readStore($) : await withOwnTaken($, all)
 
   if (stored === undefined || live.sessionId !== sessionId) {
     return
@@ -2502,7 +2564,12 @@ async function scan($: EngineInterface, all?: Record<string, unknown>) {
   await offerLeftovers($, stored, sessionId)
 }
 
-/** Marks moved this session's items another session took, by number or by its hand-off code, and says so. */
+/**
+ * Marks moved this session's items another session's key took, and shows
+ * where they went. Once a session took its hand-off code, the hand-off is
+ * over: an item that take left behind (handed off again meanwhile) is back
+ * as it was before.
+ */
 async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
   const { handoff } = await read($, header)
   const taken = takenFrom(all, keyOf(sessionId), handoff)
@@ -2511,7 +2578,8 @@ async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessi
     return
   }
 
-  const isTaken = (task: Task) => isShown(task) && (taken.ids.has(task.id) || (taken.isCodeTaken && task.state === 'handing-off'))
+  const isTaken = (task: Task) => isShown(task) && taken.ids.has(task.id)
+  const isLeftBehind = (task: Task) => taken.isCodeTaken && task.state === 'handing-off' && !taken.ids.has(task.id)
   const nowMs = await $.clock.now()
   let moved: number[] = []
 
@@ -2522,7 +2590,15 @@ async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessi
   await change($, list => {
     moved = list.filter(isTaken).map(task => task.id)
 
-    return moved.length === 0 ? list : list.map(task => (isTaken(task) ? { ...task, state: 'moved', update: 'none', isWaitingForClaude: false, updatedMs: nowMs } : task))
+    return moved.length === 0 && !list.some(isLeftBehind)
+      ? list
+      : list.map(task => {
+          if (isTaken(task)) {
+            return { ...task, state: 'moved', update: 'none', isWaitingForClaude: false, updatedMs: nowMs }
+          }
+
+          return isLeftBehind(task) ? { ...task, state: stateBefore(task), updatedMs: nowMs } : task
+        })
   })
 
   if (moved.length === 0) {
@@ -2530,10 +2606,15 @@ async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessi
   }
 
   for (const id of moved) {
+    live.moved.add(id)
     await settle($, id)
   }
 
-  $.ui.toast(`${plural(moved.length, 'item')} moved to a new session`)
+  await refresh($)
+
+  if (!(await show($, false))) {
+    $.ui.toast(`${plural(moved.length, 'item')} moved to a new session. See /open-items`)
+  }
 }
 
 /**
@@ -2658,7 +2739,7 @@ async function dropOffered($: EngineInterface, sources: readonly Source[]) {
  * told, when nothing is left or the store cannot be read.
  */
 async function stillOffered($: EngineInterface, drawn: Offer): Promise<Source[] | undefined> {
-  const all = await readAll($).catch(() => undefined)
+  const all = await readStore($)
   const left = all === undefined ? [] : leftoversIn(all, (await read($, folder)) ?? '', keyOf(live.sessionId), await $.clock.now())
   const sources = left.flatMap(({ key, saved }) => {
     const ids = drawn.find(entry => entry.key === key)?.ids ?? []

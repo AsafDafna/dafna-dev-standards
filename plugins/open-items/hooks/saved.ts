@@ -239,7 +239,8 @@ function takenOf(sessions: readonly [string, Saved][], fromKey: string): Set<num
 
 /**
  * What other sessions took of `ownKey`'s items: their numbers, and whether
- * one took its hand-off code, which takes every item still `handing-off`.
+ * one took its hand-off code. Only the numbers say which items moved: a take
+ * by the code may hold some of them only.
  */
 export function takenFrom(all: Record<string, unknown>, ownKey: string, handoff: Saved['handoff']): { ids: Set<number>; isCodeTaken: boolean } {
   const sessions = sessionsIn(all, ownKey)
@@ -257,7 +258,8 @@ export function isUnclaimed(handoff: Saved['handoff'], codes: ReadonlySet<string
  * open, Later and `handing-off` items of one that ended or was quiet
  * STALE_MS, and `handing-off` items whose hand-off is unclaimed (see
  * `isUnclaimed`), of any session. Never an item another key took or
- * dismissed, nor one whose hand-off code a key took.
+ * dismissed. A `handing-off` item a take by its code left behind counts as
+ * any other: its session puts it back as it was.
  */
 export function leftoversIn(all: Record<string, unknown>, folder: string, ownKey: string, nowMs: number): { key: string; saved: Saved }[] {
   const sessions = sessionsIn(all)
@@ -270,16 +272,27 @@ export function leftoversIn(all: Record<string, unknown>, folder: string, ownKey
 
     const taken = takenOf(sessions, key)
     const isLeft = saved.endedMs !== undefined || nowMs - saved.lastActiveMs >= STALE_MS
+    const isWaiting = saved.handoff !== undefined && !codes.has(saved.handoff.code)
     const tasks = saved.tasks.filter(task => {
       if (taken.has(task.id) || !isShown(task)) {
         return false
       }
 
-      return task.state === 'handing-off' && saved.handoff !== undefined ? isUnclaimed(saved.handoff, codes, nowMs) : isLeft
+      return task.state === 'handing-off' && isWaiting ? isUnclaimed(saved.handoff, codes, nowMs) : isLeft
     })
 
     return tasks.length === 0 ? [] : [{ key, saved: { ...saved, tasks } }]
   })
+}
+
+/**
+ * `all` with `key`'s `taken` records as given: what a session took counts
+ * before its write lands, and though the write failed.
+ */
+export function withTaken(all: Record<string, unknown>, key: string, taken: Saved['taken']): Record<string, unknown> {
+  const saved = savedIn(all[key]) ?? { version: 2, tasks: [], nextId: 1, savedMs: 0, lastActiveMs: 0, folder: '', taken: [] }
+
+  return { ...all, [key]: { ...saved, taken } }
 }
 
 /** The items still `handing-off` under hand-off code `code` in a key but `ownKey`'s, less those a key took; undefined when there are none. */

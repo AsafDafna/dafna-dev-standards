@@ -44,6 +44,10 @@ export type PaneView = {
   /** No session took this session's hand-off in time: the pane offers its items back. */
   isUnclaimed?: boolean
   isSaveFailing?: boolean
+  /** The items another session took while this process ran: the pane says where they went. */
+  moved?: readonly Task[]
+  /** How many items `take_items` just brought from the previous session. */
+  arrived?: number
 }
 
 const KIND_SECTIONS: readonly { kind: TaskKind; label: string }[] = [
@@ -70,6 +74,7 @@ export function movingOf(shown: readonly Task[]): Task[] {
 }
 
 export const MOVING_LABEL = 'Moving to a new session'
+export const MOVED_LABEL = 'Moved to a new session'
 export const UNCLAIMED_NOTE = 'No session took them in 30 minutes.'
 export const TAKE_BACK = { key: 'take-back', label: 'Take' } as const
 export const OFFER_BUTTONS = [
@@ -83,8 +88,13 @@ export function offerOf(view: Pick<PaneView, 'offered'>): string | undefined {
   return view.offered === undefined || view.offered === 0 ? undefined : `${plural(view.offered, 'item')} left by an earlier session`
 }
 
-/** `#5 Merge #787…`: a moving item's row, cut to one line of `columns`. */
-export function movingRowOf(task: Task, columns: number): string {
+/** `2 items moved from the previous session`; undefined when none did. */
+export function arrivedOf(view: Pick<PaneView, 'arrived'>): string | undefined {
+  return view.arrived === undefined || view.arrived === 0 ? undefined : `${plural(view.arrived, 'item')} moved from the previous session`
+}
+
+/** `#5 Merge #787…`: a row drawn read-only, cut to one line of `columns`. */
+export function readOnlyRowOf(task: Task, columns: number): string {
   return clipCells(`#${task.id} ${nameOf(task)}`, Math.max(1, columns - ROW_INDENT))
 }
 
@@ -414,9 +424,11 @@ export function rowsFor(view: PaneView, columns: number, max: number): number {
 function listRowsOf(view: PaneView, width: number): number {
   const head = headlineOf(view)
   const offer = offerOf(view)
+  const arrived = arrivedOf(view)
   const moving = movingOf(view.shown)
+  const moved = view.moved ?? []
   const indented = Math.max(1, width - ROW_INDENT)
-  let rows = savedRowsOf(view, width)
+  let rows = savedRowsOf(view, width) + (arrived === undefined ? 0 : rowsOf(arrived, width))
 
   if (offer !== undefined) {
     rows += rowsOf(offer, width) + buttonRowsOf(OFFER_BUTTONS.map(button => button.label), width)
@@ -436,6 +448,10 @@ function listRowsOf(view: PaneView, width: number): number {
 
   if (moving.length > 0) {
     rows += 1 + moving.length + (view.isUnclaimed === true ? rowsOf(UNCLAIMED_NOTE, indented) + 1 : 0)
+  }
+
+  if (moved.length > 0) {
+    rows += 1 + moved.length
   }
 
   return rows + footRowsOf(view, width, [HIDE])

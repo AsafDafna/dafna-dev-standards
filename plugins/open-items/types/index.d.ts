@@ -107,6 +107,8 @@ declare module 'claude-code' {
       offer: Offer
       /** The session's last store write failed: the pane and the status line say so until one succeeds. */
       isSaveFailing: boolean
+      /** The items `take_items` just brought here, which the list names until the user opens one, goes Back or hides the pane. */
+      arrived: readonly number[]
     }
   }
 }

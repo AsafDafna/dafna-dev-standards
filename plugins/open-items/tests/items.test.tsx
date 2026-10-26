@@ -175,6 +175,8 @@ describe('the item model', () => {
       ['session:ended', [1, 2]],
       ['session:stale', [1]],
       ['session:handed', [1]],
+      // Its code was taken with #1 only: #2 is an ordinary leftover of a session that ended.
+      ['session:claimed', [2]],
     ])
     expect(takenCodes(all)).toEqual(new Set(['cccccc']))
   })
