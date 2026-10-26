@@ -297,10 +297,10 @@ export function isRepeatOf(task: Task | undefined, move: Move): boolean {
 }
 
 /**
- * `task` after the user's `move` at `atMs`; the same task when the move
- * repeats their last. A move in the same millisecond as the user's one
- * before it, a reply of Claude's between them or not, takes the next, so
- * `heardMs` tells the two apart.
+ * `task` after the user's `move` at `atMs`, Claude's last reply counted as
+ * read; the same task when the move repeats their last. A move in the same
+ * millisecond as the user's one before it, a reply of Claude's between them
+ * or not, takes the next, so `heardMs` tells the two apart.
  */
 export function movedBy(task: Task, move: Move, atMs: number): Task {
   if (isRepeatOf(task, move)) {
@@ -309,17 +309,23 @@ export function movedBy(task: Task, move: Move, atMs: number): Task {
 
   const before = task.thread.findLast(message => message.from === 'user')
   const thread = [...task.thread, { from: 'user' as const, ...move, atMs: before === undefined ? atMs : Math.max(atMs, before.atMs + 1) }]
+  const moved = { ...task, thread, hasNewReply: false }
 
   switch (move.event) {
     case undefined:
-      return { ...task, thread, isWaitingForClaude: true, update: 'pending' }
+      return { ...moved, isWaitingForClaude: true, update: 'pending' }
     case 'later':
-      return { ...task, thread, state: 'later', update: 'pending' }
+      return { ...moved, state: 'later', update: 'pending' }
     case 'seen':
-      return { ...task, thread, state: 'resolved' }
+      return { ...moved, state: 'resolved' }
     default:
-      return { ...task, thread, state: 'resolved', update: 'pending' }
+      return { ...moved, state: 'resolved', update: 'pending' }
   }
+}
+
+/** Whether `move` picks an option `task` no longer offers: Claude changed its options since the pane drew them. */
+export function isStale(task: Task, move: Move): boolean {
+  return move.event === 'chose' && !(task.options ?? []).includes(move.text)
 }
 
 const SPOKEN: readonly (ThreadEvent | undefined)[] = [undefined, 'chose', 'done', 'later']
@@ -460,7 +466,7 @@ function whenOf(ms: number): string {
   return age === 'now' ? 'just now' : `${age} ago`
 }
 
-const PRESSED = { done: 'Done', seen: 'Seen', later: 'Later' } as const
+export const PRESSED = { done: 'Done', seen: 'Seen', later: 'Later' } as const
 
 /** A thread entry as `list_items` gives it: a message on the lines under its head, a press or a change on one line. */
 function entryOf(message: Message, nowMs: number): string {

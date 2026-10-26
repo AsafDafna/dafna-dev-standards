@@ -1,6 +1,7 @@
-import type { Editing, Screen, Task, TaskKind } from '../types'
-import { MAX_DETAIL, MAX_OPTION, isActive, waitingOf } from './tasks'
-import { ago, cellsOf, clip, clipCells, printable, rowsOf } from './text'
+import type { Held, Message, Screen, Task, TaskKind } from '../types'
+import { DONE, LATER, MAX_DETAIL, MAX_OPTION, PRESSED, SEEN, choseOf, isActive, waitingOf } from './tasks'
+import type { Move } from './tasks'
+import { ago, cellsOf, clip, clipCells, linesRowsOf, printable, printableLines, rowsOf } from './text'
 
 /**
  * The longest title the pane and the transcript draw. `add_item` takes
@@ -22,21 +23,21 @@ export const ROW_INDENT = 2
 const MIN_FIELD_COLUMNS = 12
 
 /**
- * What the Open items pane draws from: the items, the screen and which field
- * is open, and what each row's words depend on. The render hook and
- * `rowsFor` both read it, so the rows asked for are the rows drawn.
+ * What the Open items pane draws from: the items, the screen, and what each
+ * row's words depend on. The render hook and `rowsFor` both read it, so the
+ * rows asked for are the rows drawn.
  */
 export type PaneView = {
   shown: readonly Task[]
   screen: Screen
-  editing: Editing | null
-  /** The draft in the open field. */
+  held: Held | null
+  /** The draft in the reply field of the item on screen. */
   draft: string
   nowMs: number
   /** The surface draws a text field (the mobile app draws none yet). */
   canType: boolean
   isFocused: boolean
-  /** The open field has the keys: the terminal wraps what is typed there. */
+  /** The reply field has the keys: the terminal wraps what is typed there. */
   isTyping: boolean
 }
 
@@ -74,11 +75,35 @@ export function arrowTargetOf(keys: readonly string[], current: string | undefin
   return at === -1 ? keys[0] : keys[at + by]
 }
 
+/**
+ * The row the ring goes back to on the list from item `id`'s screen: its own,
+ * or, the item closed, the row drawn after it, else before it, in `drawn`
+ * (the ring's keys as that screen's list had them).
+ */
+export function rowBackTo(id: number, drawn: readonly string[], now: readonly string[]): string | undefined {
+  const own = `row-${id}`
+  const at = drawn.indexOf(own)
+  const rows = (keys: readonly string[]) => keys.filter(key => key.startsWith('row-') && now.includes(key))
+
+  if (now.includes(own)) {
+    return own
+  }
+
+  return at === -1 ? undefined : (rows(drawn.slice(at + 1))[0] ?? rows(drawn.slice(0, at)).at(-1))
+}
+
 /** The item whose screen the pane shows, while it is the user's to act on; else the list. */
 export function screenOf(view: Pick<PaneView, 'shown' | 'screen'>): 'list' | { id: number } {
   const { screen } = view
 
   return screen.kind === 'item' && view.shown.some(task => task.id === screen.id && isActive(task)) ? { id: screen.id } : 'list'
+}
+
+/** The item on screen, as `screenOf` finds it; undefined on the list. */
+export function openTaskOf(view: Pick<PaneView, 'shown' | 'screen'>): Task | undefined {
+  const screen = screenOf(view)
+
+  return screen === 'list' ? undefined : view.shown.find(task => task.id === screen.id)
 }
 
 /** The pane's head: `☐ 1 decision · 2 questions · ● 1 reply · 1 later`, or `⋯ 1 waiting for Claude`. */
@@ -128,18 +153,78 @@ function rowTextOf(task: Task, view: Pick<PaneView, 'shown'>, columns: number): 
   return `${rowTitleOf(task, view, columns)}${newReply}${waiting}`
 }
 
-export function detailOf(task: Task): string {
-  return printable(task.thread[0]?.text ?? '', MAX_DETAIL)
+/** A thread entry as the item screen draws it: a message, line breaks kept, under its `head` (`Claude · 4m`); an event on one line. */
+export function entryOf(message: Message, nowMs: number): { head?: string; text: string } {
+  const who = message.from === 'claude' ? 'Claude' : 'You'
+  const age = ago(nowMs - message.atMs)
+
+  switch (message.event) {
+    case undefined:
+      return { head: `${who} · ${age}`, text: printableLines(message.text, MAX_DETAIL) }
+    case 'chose':
+      return { text: `${who} chose "${printable(message.text, MAX_OPTION)}" · ${age}` }
+    case 'changed':
+      return { text: `${who} changed the item · ${age}` }
+    case 'took':
+      return { text: `The item moved here from an earlier session · ${age}` }
+    default:
+      return { text: `${who} pressed ${PRESSED[message.event]} · ${age}` }
+  }
+}
+
+/**
+ * The most text the item screen's thread draws: one drawing draws 100,000
+ * characters in all (MarkdownLeafProps), and the rest of the screen takes far less.
+ */
+const THREAD_CHARS = 80_000
+
+export type Entry = { i: number; head?: string; text: string }
+
+/**
+ * The entries of `task`'s thread the item screen draws: the detail, then the
+ * newest that fit in THREAD_CHARS; `hidden` counts those left out between.
+ */
+export function entriesOf(task: Task, nowMs: number): { entries: Entry[]; hidden: number } {
+  const [detail, ...rest] = task.thread.map((message, i): Entry => ({ i, ...entryOf(message, nowMs) }))
+  const size = (entry: Entry) => (entry.head?.length ?? 0) + entry.text.length
+
+  if (detail === undefined) {
+    return { entries: [], hidden: 0 }
+  }
+
+  let left = THREAD_CHARS - size(detail)
+  let from = rest.length
+
+  for (let entry = rest[from - 1]; entry !== undefined && size(entry) <= left; entry = rest[from - 1]) {
+    left -= size(entry)
+    from -= 1
+  }
+
+  return { entries: [detail, ...rest.slice(from)], hidden: from }
+}
+
+/** The line in place of the thread entries `entriesOf` leaves out. */
+export function hiddenOf(hidden: number): string {
+  return `${hidden} earlier ${hidden === 1 ? 'message is' : 'messages are'} not shown: the thread is too long for the pane.`
 }
 
 export function doneWhenOf(task: Task): string | undefined {
-  return task.doneWhen === undefined ? undefined : `Done when: ${printable(task.doneWhen, MAX_DETAIL)}`
+  return task.doneWhen === undefined ? undefined : `Done when: ${printableLines(task.doneWhen, MAX_DETAIL)}`
 }
 
-/** The open item's buttons, as `hotkey` and `label`. */
-export function actionsOf(task: Task, canType: boolean): { key: string; hotkey: string; label: string; option?: string }[] {
+/** The most a `Link`'s href holds (LinkProps). */
+const MAX_LINK = 2048
+
+export const LINK_LABEL = 'Details: '
+
+export function linkOf(task: Task): string | undefined {
+  return task.link === undefined ? undefined : printable(task.link, MAX_LINK)
+}
+
+/** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open. */
+export function actionsOf(task: Task): { key: string; hotkey: string; label: string; move: Move }[] {
   if (task.kind === 'info') {
-    return [{ key: 'seen', hotkey: 'd', label: 'Seen' }]
+    return [{ key: 'seen', hotkey: 'd', label: 'Seen', move: SEEN }]
   }
 
   const choices =
@@ -148,32 +233,50 @@ export function actionsOf(task: Task, canType: boolean): { key: string; hotkey: 
           key: `option-${i + 1}`,
           hotkey: String(i + 1),
           label: `${printable(option, MAX_OPTION)}${option === task.recommended ? ' (recommended)' : ''}`,
-          option,
+          move: choseOf(option),
         }))
-      : [{ key: 'done', hotkey: 'd', label: 'Done' }]
+      : task.kind === 'question'
+        ? []
+        : [{ key: 'done', hotkey: 'd', label: 'Done', move: DONE }]
 
-  const typed = canType ? [{ key: 'answer', hotkey: 'r', label: task.kind === 'decision' ? 'Other…' : 'Answer…' }] : []
-  const later = task.state === 'open' ? [{ key: 'later', hotkey: 'l', label: 'Later' }] : []
-
-  return [...choices, ...typed, ...later]
+  return [...choices, ...(task.state === 'open' ? [{ key: 'later', hotkey: 'l', label: 'Later', move: LATER }] : [])]
 }
 
-// The terminal draws a field's label as `Answer: `.
-export const ANSWER_LABEL = 'Answer'
-export const HELD =
-  'This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and press Done instead.'
+// The terminal draws a field's label as `Reply: `.
+export const REPLY_LABEL = 'Reply'
+export const REPLY_PLACEHOLDER = 'Enter sends it to Claude'
 
-export const ANSWER_PLACEHOLDER = 'Enter sends it to Claude'
-
-/** The answer field's buttons. */
-export const ANSWER_BUTTONS = ['Long answer…', 'Cancel'] as const
-
-/** What Enter does in the answer field, drawn beside it while it has the keys. */
+/** What Enter does in the reply field, drawn beside it while it has the keys. */
 export const SUBMIT_LABEL = 'send'
 
-/** The key of task `id`'s field: its own, so no other task's draft, or the focus, lands in it. */
-export function fieldKeyOf(field: Pick<Editing, 'id' | 'field'>): string {
-  return `${field.field}-${field.id}`
+export const LONG_ANSWER = { key: 'long', label: 'Long answer…' } as const
+
+/** What the user does with an item in place of pasting a secret into it, the item named when `isNamed`: an action has Done, the others a reply. */
+export function insteadOf(task: Pick<Task, 'id' | 'kind'>, isNamed = false): string {
+  const on = isNamed ? ` on #${task.id}` : ''
+
+  return task.kind === 'action' ? `press Done${on}` : `reply${on} without it`
+}
+
+export function heldNoticeOf(task: Task): string {
+  return `This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and ${insteadOf(task)} instead.`
+}
+
+export const HELD_BUTTONS = ['Edit', 'Send anyway'] as const
+
+/** The key of item `id`'s reply field: its own, so no other item's draft, or the focus, lands in it. */
+export function replyKeyOf(id: number): string {
+  return `reply-${id}`
+}
+
+/** The reply to `task` held back for looking like a secret, on a surface that draws fields. */
+export function heldOf(task: Task, view: Pick<PaneView, 'canType' | 'held'>): string | undefined {
+  return view.canType && view.held?.id === task.id ? view.held.text : undefined
+}
+
+/** Whether `task`'s screen draws its reply field: on a surface that draws one, for an item that asks something, no reply held in its place. */
+export function hasReplyField(task: Task, view: Pick<PaneView, 'canType' | 'held'>): boolean {
+  return view.canType && task.kind !== 'info' && heldOf(task, view) === undefined
 }
 
 /**
@@ -215,7 +318,7 @@ export function fieldRowsOf(label: string, submitLabel: string, text: string, is
     return isLabelCut(head, text === '' ? field : cellsOf(text), columns) ? 2 : 1
   }
 
-  const rows = text.split('\n').reduce((rows, line) => rows + rowsOf(line, field - 1), 0)
+  const rows = linesRowsOf(text, field - 1)
   // The placeholder cut to the field, or the text and the cursor.
   const drawn = text === '' ? field : cellsOf(text) + 1
 
@@ -258,12 +361,11 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
  * The rows the Open items pane's body takes at `columns` cells across, each
  * text wrapped as the pane draws it, at most `max`. The list: the head, each
  * section's label and a row for each of its items, and the foot. An item:
- * its title, detail and controls, a blank row, and the foot.
+ * its title, thread, link, done-when, buttons and reply field, and the foot.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
-  const screen = screenOf(view)
-  const task = screen === 'list' ? undefined : view.shown.find(one => one.id === screen.id)
+  const task = openTaskOf(view)
 
   return Math.min(max, task === undefined ? listRowsOf(view, width) : itemRowsOf(task, view, width))
 }
@@ -285,35 +387,27 @@ function listRowsOf(view: PaneView, width: number): number {
 
 function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const inner = Math.max(1, width - GLYPH_CELLS)
+  const { entries, hidden } = entriesOf(task, view.nowMs)
+  const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, inner)) + linesRowsOf(text, inner), 0)
+  const link = linkOf(task)
   const doneWhen = doneWhenOf(task)
-  const rows =
-    rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner) +
-    rowsOf(detailOf(task), inner) +
-    (doneWhen === undefined ? 0 : rowsOf(doneWhen, inner)) +
-    controlRowsOf(task, view, width, inner)
+  const isField = hasReplyField(task, view)
+  const buttons = [...actionsOf(task).map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
 
-  return rows + 1 + footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])
+  return (
+    rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner) +
+    thread +
+    (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), inner)) +
+    (link === undefined ? 0 : rowsOf(link, Math.max(1, inner - cellsOf(LINK_LABEL)))) +
+    (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, inner)) +
+    (buttons.length === 0 ? 0 : buttonRowsOf(buttons, inner)) +
+    (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), inner) + buttonRowsOf(HELD_BUTTONS, inner)) +
+    (isField ? fieldRowsOf(REPLY_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) : 0) +
+    footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])
+  )
 }
 
 /** The rows the foot takes: the hint, wrapped beside the `buttons`. */
 function footRowsOf(view: PaneView, width: number, buttons: readonly string[]): number {
   return rowsOf(hintOf(view), Math.max(1, width - buttons.reduce((cells, label) => cells + BUTTON_GAP + cellsOf(label), 0)))
-}
-
-/** The rows under the open task: its buttons, or its field across the body (`width`) and the buttons under it. */
-function controlRowsOf(task: Task, view: PaneView, width: number, inner: number): number {
-  const field = view.editing !== null && view.editing.id === task.id ? view.editing : null
-
-  if (field === null || !view.canType) {
-    return buttonRowsOf(
-      actionsOf(task, view.canType).map(action => `${action.hotkey}: ${action.label}`),
-      inner,
-    )
-  }
-
-  if (field.held !== undefined) {
-    return rowsOf(HELD, inner) + buttonRowsOf(['Edit', 'Send anyway'], inner)
-  }
-
-  return fieldRowsOf(ANSWER_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) + buttonRowsOf(ANSWER_BUTTONS, inner)
 }

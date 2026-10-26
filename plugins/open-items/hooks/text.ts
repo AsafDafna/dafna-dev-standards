@@ -19,6 +19,13 @@ export function printable(text: string, max: number): string {
   return clip(oneLine(spaced), max)
 }
 
+/** As `printable`, but its line breaks kept: a step list stays a list. */
+export function printableLines(text: string, max: number): string {
+  const lines = text.replace(/\r\n?|[\p{Zl}\p{Zp}]/gu, '\n').replace(/[^\P{Cc}\n]/gu, ' ').replace(/\p{Cf}/gu, '')
+
+  return clip(lines, max)
+}
+
 export function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`
 }
@@ -174,9 +181,14 @@ export function wrapRows(text: string, columns: number): string[] {
   return rows
 }
 
-/** How many rows `text` wraps to in `columns` cells. */
+/** How many rows `text`, one line, wraps to in `columns` cells. */
 export function rowsOf(text: string, columns: number): number {
   return wrapRows(text, columns).length
+}
+
+/** How many rows `text` takes in `columns` cells, each of its lines wrapped. */
+export function linesRowsOf(text: string, columns: number): number {
+  return text.split('\n').reduce((rows, line) => rows + rowsOf(line, columns), 0)
 }
 
 /** `text` cut to fit `columns` cells, the cut marked with `…`, as the terminal draws its characters. */

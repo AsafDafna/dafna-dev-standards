@@ -1,17 +1,15 @@
 import { atom, read, update } from 'claude-code'
-import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
+import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
-import type { Editing, Saved, Screen, Task } from '../types'
+import type { Held, Saved, Screen, Task } from '../types'
 import {
   DONE,
-  LATER,
   MAX_NOTE,
   MAX_TITLE,
   SEEN,
   addedOf,
   answerIn,
   bridgeOf,
-  choseOf,
   closedAs,
   digestOf,
   hasAnswerIn,
@@ -20,6 +18,7 @@ import {
   isOpenAsk,
   isRepeatOf,
   isShown,
+  isStale,
   listOf,
   looksSecret,
   messageOf,
@@ -42,34 +41,43 @@ import {
 } from './tasks'
 import type { Move } from './tasks'
 import {
-  ANSWER_BUTTONS,
-  ANSWER_LABEL,
-  ANSWER_PLACEHOLDER,
   BACK,
   BUTTON_GAP,
-  HELD,
+  HELD_BUTTONS,
   HIDE,
+  LINK_LABEL,
+  LONG_ANSWER,
   MAX_SHOWN_TITLE,
+  REPLY_LABEL,
+  REPLY_PLACEHOLDER,
   ROW_INDENT,
   SUBMIT_LABEL,
-  actionsOf as actionsFor,
+  actionsOf,
   ageOf,
   arrowTargetOf,
-  detailOf,
   doneWhenOf,
-  fieldKeyOf,
+  entriesOf,
   focusOrderOf,
   groupsOf,
+  hasReplyField,
   headlineOf,
+  heldNoticeOf,
+  heldOf,
+  hiddenOf,
   hintOf,
+  insteadOf,
+  linkOf,
   marksOf,
+  openTaskOf,
   placeholderOf,
+  replyKeyOf,
+  rowBackTo,
   rowTitleOf,
   rowsFor,
   screenOf,
   titleOf,
 } from './pane'
-import type { PaneView } from './pane'
+import type { Entry, PaneView } from './pane'
 import { isExpired, isSavedKey, keyOf, savedIn, trimmed } from './saved'
 import { numbersOf, printable } from './text'
 
@@ -137,9 +145,6 @@ const LIST_SCREEN: Screen = { kind: 'list' }
 
 /** How a surface draws the pane: its body's width, whether it draws a field and holds the keys, and whether it seats the pane inline. */
 type Seat = Pick<PaneView, 'canType' | 'isFocused'> & { columns: number; isInline: boolean }
-
-/** What goes under the selected item: an open field, across the pane's body, and the buttons, in the item's indent. */
-type Controls = readonly [field: RenderElement | null, buttons: RenderElement | null]
 
 /** An 80-column terminal's main screen: the pane's seat until a surface draws it. */
 const FIRST_SEAT: Seat = { columns: 76, canType: true, isFocused: false, isInline: true }
@@ -326,7 +331,7 @@ const TOOLS: readonly ToolSpec[] = [
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, [] as readonly Task[])
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, 1)
 const screen = atom({ plugin: 'open-items', key: 'screen' } as const, LIST_SCREEN)
-const editing = atom({ plugin: 'open-items', key: 'editing' } as const, null as Editing | null)
+const held = atom({ plugin: 'open-items', key: 'held' } as const, null as Held | null)
 const restoredFor = atom({ plugin: 'open-items', key: 'restoredFor' } as const, null as string | null)
 const folder = atom({ plugin: 'open-items', key: 'folder' } as const, null as string | null)
 /** The remote clients attached, by surface, as the state's contract declares them. */
@@ -358,15 +363,15 @@ const live = {
   wasStopped: false,
   /** The items whose answers joined the running main turn as a row no model request has read yet. */
   unreadAppend: [] as readonly number[],
-  /** What the user has typed in each field so far, by `fieldKeyOf`. */
+  /** What the user has typed in each reply field so far, by `replyKeyOf`. */
   drafts: new Map<string, string>(),
   /**
-   * What was typed in each answer field as its task closed, by `fieldKeyOf`:
-   * a button pressed on a drawing from before the task closed answers with it.
+   * What was typed in each reply field as its item closed, by `replyKeyOf`:
+   * a button pressed on a drawing from before the item closed answers with it.
    */
   closed: new Map<string, string>(),
   /**
-   * What each surface draws each field with, by `fieldKeyOf`: the draft as
+   * What each surface draws each field with, by `replyKeyOf`: the draft as
    * the surface first drew it. It stays put while the field is typed in, as a
    * value drawn anew puts the field's text back to it, keys typed meanwhile
    * lost. A surface that forgets what its fields hold (the pane closed, or a
@@ -830,7 +835,7 @@ export const register: Register = on => {
     if (bridged !== null && task !== undefined) {
       if (looksSecret(bridged.answer)) {
         return {
-          drop: `This looks like a secret, so it wasn't sent. Put it where it belongs, then mark #${task.id} Done.`,
+          drop: `This looks like a secret, so it wasn't sent. Put it where it belongs, then ${insteadOf(task, true)}.`,
         }
       }
 
@@ -967,7 +972,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The ring on the open field lets the terminal wrap what is typed there:
+  // The ring on the reply field lets the terminal wrap what is typed there:
   // the pane asks for the rows that takes, and for one row once it leaves.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     const moved = await next(e)
@@ -994,7 +999,7 @@ export const register: Register = on => {
 
     // Set before the move lands, as an arrow that comes first (a held key)
     // moves on from here; put back if the engine refuses the move and no
-    // later one came. A call that fails leaves it, as `startEditing` does.
+    // later one came. A call that fails leaves it, as `toList` does.
     const was = live.ring
     live.ring = to
 
@@ -1018,7 +1023,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const emptied = live.emptied.get(e.surface)
     const elements = $.ui.resolve(e)
-    const { Box, Text, Button } = elements
+    const { Box, Text, Button, Link } = elements
     // The mobile app draws no field yet: answers and reasons wait for a surface
     // that does. The engine fills an element a surface lacks with one that draws
     // nothing, so the surface says, not the table.
@@ -1045,7 +1050,7 @@ export const register: Register = on => {
       live.seats.set(e.surface, isShared ? seatsWith(kept, seat) : [seat])
     }
 
-    const { shown, editing: field } = view
+    const { shown } = view
 
     // The pane is closing: it asks for no rows, which would open it again.
     if (shown.length === 0) {
@@ -1060,121 +1065,6 @@ export const register: Register = on => {
       }
     }
 
-    // The glyph keeps its cells beside a title that wraps.
-    const glyph = (
-      <Box flexShrink={0}>
-        <Text color="yellow">{'☐ '}</Text>
-      </Box>
-    )
-
-    // The title and its age are one text, so a long title wraps under itself
-    // and the age follows it, never squeezed into a column of its own.
-    const titleText = (task: Task) => (
-      <Text wrap="wrap">
-        <Text bold>{titleOf(task)}</Text>
-        <Text dimColor>{ageOf(task, view)}</Text>
-      </Text>
-    )
-
-    const actionsOf = (task: Task) => (
-      <Box key="actions" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-        {actionsFor(task, view.canType).map(action => (
-          <Button
-            key={action.key}
-            plain
-            hotkey={action.hotkey}
-            label={action.label}
-            onPress={() => {
-              if (action.option !== undefined) {
-                return respond($, task.id, choseOf(action.option))
-              }
-
-              if (action.key === 'seen') {
-                return markSeen($, task.id)
-              }
-
-              if (action.key === 'answer') {
-                return startEditing($, task.id)
-              }
-
-              return respond($, task.id, action.key === 'later' ? LATER : DONE)
-            }}
-          />
-        ))}
-      </Box>
-    )
-
-    const answerField = (task: Task, held: string | undefined): Controls => {
-      if (Input === undefined) {
-        return [null, null]
-      }
-
-      if (held !== undefined) {
-        return [
-          null,
-          <Box key="held" flexDirection="column">
-            <Text color="yellow" wrap="wrap">
-              {HELD}
-            </Text>
-            <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-              <Button key="edit" plain label="Edit" onPress={() => startEditing($, task.id)} />
-              <Button key="send-anyway" plain label="Send anyway" onPress={() => answer($, task.id, held, true)} />
-            </Box>
-          </Box>,
-        ]
-      }
-
-      const key = fieldKeyOf({ id: task.id, field: 'answer' })
-      const [long, cancel] = ANSWER_BUTTONS
-
-      return [
-        <Input
-          key={key}
-          label={ANSWER_LABEL}
-          placeholder={placeholderOf(ANSWER_PLACEHOLDER, ANSWER_LABEL, SUBMIT_LABEL, columns)}
-          value={fieldValueOf(e.surface, key)}
-          submitLabel={SUBMIT_LABEL}
-          autoFocus
-          onInput={value => typed($, key, value)}
-          onSubmit={value => answer($, task.id, value)}
-        />,
-        <Box key="buttons" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-          <Button key="long" plain label={long} onPress={() => longAnswer($, task.id)} />
-          <Button key="cancel" plain label={cancel} onPress={() => stopEditing($)} />
-        </Box>,
-      ]
-    }
-
-    const itemRows = (task: Task) => {
-      // A field open on a surface that draws one: elsewhere the item keeps its buttons.
-      const isEditing = view.canType && field !== null && field.id === task.id
-      const [input, buttons]: Controls = isEditing ? answerField(task, field.held) : [null, actionsOf(task)]
-      const doneWhen = doneWhenOf(task)
-
-      // The terminal sizes a field by the pane's body, whatever box holds it:
-      // it goes out of the item's indent, across the body's whole width.
-      return (
-        <Box key={`task-${task.id}`} flexDirection="column" flexShrink={0}>
-          <Box flexDirection="row">
-            {glyph}
-            {titleText(task)}
-          </Box>
-          <Box flexDirection="column" paddingLeft={2}>
-            <Text wrap="wrap">{detailOf(task)}</Text>
-            {doneWhen === undefined ? null : (
-              <Text dimColor wrap="wrap">
-                {doneWhen}
-              </Text>
-            )}
-          </Box>
-          {input}
-          <Box flexDirection="column" paddingLeft={2}>
-            {buttons}
-          </Box>
-        </Box>
-      )
-    }
-
     const hint = (
       <Text dimColor wrap="wrap">
         {hintOf(view)}
@@ -1185,17 +1075,121 @@ export const register: Register = on => {
         <Button key="hide" plain dimColor role="dismiss" label={HIDE} onPress={() => closePane($)} />
       </Box>
     )
-    const open = screenOf(view)
-    const task = open === 'list' ? undefined : shown.find(one => one.id === open.id)
+    const task = openTaskOf(view)
 
     if (task !== undefined) {
+      const key = replyKeyOf(task.id)
+      const link = linkOf(task)
+      const doneWhen = doneWhenOf(task)
+      const heldText = heldOf(task, view)
+      const thread = entriesOf(task, view.nowMs)
+      const [detail, ...newest] = thread.entries
+      const actions = actionsOf(task)
+      const isField = Input !== undefined && hasReplyField(task, view)
+      const drawn = focusOrderOf(shown)
+
+      // A Text keeps no key: each entry's Box holds it.
+      const entry = ({ i, head, text }: Entry) => [
+        ...(head === undefined
+          ? []
+          : [
+              <Box key={`head-${i}`} flexDirection="column">
+                <Text dimColor wrap="wrap">
+                  {head}
+                </Text>
+              </Box>,
+            ]),
+        <Box key={`msg-${i}`} flexDirection="column">
+          <Text dimColor={head === undefined} wrap="wrap">
+            {text}
+          </Text>
+        </Box>,
+      ]
+
+      // The terminal sizes a field by the pane's body, whatever box holds it:
+      // it goes out of the item's indent, across the body's whole width.
       return (
         <Box flexDirection="column">
-          {itemRows(task)}
-          <Box key="foot" flexDirection="row" marginTop={1} columnGap={BUTTON_GAP} flexShrink={0}>
+          <Box key={`item-${task.id}`} flexDirection="column" flexShrink={0}>
+            <Box flexDirection="row">
+              {/* The glyph keeps its cells beside a title that wraps. */}
+              <Box flexShrink={0}>
+                <Text color="yellow">{'☐ '}</Text>
+              </Box>
+              {/* One text, so a long title wraps under itself and the age follows it. */}
+              <Text wrap="wrap">
+                <Text bold>{titleOf(task)}</Text>
+                <Text dimColor>{ageOf(task, view)}</Text>
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingLeft={2}>
+              <Box key="thread" flexDirection="column">
+                {detail === undefined ? null : entry(detail)}
+                {thread.hidden === 0 ? null : (
+                  <Box key="earlier" flexDirection="column">
+                    <Text dimColor wrap="wrap">
+                      {hiddenOf(thread.hidden)}
+                    </Text>
+                  </Box>
+                )}
+                {newest.flatMap(entry)}
+              </Box>
+              {link === undefined ? null : (
+                <Box key="link" flexDirection="row">
+                  <Box flexShrink={0}>
+                    <Text dimColor>{LINK_LABEL}</Text>
+                  </Box>
+                  <Link href={link} />
+                </Box>
+              )}
+              {doneWhen === undefined ? null : (
+                <Text dimColor wrap="wrap">
+                  {doneWhen}
+                </Text>
+              )}
+              {actions.length === 0 && !isField ? null : (
+                <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+                  {actions.map(action => (
+                    <Button
+                      key={action.key}
+                      plain
+                      hotkey={action.hotkey}
+                      label={action.label}
+                      onPress={() => pressOn($, task.id, action.move, drawn)}
+                    />
+                  ))}
+                  {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
+                </Box>
+              )}
+              {heldText === undefined ? null : (
+                <Box key="held" flexDirection="column">
+                  <Text color="yellow" wrap="wrap">
+                    {heldNoticeOf(task)}
+                  </Text>
+                  <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+                    <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
+                    <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
+                  </Box>
+                </Box>
+              )}
+            </Box>
+            {!isField ? null : (
+              <Input
+                key={key}
+                label={REPLY_LABEL}
+                placeholder={placeholderOf(REPLY_PLACEHOLDER, REPLY_LABEL, SUBMIT_LABEL, columns)}
+                value={fieldValueOf(e.surface, key)}
+                submitLabel={SUBMIT_LABEL}
+                onInput={value => typed($, key, value)}
+                onSubmit={value => answer($, task.id, value)}
+              />
+            )}
+          </Box>
+          {/* Tab from the reply field goes to Back, the field's next Button. */}
+          <Box key="foot" flexDirection="row" columnGap={BUTTON_GAP} flexShrink={0}>
             {hint}
             <Box flexShrink={0}>
-              <Button key={BACK.key} plain hotkey={BACK.hotkey} label={BACK.label} onPress={() => toList($)} />
+              <Button key={BACK.key} plain hotkey={BACK.hotkey} label={BACK.label} onPress={() => toList($, task.id, drawn)} />
             </Box>
             {hide}
           </Box>
@@ -1314,7 +1308,7 @@ async function switchTo($: EngineInterface, sessionId: string) {
   await update($, tasks, () => [])
   await update($, nextId, () => 1)
   await update($, screen, () => LIST_SCREEN)
-  await update($, editing, () => null)
+  await update($, held, () => null)
   await refresh($)
 }
 
@@ -1618,17 +1612,16 @@ function closePane($: EngineInterface): Promise<void> {
  */
 async function show($: EngineInterface, isAsked: boolean): Promise<boolean> {
   // A closed pane's fields are drawn with their drafts as it opens again:
-  // the surfaces forget what they held as it closes. Its ring starts on the
-  // open field, which takes it by autoFocus as the pane takes the keys.
-  // Asked only when there is a draft to draw or a field open to take the
-  // ring; when the engine can't say, they are drawn so anyway, and a field
-  // still drawn gets back the text typed in it.
-  if (live.drafts.size > 0 || (await read($, editing)) !== null) {
+  // the surfaces forget what they held as it closes, and its ring starts on
+  // nothing. Asked only when there is a draft to draw or a field on screen;
+  // when the engine can't say, they are drawn so anyway, and a field still
+  // drawn gets back the text typed in it.
+  if (live.drafts.size > 0 || (await read($, screen)).kind === 'item') {
     const panes = await $.ui.panes().catch(() => undefined)
 
     if (panes === undefined || !panes.some(pane => pane.id === PANE)) {
       live.drawn.clear()
-      live.ring = openKeyOf(await read($, editing))
+      live.ring = undefined
     }
   }
 
@@ -1649,34 +1642,28 @@ async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promi
 
 /** What the pane draws from: the session's state, and what only the surface knows. */
 async function paneView($: EngineInterface, surface: Pick<PaneView, 'canType' | 'isFocused'>): Promise<PaneView> {
-  const field = await read($, editing)
-  const key = openKeyOf(field)
   const state = {
     shown: (await read($, tasks)).filter(isShown),
-    editing: field,
-    draft: key === undefined ? '' : (live.drafts.get(key) ?? ''),
+    held: await read($, held),
     screen: await read($, screen),
     nowMs: await $.clock.now(),
   }
+  const task = openTaskOf(state)
 
-  return seated(state, surface)
+  return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? '') }, surface)
 }
 
 /** The pane's `view` as a surface that `canType`, and holds the keys or not, draws it. */
 function seated(view: Omit<PaneView, 'canType' | 'isFocused' | 'isTyping'>, surface: Pick<PaneView, 'canType' | 'isFocused'>): PaneView {
-  const key = openKeyOf(view.editing)
+  const task = openTaskOf(view)
+  const isField = task !== undefined && hasReplyField(task, { ...view, canType: surface.canType })
 
   return {
     ...view,
     canType: surface.canType,
     isFocused: surface.isFocused,
-    isTyping: surface.canType && surface.isFocused && key !== undefined && live.ring === key,
+    isTyping: surface.isFocused && isField && live.ring === replyKeyOf(task.id),
   }
-}
-
-/** The key of the field open to type in, unless an answer held there for looking like a secret takes its place. */
-function openKeyOf(field: Editing | null): string | undefined {
-  return field === null || field.held !== undefined ? undefined : fieldKeyOf(field)
 }
 
 /** Re-sizes the pane to `wanted` rows, or else to what it holds now, when it is on screen. */
@@ -1870,12 +1857,12 @@ async function undelivered($: EngineInterface, lost: readonly Task[]) {
 }
 
 /**
- * After a move on task `id` or its end: drops its field, keeping what was
- * typed for its answer for a press from a drawing from before, and leaves
- * its screen once it is closed.
+ * After a move on item `id` or its end: drops what was typed in its field,
+ * kept for a press from a drawing from before, and the reply held there,
+ * and leaves its screen once it is closed.
  */
 async function settle($: EngineInterface, id: number) {
-  const key = fieldKeyOf({ id, field: 'answer' })
+  const key = replyKeyOf(id)
   const draft = live.drafts.get(key)
 
   if (draft !== undefined) {
@@ -1885,7 +1872,7 @@ async function settle($: EngineInterface, id: number) {
   forget(key)
   live.drafts.delete(key)
 
-  await update($, editing, field => (field?.id === id ? null : field))
+  await update($, held, now => (now?.id === id ? null : now))
 
   if (!(await isOpenNow($, id))) {
     await update($, screen, now => (now.kind === 'item' && now.id === id ? LIST_SCREEN : now))
@@ -1893,21 +1880,55 @@ async function settle($: EngineInterface, id: number) {
 }
 
 async function openItem($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it leaves the pane as it is.
+  // Pressed on a drawing from before its item closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
   }
 
+  forget(replyKeyOf(id))
   await update($, screen, (): Screen => ({ kind: 'item', id }))
-  await update($, editing, field => (field?.id === id ? field : null))
+  await update($, held, now => (now?.id === id ? now : null))
+  await markRead($, id)
   await fit($)
+
+  // The engine keeps the ring at the row's place, on whatever the item
+  // screen draws there: an option a second Enter would choose, or the field.
+  live.ring = BACK.key
+  void $.ui.focus({ requestId: PANE, key: BACK.key }).catch(() => undefined)
 }
 
-/** Back to the list; a draft stays with its item. */
-async function toList($: EngineInterface) {
+/** The user has seen Claude's last reply on item `id`, which its screen shows. */
+async function markRead($: EngineInterface, id: number) {
+  await edit($, id, task => (task.hasNewReply ? { ...task, hasNewReply: false } : task))
+}
+
+/**
+ * Back to the list from item `id`'s screen, the ring on the row `rowBackTo`
+ * finds from the list as the screen drew it (`drawn`), so the next ↓ goes on
+ * from there; a draft stays with its item.
+ */
+async function toList($: EngineInterface, id: number, drawn: readonly string[] = []) {
   await update($, screen, () => LIST_SCREEN)
-  await update($, editing, () => null)
+  await update($, held, () => null)
+  await markRead($, id)
+  const row = rowBackTo(id, drawn, focusOrderOf((await read($, tasks)).filter(isShown)))
+  live.ring = row
   await fit($)
+
+  if (row !== undefined) {
+    void $.ui.focus({ requestId: PANE, key: row }).catch(() => undefined)
+  }
+}
+
+/** A press of one of item `id`'s buttons, then the list, unless the press chose an option Claude has changed since. */
+async function pressOn($: EngineInterface, id: number, move: Move, drawn: readonly string[]) {
+  if (move === SEEN) {
+    await markSeen($, id)
+  } else if (!(await respond($, id, move))) {
+    return
+  }
+
+  await toList($, id, drawn)
 }
 
 /**
@@ -1920,7 +1941,12 @@ async function resolve($: EngineInterface, id: number, move: Move) {
   live.writing.set(id, (live.writing.get(id) ?? 0) + 1)
 
   try {
-    const was = await edit($, id, (task, nowMs) => movedBy(task, move, nowMs))
+    const was = await edit($, id, (task, nowMs) => (isStale(task, move) ? task : movedBy(task, move, nowMs)))
+
+    if (was !== undefined && isActive(was) && isStale(was, move)) {
+      return was
+    }
+
     const isNew = was !== undefined && isActive(was) && !isRepeatOf(was, move)
     await settle($, id)
 
@@ -1947,15 +1973,24 @@ async function resolve($: EngineInterface, id: number, move: Move) {
  * surface, say), since the pane drew it says so, and what the user typed for
  * it (`typedText`) goes to the prompt box, unless it looks like a secret; one
  * the user's last move already matches (a second press) stays as it is.
+ * Resolves false for an option Claude has changed since: nothing is saved.
  */
-async function respond($: EngineInterface, id: number, move: Move, typedText = '') {
+async function respond($: EngineInterface, id: number, move: Move, typedText = ''): Promise<boolean> {
   const was = await resolve($, id, move)
+
+  if (was !== undefined && isActive(was) && isStale(was, move)) {
+    $.ui.toast(`Item #${id} changed since the pane showed it, so your choice wasn't saved. Look at its options again.`, { timeoutMs: 8000 })
+
+    return false
+  }
 
   if (was === undefined || (!isActive(was) && !isRepeatOf(was, move))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
 
     $.ui.toast(`Item #${id} isn't open any more, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
   }
+
+  return true
 }
 
 /**
@@ -1979,7 +2014,7 @@ async function toPromptBox($: EngineInterface, text: string): Promise<boolean> {
  * drawing from before the task closed, with what was typed before it did.
  */
 async function answerTyped($: EngineInterface, id: number) {
-  const key = fieldKeyOf({ id, field: 'answer' })
+  const key = replyKeyOf(id)
 
   return answer($, id, live.drafts.get(key) ?? live.closed.get(key) ?? '')
 }
@@ -2003,7 +2038,7 @@ async function answer($: EngineInterface, id: number, text: string, isSecretOk =
   const isOpen = await isOpenNow($, id)
 
   if (isOpen && value === '') {
-    $.ui.toast('Type an answer first, or press Cancel.')
+    $.ui.toast('Type a reply first.')
     return
   }
 
@@ -2015,27 +2050,25 @@ async function answer($: EngineInterface, id: number, text: string, isSecretOk =
   }
 
   if (isOpen && !isSecretOk && looksSecret(value)) {
-    await update($, editing, (): Editing => ({ id, field: 'answer', held: value }))
+    await update($, held, (): Held => ({ id, text: value }))
     return
   }
 
   await respond($, id, replyOf(value), value)
 }
 
-async function startEditing($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it leaves the pane as it is.
+/** Puts the reply held for looking like a secret back in item `id`'s field, its draft in it, to change it. */
+async function editHeld($: EngineInterface, id: number) {
+  // Pressed on a drawing from before its item closed, it leaves the pane as it is.
   if (!(await isOpenNow($, id))) {
     return
   }
 
-  const key = fieldKeyOf({ id, field: 'answer' })
+  const key = replyKeyOf(id)
 
   forget(key)
-  // The field takes the ring as it opens: by the move below, or by its
-  // autoFocus, whose `ui.focus` reaches none of this plugin's hooks.
   live.ring = key
-  await update($, screen, (): Screen => ({ kind: 'item', id }))
-  await update($, editing, (): Editing => ({ id, field: 'answer' }))
+  await update($, held, () => null)
   await fit($)
 
   // A field the pane can't focus (it doesn't hold the keyboard) is still a click away.
@@ -2049,20 +2082,19 @@ function forget(key: string) {
   }
 }
 
-async function stopEditing($: EngineInterface) {
-  await update($, editing, () => null)
-  await fit($)
-}
-
-/** Moves a long answer into the prompt box, where the real editor takes pastes and lines. */
+/**
+ * Moves a long answer into the prompt box, where the real editor takes
+ * pastes and lines, and goes back to the list: a field drawn with the same
+ * value keeps its text, so it would go on showing what moved.
+ */
 async function longAnswer($: EngineInterface, id: number) {
-  // Pressed on a drawing from before its task closed, it answers with what
+  // Pressed on a drawing from before its item closed, it answers with what
   // was typed, which `respond` puts in the prompt box.
   if (!(await isOpenNow($, id))) {
     return answerTyped($, id)
   }
 
-  const key = fieldKeyOf({ id, field: 'answer' })
+  const key = replyKeyOf(id)
   const box = await $.prompt.read()
   const draft = live.drafts.get(key) ?? ''
   const text = bridgeOf(id) + [draft, box.text].filter(part => part.trim() !== '').join('\n')
@@ -2074,7 +2106,7 @@ async function longAnswer($: EngineInterface, id: number) {
   }
 
   live.drafts.delete(key)
-  await update($, editing, () => null)
+  await toList($, id)
   $.ui.toast('Write your answer in the prompt box (Esc gets you there), then press Enter.', {
     timeoutMs: 8000,
   })

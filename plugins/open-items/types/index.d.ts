@@ -66,15 +66,8 @@ export type Saved = {
   taken: readonly { code: string; fromKey: string; ids: readonly { was: number; now: number }[] }[]
 }
 
-/**
- * The open item's answer field, when the pane shows it in place of its
- * buttons. `held` is an answer held back because it looks like a secret.
- */
-export type Editing = {
-  id: number
-  field: 'answer'
-  held?: string
-}
+/** A reply to item `id` the pane holds back in place of its field, as it looks like a secret. */
+export type Held = { id: number; text: string }
 
 /** What the Open items pane shows: the list of items, or one item. */
 export type Screen = { kind: 'list' } | { kind: 'item'; id: number }
@@ -85,7 +78,7 @@ declare module 'claude-code' {
       tasks: readonly Task[]
       nextId: number
       screen: Screen
-      editing: Editing | null
+      held: Held | null
       /** The session whose saved key the state was read from: a reload of the code finds it read. */
       restoredFor: string | null
       /** The folder the session started in, or its saved key names: a reload of the code, or a later cd, keeps it. */
