@@ -3241,6 +3241,7 @@ describe('the mod\'s own tools', () => {
     await start($)
 
     expect(descriptionOf(world, 'add_item')).toContain('live chat')
+    expect(descriptionOf(world, 'add_item')).toContain('no background work runs')
     expect(descriptionOf(world, 'add_item')).toContain('Before the session ends')
     expect(descriptionOf(world, 'add_item')).toContain('load handoff_items and take_items with ToolSearch')
   })

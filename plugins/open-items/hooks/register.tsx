@@ -181,7 +181,7 @@ const TOOLS: readonly ToolSpec[] = [
       '',
       'When to add an item:',
       '- Add an item for every ask while background agents, shell commands or monitors run, or after the user went quiet. While background work runs, write no chat text about the item until the batch ends.',
-      '- In a live chat (a back-and-forth with the user), ask in the chat only. add_item refuses there.',
+      '- In a live chat (the user replies to you in the chat, and no background work runs), ask in the chat only. add_item refuses there.',
       "- Add only what is the user's: a decision that is theirs, a question only they can answer, an action only they can do, or a finding they must see. Ask no unnecessary questions.",
       '- One item per ask. Never add the same ask again: change the item in place with reply_item. list_items shows what is open.',
       '- When only the user\'s consent is missing, add a decision ("Run it" / "Don\'t"), not an action.',
@@ -231,7 +231,7 @@ const TOOLS: readonly ToolSpec[] = [
       '- When the user replies on an item, answer in the item with reply_item, not in the chat.',
       '- To change the ask, change the item in place: a new title, options, recommended option, done_when or link. Say in text why you changed it.',
       '- When the user pressed Later, go on without the item. It stays in the pane, and you can still reply on it.',
-      '- Write as add_item says: plain English, no internal IDs. Put long tables and diffs on the artifact page, with its URL in link.',
+      '- Write the text as "How to write an item" in add_item says.',
     ].join('\n'),
     inputSchema: {
       type: 'object',

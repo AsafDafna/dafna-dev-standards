@@ -3,8 +3,8 @@
 ## open-items 0.2.1 — shorter tool descriptions, no system-prompt copy
 
 - Shorter descriptions for `add_item`, `reply_item`, `close_item` and
-  `list_items`: each rule is written once, where Claude acts on it. About 630
-  fewer tokens per session, with the system-prompt copy below.
+  `list_items`: each rule is written once, where Claude acts on it. About 640
+  fewer tokens per session, counting the removed system-prompt copy.
 - The mod adds no section to the system prompt. The tool descriptions carry
   the rules on every seat.
 - The rules are unchanged.
