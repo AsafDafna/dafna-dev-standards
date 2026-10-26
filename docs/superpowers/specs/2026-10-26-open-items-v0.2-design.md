@@ -130,7 +130,7 @@ The names are a proposal; the behavior is the design.
 
 - Subagents: every tool except `list_items` refuses a call from a subagent (v0.1 lets a subagent list).
 - Deferred: `add_item`, `reply_item`, `close_item` and `list_items` are not deferred, because the steering lives in their descriptions. `handoff_items` and `take_items` are deferred; the coo hand-off steps load them.
-- Budget: a tool description holds at most 4,096 characters. `add_item` carries the rules for adding; `reply_item` and `close_item` carry the rules for threads and closing; `handoff_items` carries the session-end rule.
+- Budget: a tool description holds at most 4,096 characters. `add_item` carries the rules for adding and the session-end rule (it is not deferred, so the rule is always in view); `reply_item` and `close_item` carry the rules for threads and closing; `handoff_items` says how to pass the code.
 - When Asaf presses Take on leftovers, the mod sends Claude one message with the same content `take_items` returns.
 
 ### What Asaf sees

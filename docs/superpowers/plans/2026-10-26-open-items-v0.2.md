@@ -103,7 +103,7 @@ export type Saved = {
 ```
 
 - Produces (functions in `tasks.ts`): `parseAsk(args): Ask | { error: string }` (reads `detail`, `link`; keeps line breaks; title through `oneLine`), `parseReply(args): { id: number; text?: string; change?: Partial<Pick<Task,'title'|'options'|'recommended'|'link'|'doneWhen'>> } | { error: string }`, `isOpenAsk(task): boolean` (state `open` or `later`, kind not `info`), `isShown(task): boolean` (state `open`, `later` or `handing-off`, or `update === 'pending'`), `MAX_DETAIL = 4000`.
-- Produces (functions in `saved.ts`): `savedIn(raw): Saved | undefined` (converts a v0.1 value, which has no `version`: its `open` tasks become `open` items with `thread = [{ from: 'claude', text: why, atMs: createdMs }]`; all others dropped), `trimmed(saved, nowMs): Saved` (drops resolved/withdrawn/moved items older than 7 days, and strips their thread to `[]`).
+- Produces (functions in `saved.ts`): `savedIn(raw): Saved | undefined` (converts a v0.1 value, which has no `version`: its `open` tasks become `open` items with `thread = [{ from: 'claude', text: why, atMs: createdMs }]`; all others dropped), `trimmed(saved, nowMs): Saved` (strips the thread of every resolved, withdrawn or moved item to `[]`, keeping number, title and state; drops such an item 7 days after its `updatedMs`).
 
 - [ ] **Step 1: Write the failing tests** in `tests/items.test.tsx`:
   - `parseAsk keeps line breaks in detail`: `parseAsk({ title: 'Create 3 dev tokens', detail: '1. Open settings\n2. Click New', kind: 'action' })` → `thread`-ready detail equals `'1. Open settings\n2. Click New'`.
@@ -112,7 +112,7 @@ export type Saved = {
   - `parseReply needs text or a change` → `{ error }` when both are missing.
   - `isOpenAsk counts later items, not info`.
   - `savedIn converts a v0.1 key`: the v0.1 `ROTATE` fixture (copy it from `register.test.tsx`) inside `{ tasks: [ROTATE], nextId: 8, savedMs: 0 }` → one open item #7 whose `thread[0].text` is `'It was in a public gist.'`; a v0.1 `done` task in the same value is dropped.
-  - `trimmed drops a resolved item after 7 days and keeps an open one of any age`.
+  - `trimmed strips a resolved item's thread at once, drops it after 7 days, and keeps an open one of any age`.
   - `a 40-message thread of 4000-character messages saves under 1 MiB` (Review Focus 3): `JSON.stringify(saved).length < 1_048_576`.
 - [ ] **Step 2: Run them to see them fail.** Run: `claude plugin test <wt>/plugins/open-items`. Expected: the new tests fail (missing exports/types).
 - [ ] **Step 3: Implement the types and functions above.** Remove `MAX_OPEN`, `MAX_INFO`, `MAX_WHY` and the `why.slice` cut. `newsOf`/`messageOf`/`listOf`/`addedOf`/`contextOf` are rewritten in Tasks 3 and 4; leave them compiling (adapt field names only).
@@ -137,7 +137,7 @@ export type Saved = {
   - `a seventh open item is added: there is no cap` (six `add_item` calls, all `result` containing `Added item #`).
   - `reply_item adds Claude's message and keeps the item open`: after `add_item` and `reply_item { id: 1, text: 'Each PR runs only unit tests.' }`, `list_items { id: 1 }` result contains both the detail and that text, and state `open`; the item's `hasNewReply` is true.
   - `reply_item changes the options in place and logs it in the thread` (thread gets an event `changed`).
-  - `close_item resolved needs a reply from the user first`: deny containing `no answer from the user yet` when the item is not `isWaitingForClaude`; allowed when it is (seed the saved key with such an item through `seat(on, store)`).
+  - `close_item resolved needs a reply from the user first`: deny containing `no answer from the user yet` when the item is not `isWaitingForClaude`; allowed when it is (seed the saved key with such an item through `seat(on, store)`). This deny is the plan's own call, not in the spec: it stops Claude from resolving an item Asaf never answered; "answered in chat" uses `withdrawn`.
   - `close_item withdrawn with note "answered in chat"` → state `withdrawn`, toast names the item.
   - `the same ask twice is still one item` (v0.1 `sameAsk` kept).
   - `every tool but list_items refuses a subagent` (calls with `agentId: 'a1'` → deny).
@@ -146,7 +146,7 @@ export type Saved = {
   - `the live-chat gate refuses on a back-and-forth` and the four other spec cases (one test each), using `typed(text)` for composer prompts, a bridge answer `↳ Answer to #1: …`, a pane press, and a running background task per Task 1's signal.
   - Update the hooks-list test: every `tool.call` hook matches one of the mod's six tools.
 - [ ] **Step 2: Run them to see them fail.** Run: `claude plugin test <wt>/plugins/open-items`. Expected: FAIL on unknown tools and the cap.
-- [ ] **Step 3: Implement.** Steering text goes into the descriptions, split as the spec's Steering section says (`add_item`: when and what to add, plain titles, no `#` for other numbers, consent is a decision, live chat; `reply_item`/`close_item`: answer in the item, close when resolved, "answered in chat"; `handoff_items`: the session-end rule). The `prompt.compose` section repeats a short form. Reply alert: `reply_item` calls `$.ui.notify` under the same rule as v0.1's add alert (quiet 2 min, one per main turn).
+- [ ] **Step 3: Implement.** Steering text goes into the descriptions, split as the spec's Steering section says (`add_item`: when and what to add, plain titles, no `#` for other numbers, consent is a decision, live chat; `reply_item`/`close_item`: answer in the item, close when resolved, "answered in chat"; plus the session-end rule, because `add_item` is not deferred; `handoff_items`: how to pass the code). The `prompt.compose` section repeats a short form. Reply alert: `reply_item` calls `$.ui.notify` under the same rule as v0.1's add alert (quiet 2 min, one per main turn).
 - [ ] **Step 4: Run all tests.** Expected: PASS.
 - [ ] **Step 5: Commit.** `git -C <wt> commit -am "feat(open-items): reply_item, close_item, no cap, live-chat gate, steering in tool descriptions"`
 
@@ -171,7 +171,7 @@ export type Saved = {
   - `when the mod cannot tell whether Claude works, an answer goes as a prompt` (no band render, no turn seen → `prompt.submit`).
   - `a subagent's turn.start does not clear an unread append` (regression for the v0.1 `isUnread` bug).
   - `presses within 800 ms go as one message` (v0.1 batch kept).
-  - `each prompt carries the open-items reminder while items are open` (`prompt.submit` of origin `composer` gets a context block equal to `reminderOf(...)`; none when nothing is open). `prompt.context` no longer adds the v0.1 summary block.
+  - `each prompt carries the open-items reminder while items are open` (every `prompt.submit` not of the mod's own origin, a subagent hand-back included, gets a context block equal to `reminderOf(...)`; none when nothing is open). `prompt.context` no longer adds the v0.1 summary block.
   - `a secret pasted as a reply is held and not sent` (Review Focus 5; reply text `KEY_SHAPED` → nothing appended or submitted; pane shows v0.1's `HELD` text).
   - Only if Task 1 `CONSENT` failed: `an option pressed mid-turn goes as a prompt when the main turn ends`.
 - [ ] **Step 2: Run them to see them fail.** Expected: FAIL on the hold and the append path.
@@ -224,7 +224,7 @@ export type Saved = {
 **Interfaces:**
 - Consumes: Tasks 2–5; element key `offer` with Buttons `take` and `dismiss`.
 - Produces: `handoff_items {}` → result `Marked N items for the next session. Hand-off code: <code>. Put the code in the successor's prompt; it calls take_items with it.` (`code`: 6 characters from `[a-z0-9]`). `take_items { code }` → result listing, per item, number, kind, title, thread and unread answers (same text the Take button sends to Claude).
-- Rules (from the spec): `lastActiveMs` written on every main turn and every press; `endedMs` at `session.end` (not on `clear`, which leaves the conversation's items to be offered); leftovers = keys in the same `folder`, not this session, whose owner has `endedMs`, or `lastActiveMs` older than 12 h, or whose `handoff` is older than 30 min. The successor's counter starts at `max(own nextId, highest taken id + 1)`. A failed `$.store.set` shows `open-items: could not save` in the pane head and the status line until a write succeeds.
+- Rules (from the spec): `lastActiveMs` written on every main turn and every press; `endedMs` at `session.end` for every reason, `clear` included, so the pre-`/clear` conversation's items are offered at once (`--resume` still restores them while nobody took them); leftovers = keys in the same `folder`, not this session, whose owner has `endedMs`, or `lastActiveMs` older than 12 h, or whose `handoff` is older than 30 min. The successor's counter starts at `max(own nextId, highest taken id + 1)`. A failed `$.store.set` shows `open-items: could not save` in the pane head and the status line until a write succeeds.
 
 - [ ] **Step 1: Write the failing tests:**
   - `handoff_items marks open and Later items, returns a code, and the old pane shows "Moving to a new session" with no buttons`.
@@ -233,7 +233,7 @@ export type Saved = {
   - `take_items with a wrong code takes nothing`.
   - `a worker session that starts in the same folder is not offered the live COO's items` (owner active 5 min ago, not ended).
   - `items of an ended session are offered with Take and Dismiss; Take moves them and tells Claude; Dismiss drops them`.
-  - `after /clear the earlier conversation's items are offered, never moved on their own`.
+  - `after /clear the earlier conversation's items are offered at once, never moved on their own`.
   - `an unclaimed hand-off becomes leftovers after 30 minutes` (Review Focus 4; advance the test clock).
   - `two sessions writing at once keep both keys whole` (Review Focus 1; interleave a successor's `take` and the old session's `writeSaved` through the `seat` store with a held `store.set`).
   - `a failed store write shows "open-items: could not save"` (the `seat` helper's `refused('set')`).
