@@ -1396,6 +1396,25 @@ describe('the list screen', () => {
     expect(arrowTargetOf(order, 'answer-1', -1)).toBe('row-2')
   })
 
+  test('arrows in a long list that come before the ring has moved each move on from the last target', async ($, on) => {
+    seat(on, earlierItems(LONG_LIST))
+    await start($)
+
+    await runTasks($)
+    await $.ui.mount(inline(60))
+
+    // A held ↓: the second arrow finds the ring on Hide, the last stop, and the body scrolls.
+    await $.ui.focus(ringTo('row-30'))
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
+    expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
+
+    // A fast ↓↑ comes back to row-1, past which an ↑ scrolls the body.
+    await $.ui.focus(ringTo('row-1'))
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
+    expect((await $.ui.scroll(arrow(-1))).deny).toBeDefined()
+    expect((await $.ui.scroll(arrow(-1))).deny).toBeUndefined()
+  })
+
   test('an arrow in a long list does not scroll the body; a wheel tick, an arrow past the first or last row and a short list scroll as before', async ($, on) => {
     const { world } = seat(on, earlierItems(LONG_LIST))
     await start($)

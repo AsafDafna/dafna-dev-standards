@@ -992,10 +992,24 @@ export const register: Register = on => {
       return next(e)
     }
 
+    // Set before the move lands, as an arrow that comes first (a held key)
+    // moves on from here; put back if the engine refuses the move and no
+    // later one came. A call that fails leaves it, as `startEditing` does.
+    const was = live.ring
+    live.ring = to
+
     // Not awaited, as the live probe ran it (docs/superpowers/notes/2026-10-26-open-items-v0.2-probes.md, Step 2).
     void $.ui
       .focus({ requestId: PANE, key: to })
-      .then(() => $.ui.scroll({ in: PANE, to: { key: to } }))
+      .then(moved => {
+        if (moved.deny === undefined) {
+          return $.ui.scroll({ in: PANE, to: { key: to } })
+        }
+
+        if (live.ring === to) {
+          live.ring = was
+        }
+      })
       .catch(() => undefined)
 
     return { deny: 'An arrow moves the focus between the rows of the list.' }
