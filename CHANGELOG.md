@@ -1,5 +1,16 @@
 # Changelog
 
+## open-items 0.2.0 — threads, Later, hand-off
+
+- Each item is a thread: Claude answers inside it with `reply_item`, and a
+  reply never closes the item. `close_item` replaces `withdraw_item`.
+- New: a Later button, a list screen and an item screen, no cap on open items,
+  and no silent cut of long text.
+- Each answer goes to Claude at once; the mod adds it to a running turn.
+- Hand-off by code with `handoff_items` and `take_items`; leftover items of an
+  ended session are offered with Take and Dismiss.
+- Removed: Reject, `withdraw_item`, the cap of 5, Send now and Save for later.
+
 ## open-items 0.1.0 — new opt-in mod
 
 - Fork of human-in-the-loop (Tzafrir Rehan, MIT), renamed to Open items.

@@ -4344,7 +4344,7 @@ describe('leftovers', () => {
 })
 
 describe('the README example', () => {
-  test('two answers while Claude works reach it at once as one message, and the third after it stops goes as its own', async ($, on) => {
+  test('two answers pressed while Claude works reach it as one message, and a reply after it stops goes as its own', async ($, on) => {
     const { world, clock } = seat(on)
     await start($)
 

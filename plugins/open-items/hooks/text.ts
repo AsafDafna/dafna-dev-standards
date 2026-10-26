@@ -11,7 +11,7 @@ export function clip(text: string, max: number): string {
 /**
  * A label safe to draw: control, format and line-separator characters out
  * (the engine refuses a drawing holding one), whitespace collapsed, and cut
- * to `max`. Titles and reasons are text the model or the user wrote.
+ * to `max`. Titles are text the model or the user wrote.
  */
 export function printable(text: string, max: number): string {
   const spaced = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').replace(/\p{Cf}/gu, '')
