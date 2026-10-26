@@ -1,6 +1,6 @@
 # open-items v0.2: each item is a conversation
 
-**Date:** 2026-10-26 · **Status:** draft, for Asaf's approval
+**Date:** 2026-10-26 · **Status:** approved by Asaf 2026-10-26; spec-review pending
 **Builds on:** `2026-10-25-open-items-pane-design.md` (v0.1). Everything v0.1 decided stays unless this document changes it.
 
 ## Intent
