@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
+import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, RenderElement, RenderSurface, StateValue, Timer, ToolSpec } from 'claude-code'
 
 import type { Editing, Saved, Task } from '../types'
 import {
@@ -86,6 +86,9 @@ const TAKE = 'mcp__open-items__take_items'
 
 /** The hand-off pair waits behind ToolSearch: the hand-off steps load it. */
 const DEFERRED: readonly string[] = [HANDOFF, TAKE]
+
+/** The states of an agent whose work has not ended: `pending` has not started, and `waiting` waits on background work of its own. */
+const AT_WORK: readonly AgentStatus[] = ['pending', 'running', 'waiting']
 
 /** How recent the user's last typed prompt is in a live chat. */
 const LIVE_CHAT_MS = 300_000
@@ -432,8 +435,8 @@ function noteInput(kind: UserInput['kind'], atMs: number) {
 /**
  * Whether the user chats live with Claude, so `add_item` refuses: their last
  * two inputs were prompts typed in the chat, the last one under LIVE_CHAT_MS
- * ago, and no agent, background shell command or monitor runs. 'unknown'
- * when the rest holds but what runs cannot be told.
+ * ago, no agent is at work (AT_WORK), and no background shell command or
+ * monitor runs. 'unknown' when the rest holds but what runs cannot be told.
  */
 async function isLiveChat($: EngineInterface, nowMs: number): Promise<boolean | 'unknown'> {
   const [before, last] = live.inputs
@@ -444,7 +447,7 @@ async function isLiveChat($: EngineInterface, nowMs: number): Promise<boolean | 
 
   const agents = await $.agent.list().catch(() => undefined)
 
-  if (agents?.some(agent => agent.status === 'running')) {
+  if (agents?.some(agent => AT_WORK.includes(agent.status))) {
     return false
   }
 
@@ -509,9 +512,12 @@ export const register: Register = on => {
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
     await update($, folder, known => known ?? e.cwd)
-    // A reload of the code finds the session read (see `takeUp`), and has lost the background tasks that started before it.
+    // Background tasks may have started unseen in a conversation that holds
+    // rows already (a resume, or the mod loaded mid-session), or before a
+    // reload of the code, which finds the session read (see `takeUp`).
     const isReload = (await read($, restoredFor)) === (await $.session.id())
-    live.background = isReload ? null : new Set()
+    const isFresh = !isReload && (await $.session.messages().then(rows => rows.length === 0, () => false))
+    live.background = isFresh ? new Set() : null
     live.inputs = []
     await restore($)
 

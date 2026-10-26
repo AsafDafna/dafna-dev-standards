@@ -1,4 +1,4 @@
-import type { AgentInfo, On, PaneOpenArgs, PromptSubmitInput, SessionAppendInput, ToolSpec } from 'claude-code'
+import type { AgentInfo, On, PaneOpenArgs, PromptSubmitInput, SessionAppendInput, SessionMessage, ToolSpec } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -150,6 +150,8 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     items: [] as readonly Task[],
     /** The agents `$.agent.list()` answers with. */
     agents: [] as AgentInfo[],
+    /** The rows `$.session.messages()` answers with: none in a session that has just started. */
+    messages: [] as SessionMessage[],
     /** Set, `$.agent.list()` fails. */
     isAgentListFailing: false,
     /** The tools the plugin registered, as it described them. */
@@ -244,6 +246,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     return { value: { tool: `mcp__open-items__${e.name}` } }
   })
   on('agent.list', () => (world.isAgentListFailing ? { deny: 'The agent list is out of reach.' } : { value: world.agents }))
+  on('session.messages', () => ({ value: world.messages }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)
@@ -3995,6 +3998,9 @@ describe('the live-chat gate', () => {
   const ENDED = '<status>completed</status>\n<summary>Background command "npm run e2e" completed (exit code 0)</summary>'
   const EVENT = '<summary>Monitor event: "the build log"</summary>\n<event>step 2 of 5</event>'
 
+  /** A row of a conversation that ran before the mod saw it. */
+  const ROW: SessionMessage = { role: 'assistant', text: 'The tests pass.', toolUses: [] }
+
   async function twoTyped($: Engine) {
     await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
     await $.prompt.submit(typed('I like the short ones'))
@@ -4098,6 +4104,26 @@ describe('the live-chat gate', () => {
     expect(resultOf(await $.tool.call(ANDROID)).deny).toBe(LIVE)
   })
 
+  test('two typed prompts while an agent waits on its own background work are allowed', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    world.agents = [{ id: 'agent-1', description: 'Run the e2e suite', type: 'general-purpose', status: 'waiting' }]
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
+  })
+
+  test('two typed prompts while an agent has not started yet are allowed', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    world.agents = [{ id: 'agent-1', description: 'Review the diff', type: 'general-purpose', status: 'pending' }]
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toContain('Added item #1')
+  })
+
   test('a monitor counts until its stream ends, not at its first event', async ($, on) => {
     seat(on)
     await start($)
@@ -4144,6 +4170,28 @@ describe('the live-chat gate', () => {
     await start($)
 
     await start($)
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toEndWith(NOTE)
+  })
+
+  test('a mod loaded mid-session, in a conversation that holds rows: the item is added with the live-chat note', async ($, on) => {
+    const { world } = seat(on)
+    world.messages = [ROW]
+    await start($)
+
+    await twoTyped($)
+
+    expect(resultOf(await $.tool.call(XCODE_TASK)).result).toEndWith(NOTE)
+  })
+
+  test('a process started with --resume: the item is added with the live-chat note', async ($, on) => {
+    const { world } = seat(on, earlierItems(asItems([ROTATE])))
+    world.messages = [ROW]
+    await start($)
+
+    expect(world.status).toBe('☐ 1 action · /open-items')
+
     await twoTyped($)
 
     expect(resultOf(await $.tool.call(XCODE_TASK)).result).toEndWith(NOTE)
