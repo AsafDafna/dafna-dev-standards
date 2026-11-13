@@ -56,6 +56,21 @@ test_fake_op_lists_need_format_json() {
   assert_status 0 op item list --vault proj --format=json
 }
 
+left_after() { # CMD...: runs CMD with two lines on stdin, then prints what CMD left of them
+  printf 'one\ntwo\n' > "$TEST_DIR/in"
+  { "$@" > /dev/null; cat; } < "$TEST_DIR/in"
+}
+
+test_fake_op_reads_stdin() {
+  fake_item proj A val-a
+  assert_eq '' "$(left_after op item list --vault proj --format json)" "item list"
+  assert_eq '' "$(left_after op vault list --format json)" "vault list"
+  assert_eq '' "$(left_after op vault get proj --format json)" "vault get"
+  assert_eq '' "$(left_after op account list --format json)" "account list"
+  assert_eq '' "$(left_after op read op://proj/A/password)" "read"
+  assert_eq "$(printf 'one\ntwo')" "$(left_after op signout)" "signout leaves stdin"
+}
+
 test_fake_op_service_account() {
   assert_status 0 op vault create proj
   assert_status 0 op vault create agent-shared

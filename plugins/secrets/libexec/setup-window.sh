@@ -34,7 +34,7 @@ w_exit() {
     w_write "failed: $w_reason"
   fi
   if [ -n "$w_op_ran" ]; then
-    if op signout >/dev/null 2>&1; then
+    if op signout >/dev/null 2>&1 </dev/null; then
       printf 'secrets: signed out of 1Password.\n'
     else
       printf 'secrets: op signout failed. Close this window.\n' >&2
@@ -259,7 +259,7 @@ w_verify() { # NAME VALUE: reads the item back as the owner and compares it with
   [ -n "$2" ] || return 0
   w_dest "$1"
   [ "$w_kind" != skip ] || return 0
-  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" 2>/dev/null && printf x) &&
+  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" 2>/dev/null </dev/null && printf x) &&
     [ "${w_back%x}" = "$2" ]; then
     printf 'secrets: %s match\n' "$1"
     w_checked=$((w_checked + 1))
@@ -280,7 +280,7 @@ $1
 
 w_vault_make() { # VAULT: creates it, unless it exists in any letter case
   w_has "$1" && return 0
-  op vault create "$1" > /dev/null 2> "$w_tmp/err" ||
+  op vault create "$1" > /dev/null 2> "$w_tmp/err" </dev/null ||
     secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not create vault $1"
   w_vaults="$w_vaults
 $1"
@@ -302,7 +302,7 @@ w_token_new() { # sets w_token to a new service account's token, stored in agent
   # would lose it and leave a service account behind. Child processes inherit the ignore.
   trap '' HUP INT TERM
   w_token=$(op service-account create "$w_sa" --vault "$w_project:read_items,write_items" \
-    --vault agent-shared:read_items --raw 2> "$w_tmp/err") ||
+    --vault agent-shared:read_items --raw 2> "$w_tmp/err" </dev/null) ||
     secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not create service account $w_sa"
   w_stored=''
   if [ -n "$w_token" ]; then
@@ -315,7 +315,7 @@ w_token_new() { # sets w_token to a new service account's token, stored in agent
     done
   fi
   if [ -n "$w_stored" ]; then
-    w_back=$(op read --cache=false "op://agent-tokens/$w_project/password" 2>/dev/null)
+    w_back=$(op read --cache=false "op://agent-tokens/$w_project/password" 2>/dev/null </dev/null)
     [ "$w_back" = "$w_token" ] || w_stored=''
   fi
   if [ -z "$w_stored" ]; then
@@ -329,7 +329,7 @@ w_token_new() { # sets w_token to a new service account's token, stored in agent
 }
 
 w_token_copy() { # sets w_token from agent-tokens, and the Keychain item to it when it differs
-  w_token=$(op read --cache=false "op://agent-tokens/$w_project/password" 2> "$w_tmp/err") ||
+  w_token=$(op read --cache=false "op://agent-tokens/$w_project/password" 2> "$w_tmp/err" </dev/null) ||
     secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not read item $w_project in vault agent-tokens"
   [ -n "$w_token" ] || w_fail "item $w_project in vault agent-tokens is empty"
   w_kc=$(w_keychain)
@@ -359,7 +359,8 @@ IFS= read -r w_answer || w_fail cancelled
 [ -d "${w_result%/*}" ] || w_fail 'the agent stopped waiting'
 
 w_op_ran=1
-w_json=$(op vault list --format json 2> "$w_tmp/err") || {
+# Each op call that reads no pipe gets /dev/null: stdin is the terminal, where the owner answers.
+w_json=$(op vault list --format json 2> "$w_tmp/err" </dev/null) || {
   w_err=$(cat "$w_tmp/err")
   case $w_err in
     *'no account found'*)
@@ -374,7 +375,7 @@ w_json=$(op vault list --format json 2> "$w_tmp/err") || {
 }
 w_vaults=$(printf '%s' "$w_json" | jq -r '.[].name | ascii_downcase') || w_fail 'cannot read the vault list'
 if [ -z "${SECRETS_OP_ACCOUNT-}" ]; then
-  w_json=$(op account list --format json 2> "$w_tmp/err") || secrets_op_fail "$(cat "$w_tmp/err")" "$w_project"
+  w_json=$(op account list --format json 2> "$w_tmp/err" </dev/null) || secrets_op_fail "$(cat "$w_tmp/err")" "$w_project"
   w_n=$(printf '%s' "$w_json" | jq length)
   case $w_n in '' | *[!0123456789]*) w_fail 'cannot read the account list' ;; esac
   if [ "$w_n" -gt 1 ]; then
