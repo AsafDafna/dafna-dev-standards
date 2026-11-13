@@ -177,6 +177,13 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
     return 0
   fi
   w_target "$1"
+  case "
+$w_plan" in
+    *"
+$1 $w_vault/$w_title
+"*) ;;
+    *) w_fail 'an import file changed after the screen was shown' ;;
+  esac
   if [ "$w_guard" = 1 ]; then w_mine=$w_titles_g; else w_mine=$w_titles_p; fi
   w_n=$(secrets_title_exists "$w_mine" "$w_title" "$w_vault") || exit 1
   printf '%s' "$2" | secrets_item_put "$w_vault" "$w_title" "$w_tags" "$w_n" "$w_project" || exit 1
@@ -193,7 +200,7 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
 w_verify() { # NAME VALUE: reads the item back as the owner and compares it with VALUE
   [ -n "$2" ] || return 0
   w_target "$1"
-  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" && printf x) &&
+  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" 2>/dev/null && printf x) &&
     [ "${w_back%x}" = "$2" ]; then
     printf 'secrets: %s match\n' "$1"
   else
@@ -266,7 +273,8 @@ w_json=$(op vault list --format json 2> "$w_tmp/err") || {
 w_vaults=$(printf '%s' "$w_json" | jq -r '.[].name | ascii_downcase') || w_fail 'cannot read the vault list'
 if [ -z "${SECRETS_OP_ACCOUNT-}" ]; then
   w_json=$(op account list --format json 2> "$w_tmp/err") || secrets_op_fail "$(cat "$w_tmp/err")" "$w_project"
-  w_n=$(printf '%s' "$w_json" | jq length) || w_fail 'cannot read the account list'
+  w_n=$(printf '%s' "$w_json" | jq length)
+  case $w_n in '' | *[!0123456789]*) w_fail 'cannot read the account list' ;; esac
   if [ "$w_n" -gt 1 ]; then
     w_note "1Password has $w_n accounts on this Mac. Set SECRETS_OP_ACCOUNT for this window to the account for secrets, then start the setup again."
     w_fail 'set SECRETS_OP_ACCOUNT'

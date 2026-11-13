@@ -108,8 +108,12 @@ test_window_screen_marks_short() {
 
 test_window_first_call_is_vault_list() {
   sw_repo
+  fake_token ops_agent proj:w
+  export OP_SERVICE_ACCOUNT_TOKEN=ops_agent
   window --import "$TEST_DIR/proj/.env"
   assert_eq 'vault list --format json' "$(op_log | sed -n 1p)"
+  assert_eq ok "$(first_line "$RESULT")" "an agent token in the environment (screen: $SCREEN)"
+  assert_contains "$(op_log)" 'vault create proj' "the owner made the calls"
 }
 
 test_window_two_accounts() {
@@ -118,12 +122,17 @@ test_window_two_accounts() {
   window --import "$TEST_DIR/proj/.env"
   assert_eq 'failed: set SECRETS_OP_ACCOUNT' "$(first_line "$RESULT")"
   assert_eq "$(printf '%s\n' 'vault list --format json' 'account list --format json' signout)" "$(op_log)" "op calls"
+  assert_eq "$(printf '\n\n\n')" "$(cat "$FAKE_OP_DIR/account.log")" "no account without SECRETS_OP_ACCOUNT"
   : > "$FAKE_OP_DIR/argv.log"
+  : > "$FAKE_OP_DIR/account.log"
   export SECRETS_OP_ACCOUNT=account2.example.invalid
   window --import "$TEST_DIR/proj/.env"
   assert_eq ok "$(first_line "$RESULT")" "with SECRETS_OP_ACCOUNT (screen: $SCREEN)"
   assert_contains "$SCREEN" 'account2.example.invalid'
   assert_not_contains "$(op_log)" 'account list'
+  assert_eq signout "$(op_log | sed -n '$p')" "last op call"
+  assert_eq "$(op_log | wc -l | tr -d ' ')" "$(grep -cx account2.example.invalid "$FAKE_OP_DIR/account.log")" \
+    "every op call, signout included, has the account"
 }
 
 test_window_new_project() {

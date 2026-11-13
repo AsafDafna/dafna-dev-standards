@@ -72,6 +72,10 @@ test_fake_op_service_account() {
   export FAKE_OP_ACCOUNTS=2
   assert_status 0 op account list --format json
   assert_eq 2 "$(printf '%s' "$OUT" | jq length)" "accounts"
+  : > "$FAKE_OP_DIR/account.log"
+  OP_ACCOUNT=acct2 op signout
+  op signout
+  assert_eq "$(printf 'acct2\n\n')" "$(cat "$FAKE_OP_DIR/account.log")" "account.log"
 }
 
 test_fake_op_items() {
