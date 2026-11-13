@@ -250,49 +250,63 @@ test_window_open_name_in_guarded_vault() {
   assert_not_contains "$(op_log)" 'item edit'
 }
 
-test_window_rerun_same_value() {
-  sw_repo
-  window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq 0 "$RC" "first run (screen: $SCREEN)"
-  mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj-guarded/G.tags" "$FAKE_OP_DIR/vaults/proj/"
-  rm .secrets-refs.guarded
-  : > "$FAKE_OP_DIR/argv.log"
-  window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
-  assert_not_contains "$(op_log)" 'item edit G '
-  assert_not_contains "$(op_log)" 'item create'
-  assert_contains "$(op_log)" 'item edit A --vault proj' "the open name is written"
-  assert_not_contains "$SCREEN" 'Type yes'
-  assert_contains "$SCREEN" 'secrets: G match (already in proj)'
-  assert_eq val-g-longx "$(stored proj G)" "unchanged"
-  [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "an item G in proj-guarded"
-  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "guarded refs"
-  assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "open refs"
-}
-
-test_window_guard_name_planted() {
-  sw_repo
+# sw_open_g VALUE: the vaults, token item and Keychain item of an earlier setup, item G in vault
+# proj with VALUE, and no item A.
+sw_open_g() {
   fake_item agent-tokens proj tok-1
   fake_keychain op-sa-proj tok-1
-  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared"
-  fake_item proj G SENTINEL-g-planted
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj-guarded"
+  fake_item proj G "$1"
+  rm -f "$FAKE_OP_DIR/vaults/proj/A.value"
+  : > "$FAKE_OP_DIR/argv.log"
+}
+
+test_window_guard_name_in_open_vault_is_skipped() {
+  sw_repo
   printf 'A=SENTINEL-a-file\nG=SENTINEL-g-file\n' > .env
+  _notice='secrets: G skipped: an item G is already in vault proj, which agents can read. Setup did not read or change it.'
+  _advice='secrets: If you moved it there yourself, nothing is needed. If not, delete it or move it to proj-guarded, then run setup again.'
+  _first=''
+  for _g in SENTINEL-g-file SENTINEL-g-other; do
+    sw_open_g "$_g"
+    window --import "$TEST_DIR/proj/.env" --guard G
+    assert_eq ok "$(first_line "$RESULT")" "$_g: result (screen: $SCREEN)"
+    for _out in "$SCREEN" "$RESULT"; do
+      assert_contains "$_out" "$_notice" "$_g"
+      assert_contains "$_out" "$_advice" "$_g"
+    done
+    assert_contains "$SCREEN" 'secrets: A match' "$_g"
+    assert_not_contains "$SCREEN" 'secrets: G match' "$_g"
+    assert_not_contains "$SCREEN" 'secrets: G mismatch' "$_g"
+    assert_eq SENTINEL-a-filex "$(stored proj A)" "$_g: A imported"
+    _log=$(op_log)
+    assert_not_contains "$_log" '/G/password' "$_g: a read of G"
+    assert_not_contains "$_log" 'item get' "$_g"
+    assert_not_contains "$_log" 'item edit G ' "$_g"
+    assert_not_contains "$_log" 'item create --vault proj-guarded' "$_g"
+    assert_eq "${_g}x" "$(stored proj G)" "$_g: G unchanged"
+    [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "$_g: an item G in proj-guarded"
+    [ ! -e .secrets-refs.guarded ] || fail "$_g: a guarded refs file"
+    assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "$_g: open refs"
+    for _text in "$SCREEN" "$RESULT" "$_log" "$(sec_log)" "$(cat "$SHIM_LOG")"; do
+      assert_not_contains "$_text" SENTINEL- "$_g"
+    done
+    if [ -z "$_first" ]; then
+      _first=$SCREEN$RESULT
+    else
+      assert_eq "$_first" "$SCREEN$RESULT" "the output does not depend on the value of G"
+    fi
+  done
+}
+
+test_window_skip_keeps_existing_refs_line() {
+  sw_repo
+  sw_open_g val-g-other
+  printf '%s\n' '# guarded' 'G=op://proj/G/password' > .secrets-refs.guarded
+  _before=$(cat .secrets-refs.guarded)
   window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq 'failed: guarded name is open' "$(first_line "$RESULT")" "result (screen: $SCREEN)"
-  _line1='secrets: G: an item G is in vault proj, which agents can read, and it differs from the file. Setup did not change it.'
-  _line2='secrets: If you did not move it there, delete it. To update a guarded secret, move the item to proj-guarded, then run setup again.'
-  for _out in "$SCREEN" "$RESULT"; do
-    assert_contains "$_out" "$_line1"
-    assert_contains "$_out" "$_line2"
-  done
-  assert_not_contains "$(op_log)" 'item create'
-  assert_not_contains "$(op_log)" 'item edit'
-  assert_eq SENTINEL-g-plantedx "$(stored proj G)" "unchanged"
-  [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "an item G in proj-guarded"
-  [ ! -e "$FAKE_OP_DIR/vaults/proj/A.value" ] || fail "an item A in proj"
-  for _text in "$SCREEN" "$RESULT" "$(op_log)" "$(sec_log)" "$(cat "$SHIM_LOG")"; do
-    assert_not_contains "$_text" SENTINEL-
-  done
+  assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
+  assert_eq "$_before" "$(cat .secrets-refs.guarded)" "guarded refs file"
 }
 
 test_window_screen_shows_files() {

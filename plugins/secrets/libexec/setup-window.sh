@@ -188,9 +188,8 @@ w_show() { # NAME VALUE: the screen line of one entry
 }
 
 # w_dest: after w_target, from the titles listed before any write, sets w_dvault (where the item
-# is written and read), w_exists (0 or 1) and w_kind: "open" for a guard name whose title is in
-# the project vault, which setup never writes, "guarded" for an open name whose item is in the
-# guarded vault.
+# is written and read), w_exists (0 or 1) and w_kind: "skip" for a guard name whose title is in
+# the project vault, "guarded" for an open name whose item is in the guarded vault.
 w_dest() {
   w_np=$(secrets_title_exists "$w_titles_p" "$w_title" "$w_project") || exit 1
   w_ng=$(secrets_title_exists "$w_titles_g" "$w_title" "$w_project-guarded") || exit 1
@@ -202,19 +201,15 @@ w_dest() {
     w_exists=$w_np
     [ "$w_ng" = 0 ] || w_kind=guarded
   elif [ "$w_np" = 1 ]; then
-    w_dvault=$w_project w_exists=1 w_kind=open
+    w_kind=skip
   else
     w_exists=$w_ng
   fi
 }
 
-w_same() { # VALUE: success when the owner reads VALUE from item w_title in vault w_dvault
-  w_back=$(op read --cache=false -n "op://$w_dvault/$w_title/password" 2>/dev/null && printf x) &&
-    [ "${w_back%x}" = "$1" ]
-}
-
-# w_check NAME VALUE: before any write, collects the entries that stop the import. An agent can
-# write the project vault, so an item there is no proof that the owner moved a guarded secret.
+# w_check NAME VALUE: before any write, collects the entries that stop the import or are skipped.
+# An agent can write the project vault, so an item there is no proof that the owner moved a
+# guarded secret, and reading or comparing it would tell its state back to the agent.
 w_check() {
   w_target "$1"
   w_seen="$w_seen$1 ${2:+$w_vault/$w_title}
@@ -222,9 +217,7 @@ w_check() {
   [ -n "$2" ] || return 0
   w_dest
   case $w_kind in
-    open)
-      w_same "$2" ||
-        w_planted="$w_planted$1: an item $w_title is in vault $w_project, which agents can read, and it differs from the file. Setup did not change it.
+    skip) w_open_g="$w_open_g$1 skipped: an item $w_title is already in vault $w_project, which agents can read. Setup did not read or change it.
 " ;;
     guarded) w_blocked="$w_blocked$w_title is in vault $w_project-guarded. Add $1 to --guard, or move the item.
 " ;;
@@ -245,15 +238,12 @@ $1 $w_vault/$w_title
     *) w_fail 'an import file changed after the screen was shown' ;;
   esac
   w_dest
-  if [ "$w_kind" = open ]; then
-    w_kept="$w_kept${w_kept:+, }$w_title"
+  [ "$w_kind" != skip ] || return 0
+  printf '%s' "$2" | secrets_item_put "$w_dvault" "$w_title" "$w_tags" "$w_exists" "$w_project" || exit 1
+  if [ "$w_guard" = 0 ]; then
+    w_stored_p="$w_stored_p${w_stored_p:+, }$w_title"
   else
-    printf '%s' "$2" | secrets_item_put "$w_dvault" "$w_title" "$w_tags" "$w_exists" "$w_project" || exit 1
-    if [ "$w_guard" = 0 ]; then
-      w_stored_p="$w_stored_p${w_stored_p:+, }$w_title"
-    else
-      w_stored_g="$w_stored_g${w_stored_g:+, }$w_title"
-    fi
+    w_stored_g="$w_stored_g${w_stored_g:+, }$w_title"
   fi
   w_refs_file=$(secrets_refs_file "$w_stage" "$w_guard")
   secrets_refs_set "$w_root/$w_refs_file" "$1" "$w_project" "$w_title"
@@ -264,10 +254,10 @@ w_verify() { # NAME VALUE: reads the item back as the owner and compares it with
   [ -n "$2" ] || return 0
   w_target "$1"
   w_dest
-  w_where=''
-  [ "$w_kind" != open ] || w_where=" (already in $w_project)"
-  if w_same "$2"; then
-    printf 'secrets: %s match%s\n' "$1" "$w_where"
+  [ "$w_kind" != skip ] || return 0
+  if w_back=$(op read --cache=false -n "op://$w_dvault/$w_title/password" 2>/dev/null && printf x) &&
+    [ "${w_back%x}" = "$2" ]; then
+    printf 'secrets: %s match\n' "$1"
   else
     printf 'secrets: %s mismatch\n' "$1"
     w_bad="$w_bad${w_bad:+, }$1"
@@ -412,26 +402,25 @@ if [ -n "$w_specs" ]; then
     w_titles_g=$(secrets_titles "$w_project-guarded" "$w_project") || exit 1
   fi
   w_seen=''
-  w_planted=''
+  w_open_g=''
   w_blocked=''
   w_specs_do w_check
   [ "$w_seen" = "$w_plan" ] || w_fail 'an import file changed after the screen was shown'
-  [ -z "$w_blocked" ] || w_notes "$w_blocked"
-  if [ -n "$w_planted" ]; then
-    w_notes "$w_planted"
-    w_note "If you did not move it there, delete it. To update a guarded secret, move the item to $w_project-guarded, then run setup again."
-    w_fail 'guarded name is open'
+  if [ -n "$w_blocked" ]; then
+    w_notes "$w_blocked"
+    w_fail 'item is guarded'
   fi
-  [ -z "$w_blocked" ] || w_fail 'item is guarded'
+  if [ -n "$w_open_g" ]; then
+    w_notes "$w_open_g"
+    w_note "If you moved it there yourself, nothing is needed. If not, delete it or move it to $w_project-guarded, then run setup again."
+  fi
   w_stored_p=''
   w_stored_g=''
-  w_kept=''
   w_skipped=''
   w_refs=''
   w_specs_do w_put
   [ -z "$w_stored_p" ] || w_note "stored in $w_project: $w_stored_p"
   [ -z "$w_stored_g" ] || w_note "stored in $w_project-guarded, with tag high-value: $w_stored_g"
-  [ -z "$w_kept" ] || w_note "already in $w_project with the same value, not written: $w_kept"
   [ -z "$w_skipped" ] || w_note "skipped (empty value): $w_skipped"
   [ -z "$w_refs" ] || w_note "wrote $w_refs"
 fi
