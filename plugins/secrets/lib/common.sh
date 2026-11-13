@@ -115,6 +115,11 @@ EOF
 
 secrets_token() { # PROJECT
   _tk_value=$(security find-generic-password -a secrets -s "op-sa-$1" -w 2>/dev/null)
+  _tk_rc=$?
+  case $_tk_rc in
+    0 | 44) ;;
+    *) secrets_die "cannot read the Keychain item op-sa-$1 (security exit $_tk_rc)" ;;
+  esac
   [ -n "$_tk_value" ] || secrets_die "no token for $1 on this Mac. Run: secrets setup $1"
   printf '%s\n' "$_tk_value"
 }
