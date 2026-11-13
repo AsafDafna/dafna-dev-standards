@@ -72,6 +72,14 @@ test_window_no_op_before_enter() {
   assert_contains "$(cat "$FAKE_OPEN_DIR/window.log")" 'A → proj (A)' "the screen"
 }
 
+test_window_only_enter_continues() {
+  sw_repo
+  printf 'no\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: cancelled' "$RESULT"
+  assert_eq '' "$(op_log)" "op calls"
+}
+
 test_window_agent_gone() {
   sw_repo
   rmdir "$TEST_DIR/res"

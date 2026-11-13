@@ -366,6 +366,7 @@ if [ "$w_nfiles" -gt 0 ]; then
 fi
 printf 'Press Enter to sign in to 1Password with Touch ID, or Ctrl-C to cancel. '
 IFS= read -r w_answer || w_fail cancelled
+[ -z "$w_answer" ] || w_fail cancelled
 [ -d "${w_result%/*}" ] || w_fail 'the agent stopped waiting'
 
 w_op_ran=1
