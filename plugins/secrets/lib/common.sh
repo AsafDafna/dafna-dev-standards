@@ -142,7 +142,8 @@ secrets_keychain_put() {
   printf 'add-generic-password -U -a secrets -s op-sa-%s -w %s\n' "$1" "$_kp_token" | security -i >/dev/null
 }
 
-# secrets_op_fail STDERR PROJECT: dies with the failure line for this op error text.
+# secrets_op_fail STDERR PROJECT [TEXT]: dies with the failure line for this op error text.
+# An error with no known pattern gives "op failed: TEXT", or op's first line without TEXT.
 secrets_op_fail() {
   case $1 in
     *'connection refused'* | *'dial tcp'* | *'no such host'* | *'i/o timeout'*)
@@ -152,6 +153,7 @@ secrets_op_fail() {
     *DecodeSACredentials* | *'(401)'* | *Unauthorized*)
       secrets_die "the token for $2 does not work. Run: secrets setup $2, with --renew if the owner revoked it" ;;
   esac
+  [ -z "${3-}" ] || secrets_die "op failed: $3"
   _of_line=${1%%'
 '*}
   case $_of_line in
@@ -227,6 +229,7 @@ secrets_env_each() {
     case $_ee_val in
       \'*) _ee_q=\' ;;
       \"*) _ee_q=\" ;;
+      \`*) secrets_env_bad 'uses backtick quotes' ;;
     esac
     if [ -n "$_ee_q" ]; then
       _ee_rest=${_ee_val#?}
@@ -239,10 +242,9 @@ secrets_env_each() {
       _ee_val=${_ee_raw%%[[:blank:]]#*}
       _ee_val=${_ee_val#"${_ee_val%%[![:blank:]]*}"}
       _ee_val=${_ee_val%"${_ee_val##*[![:blank:]]}"}
+      case $_ee_val in *'#'*) secrets_env_bad 'uses # without quotes' ;; esac
     fi
-    if [ "$_ee_q" != \' ]; then
-      case $_ee_val in *'$'* | *\\*) secrets_env_bad "uses \$ or \\" ;; esac
-    fi
+    case $_ee_val in *'$'* | *\\*) secrets_env_bad "uses \$ or \\" ;; esac
     case $_ee_rest in '' | '#'*) ;; *) secrets_env_bad 'no closing quote' ;; esac
     "$2" "$_ee_name" "$_ee_val"
   done 3< "$_ee_file"
@@ -287,10 +289,12 @@ secrets_item_put() {
   else
     set -- item create --vault "$1" ${3:+--tags "$3"} -
   fi
-  # op prints the stored item, value included, on stdout.
+  # op prints the stored item, value included, on stdout. Its error text is not proven free
+  # of the value either, so an unknown write error gets a fixed line.
   _ip_err=$(jq -Rsc --arg title "$_ip_title" '{title: $title, category: "PASSWORD",
       fields: [{id: "password", type: "CONCEALED", purpose: "PASSWORD", label: "password", value: .}]}' |
-    op "$@" 2>&1 >/dev/null) || secrets_op_fail "$_ip_err" "$_ip_vault"
+    op "$@" 2>&1 >/dev/null) ||
+    secrets_op_fail "$_ip_err" "$_ip_vault" "could not write item $_ip_title in vault $_ip_vault"
 }
 
 # secrets_refs_set FILE NAME VAULT TITLE: puts the line for NAME in place of its old line,

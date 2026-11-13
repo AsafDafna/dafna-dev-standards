@@ -23,9 +23,9 @@ ia_repo() {
 
 test_env_parse_forms() {
   cd "$TEST_DIR" || fail cd
-  printf '%s\n' '# comment' '' 'export A=1' 'B="x y"' "C='q'" 'D=a=b' 'E=' 'F=v # note' "H='a\$b'" \
-    '  G="p # q" # note' > .env
-  _want=$(printf '%s\n' 'A=[1]' 'B=[x y]' 'C=[q]' 'D=[a=b]' 'E=[]' 'F=[v]' 'H=[a$b]' 'G=[p # q]')
+  printf '%s\n' '# comment' '' 'export A=1' 'B="x y"' "C='q'" 'D=a=b' 'E=' 'F=v # note' \
+    '  G="p # q" # note' "I='p#q'" > .env
+  _want=$(printf '%s\n' 'A=[1]' 'B=[x y]' 'C=[q]' 'D=[a=b]' 'E=[]' 'F=[v]' 'G=[p # q]' 'I=[p#q]')
   assert_status 0 secrets_env_each .env show
   assert_eq "$_want" "$OUT"
   perl -pe 's/\n/\r\n/' .env > crlf.env
@@ -46,6 +46,30 @@ test_env_parse_dollar_dies() {
   printf '%s\n' 'K="a\"b"' > .env
   assert_status 1 secrets_env_each .env show
   assert_eq 'secrets: .env line 1: uses $ or \. Fix the line, then try again.' "$ERR" "an escaped quote"
+  for line in "H='sq\$val'" "H='sq\\val'"; do
+    printf '%s\n' 'OK=1' "$line" > .env
+    assert_status 1 secrets_env_each .env show
+    assert_eq 'secrets: .env line 2: uses $ or \. Fix the line, then try again.' "$ERR" "$line"
+    assert_eq 'OK=[1]' "$OUT" "$line"
+  done
+}
+
+test_env_parse_backtick_dies() {
+  cd "$TEST_DIR" || fail cd
+  printf '%s\n' 'OK=1' 'K=`bq-val`' > .env
+  assert_status 1 secrets_env_each .env show
+  assert_eq 'secrets: .env line 2: uses backtick quotes. Fix the line, then try again.' "$ERR"
+  assert_eq 'OK=[1]' "$OUT"
+}
+
+test_env_parse_hash_dies() {
+  cd "$TEST_DIR" || fail cd
+  for line in 'K=abc#def' 'K=#hashval' 'K=a#b # note'; do
+    printf '%s\n' 'OK=1' "$line" > .env
+    assert_status 1 secrets_env_each .env show
+    assert_eq 'secrets: .env line 2: uses # without quotes. Fix the line, then try again.' "$ERR" "$line"
+    assert_eq 'OK=[1]' "$OUT" "$line"
+  done
 }
 
 test_env_parse_multiline_dies() {
@@ -162,6 +186,15 @@ test_import_refuses_guarded_name() {
   assert_eq '' "$(op_log)" "op calls"
 }
 
+test_import_refuses_guarded_title() {
+  ia_repo
+  printf 'G=op://proj/A.e2e/password\n' > .secrets-refs.guarded
+  printf 'A=val-a\n' > .env.e2e
+  assert_status 1 secrets import .env.e2e
+  assert_eq 'secrets: A is a guarded secret. Ask the owner to change it in 1Password.' "$ERR"
+  assert_eq '' "$(op_log)" "op calls"
+}
+
 test_import_cap() {
   ia_repo
   _i=1
@@ -233,6 +266,26 @@ test_add_refuses_guarded_name() {
   assert_status 1 secrets add H --stage e2e < "$TEST_DIR/in"
   assert_eq 'secrets: H is a guarded secret. Ask the owner to change it in 1Password.' "$ERR" "stage file"
   assert_eq '' "$(op_log)" "op calls"
+}
+
+test_add_refuses_guarded_title() {
+  ia_repo
+  printf 'G=op://Proj/T/password\nS=op://agent-shared/U/password\n' > .secrets-refs.guarded
+  printf v > "$TEST_DIR/in"
+  assert_status 1 secrets add T < "$TEST_DIR/in"
+  assert_eq 'secrets: T is a guarded secret. Ask the owner to change it in 1Password.' "$ERR"
+  assert_eq '' "$(op_log)" "op calls"
+  assert_status 0 secrets add U < "$TEST_DIR/in"
+  assert_eq vx "$(stored proj U)" "a guarded ref in another vault does not block"
+}
+
+test_write_error_hides_op_text() {
+  ia_repo
+  printf SENTINEL-7f3a > "$TEST_DIR/in"
+  export FAKE_OP_FAIL=stdin FAKE_OP_FAIL_MATCH='item create'
+  assert_status 1 secrets add T < "$TEST_DIR/in"
+  assert_eq 'secrets: op failed: could not write item T in vault proj' "$ERR"
+  assert_not_contains "$OUT$ERR" SENTINEL-7f3a
 }
 
 test_add_no_refs_uses_main_name() {

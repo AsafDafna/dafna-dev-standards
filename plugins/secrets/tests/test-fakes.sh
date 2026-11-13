@@ -150,6 +150,11 @@ test_fake_op_fail_knobs() {
   assert_status 1 op item list --vault agent-tokens --format json
   assert_contains "$ERR" 'connection refused'
   assert_contains "$(cat "$FAKE_OP_DIR/argv.log")" 'item list --vault agent-tokens' "argv.log"
+  export FAKE_OP_FAIL=stdin FAKE_OP_FAIL_MATCH='item create'
+  printf 'input-1' > "$HOME/in"
+  assert_status 1 op item create --vault proj - < "$HOME/in"
+  assert_eq '[ERROR] 2026/01/01 00:00:00 unable to process input: input-1' "$ERR" "FAKE_OP_FAIL=stdin"
+  assert_status 0 op item list --vault proj --format json
 }
 
 test_fake_security() {
