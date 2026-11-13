@@ -71,21 +71,36 @@ test_setup_bad_project() {
 
 test_setup_launcher_quoting() {
   sa_repo
-  mkdir "d 'q'"
-  printf 'A=val-qa\nB=val-qb\n' > "d 'q'/x.env"
-  printf 'GLOBBED=val-x\n' > xa.env
-  printf 'C=val-c\n' > 'x[ab].env'
+  mkdir "d q"
+  printf 'A=val-qa\nB=val-qb\n' > "d q/x.env"
+  printf 'C=val-c\n' > 'x+y=z,w@v~.env'
   printf 'D=val-d\n' > ./-dash.env
-  assert_status 0 secrets setup proj --import "d 'q'/x.env:e2e" --import 'x[ab].env' --import ./-dash.env:ci \
+  assert_status 0 secrets setup proj --import "d q/x.env:e2e" --import 'x+y=z,w@v~.env' --import ./-dash.env:ci \
     --guard A,B --renew
-  assert_eq val-qax "$(stored proj-guarded A.e2e)" "a path with a space and a quote, and its stage"
+  assert_eq val-qax "$(stored proj-guarded A.e2e)" "a path with a space, and its stage"
   assert_eq val-qbx "$(stored proj-guarded B.e2e)" "both guard names"
-  assert_eq val-cx "$(stored proj C)" "a path with brackets"
+  assert_eq val-cx "$(stored proj C)" "a path with the other allowed signs"
   assert_eq val-dx "$(stored proj D.ci)" "a path that starts with a dash"
-  [ ! -e "$FAKE_OP_DIR/vaults/proj/GLOBBED.value" ] || fail "the bracket path was expanded"
   assert_eq "$(printf '%s\n' 'A=op://proj/A.e2e/password' 'B=op://proj/B.e2e/password')" \
     "$(cat .secrets-refs.e2e.guarded)" "refs file in the repo root"
   assert_contains "$(cat "$FAKE_OP_DIR/argv.log")" 'service-account create proj-agent-' "--renew"
+}
+
+test_setup_import_path_allowlist() {
+  sa_repo
+  export LC_ALL=C
+  printf 'A=1\n' > 'a  b.env'
+  ln -s 'a  b.env' link.env
+  for _p in 'a  b.env' link.env "$(printf 'a\tb.env')" "$(printf 'a\033b.env')" "$(printf 'a\302\233b.env')" \
+    "d 'q'/x.env" 'x[ab].env'; do
+    assert_status 1 secrets setup proj --import "$_p"
+    assert_eq 'secrets: an import path holds a character that setup does not accept' "$ERR" "[$_p]"
+  done
+  new_repo "$TEST_DIR/p  q"
+  cd "$TEST_DIR/p  q" || fail cd
+  assert_status 1 secrets setup proj
+  assert_eq 'secrets: the repo path holds a character that setup does not accept' "$ERR" "repo path"
+  assert_eq '' "$(open_log)" "open calls"
 }
 
 test_setup_launcher_executable() {

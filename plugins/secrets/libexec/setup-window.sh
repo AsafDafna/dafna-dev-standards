@@ -129,11 +129,18 @@ w_each() {
   done
 }
 
+w_import_path() { # PATH: fails the window unless PATH can be shown on the screen
+  secrets_path_ok "$1" || w_fail 'an import path holds a character that setup does not accept'
+}
+
+# The agent chose the arguments, and a failure line shows them on the owner's screen, so a value
+# that fails a check is never printed.
 [ $# -ge 3 ] || w_fail 'the window needs REPO_ROOT RESULT_FILE PROJECT'
 w_root=$1
 w_project=$3
 shift 3
-secrets_check project "$w_project"
+secrets_valid project "$w_project" || w_fail 'the project name is not valid'
+secrets_path_ok "$w_root" || w_fail 'the repo path holds a character that setup does not accept'
 [ -d "$w_root" ] || w_fail "no folder $w_root"
 w_nfiles=0
 w_count=0
@@ -146,13 +153,12 @@ while [ $# -gt 0 ]; do
   case $1 in
     --import)
       [ $# -ge 2 ] || w_fail '--import needs a file'
-      # A control character in a path on the screen could rewrite what the owner sees.
-      case $2 in *[[:cntrl:]]*) w_fail 'an import path holds a control character' ;; esac
-      w_stage=$(secrets_stage_of "$2") || exit 1
       w_path=$(secrets_spec_file "$2")
+      w_import_path "$w_path"
+      w_stage=$(secrets_stage_of "$2") || exit 1
       w_real=$(realpath -- "$w_path" 2>/dev/null) && [ -f "$w_real" ] && [ -r "$w_real" ] ||
         w_fail "cannot read $w_path"
-      case $w_real in *[[:cntrl:]]*) w_fail 'an import path holds a control character' ;; esac
+      w_import_path "$w_real"
       w_nfiles=$((w_nfiles + 1))
       w_file=$w_real
       eval "w_fpath_$w_nfiles=\$w_real w_fstage_$w_nfiles=\$w_stage w_ffirst_$w_nfiles=\$((w_count + 1))"
@@ -163,7 +169,7 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || w_fail '--guard needs names'
       w_rest=$2,
       while [ -n "$w_rest" ]; do
-        secrets_check name "${w_rest%%,*}"
+        secrets_valid name "${w_rest%%,*}" || w_fail 'a guard name is not valid'
         w_guards="$w_guards${w_rest%%,*}
 "
         w_rest=${w_rest#*,}

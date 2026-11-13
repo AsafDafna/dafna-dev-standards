@@ -57,6 +57,19 @@ secrets_check() {
   secrets_die "\"${2-}\" is not a valid $_ck_kind name"
 }
 
+# secrets_path_ok PATH: success when PATH holds only A-Z a-z 0-9 . _ / @ + = , ~ - and single
+# spaces, and no part of it starts or ends with a space. The setup screen prints such paths, and
+# any other character could draw a false line there. The C locale reads each byte as one character.
+secrets_path_ok() {
+  (
+    LC_ALL=C
+    case $1 in
+      '' | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/@+=,~\ -]* | \
+        *'  '* | ' '* | *' ' | *' /'* | *'/ '*) exit 1 ;;
+    esac
+  )
+}
+
 secrets_refs_file() { # STAGE ("" = default) GUARDED (0 or 1)
   _rf_name=.secrets-refs
   [ -z "$1" ] || _rf_name=$_rf_name.$1

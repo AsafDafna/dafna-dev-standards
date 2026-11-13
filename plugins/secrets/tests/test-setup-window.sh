@@ -456,7 +456,45 @@ test_window_import_unreadable() {
     assert_not_contains "$SCREEN" 'Press Enter' "$_p"
   done
   window --import "$TEST_DIR/proj/$(printf 'a\033[2Jb.env')"
-  assert_eq 'failed: an import path holds a control character' "$(first_line "$RESULT")"
+  assert_eq 'failed: an import path holds a character that setup does not accept' "$(first_line "$RESULT")"
+  assert_eq '' "$(op_log)" "op calls"
+}
+
+test_window_import_path_allowlist() {
+  sw_repo
+  export LC_ALL=C
+  _reason='failed: an import path holds a character that setup does not accept'
+  for _p in 'a  b.env' "$(printf 'a\tb.env')" "$(printf 'a\033b.env')" "$(printf 'a\302\233b.env')" \
+    "$(printf 'a\342\200\256b.env')" "$(printf 'a\351b.env')" ' a.env' 'a /b.env' "a'b.env" 'a[b].env'; do
+    window --import "$TEST_DIR/proj/$_p"
+    assert_eq "$_reason" "$RESULT" "[$_p]"
+    assert_not_contains "$SCREEN" 'Press Enter' "[$_p]"
+  done
+  cp .env 'a  b.env'
+  ln -s 'a  b.env' link.env
+  window --import "$TEST_DIR/proj/link.env"
+  assert_eq "$_reason" "$RESULT" "a link to a path with two spaces"
+  assert_eq '' "$(op_log)" "op calls"
+  mkdir 'my dir'
+  cp .env 'my dir/x+y=z,w@v~.env'
+  window --import "$TEST_DIR/proj/my dir/x+y=z,w@v~.env"
+  assert_eq ok "$(first_line "$RESULT")" "one space and the other allowed signs (screen: $SCREEN)"
+  assert_contains "$SCREEN" "From $TEST_DIR/proj/my dir/x+y=z,w@v~.env, stage default:"
+}
+
+test_window_fixed_text_for_bad_args() {
+  sw_repo
+  _esc=$(printf '\033')
+  "$PLUGIN_DIR/libexec/setup-window.sh" "$TEST_DIR/p  q" "$TEST_DIR/res/result" proj > "$TEST_DIR/screen" 2>&1
+  assert_eq 'failed: the repo path holds a character that setup does not accept' "$(cat "$TEST_DIR/res/result")" "root"
+  assert_not_contains "$(cat "$TEST_DIR/screen")" 'p  q' "root on the screen"
+  rm -f "$TEST_DIR/res/result"
+  "$PLUGIN_DIR/libexec/setup-window.sh" "$TEST_DIR/proj" "$TEST_DIR/res/result" "p${_esc}[2Jx" > "$TEST_DIR/screen" 2>&1
+  assert_eq 'failed: the project name is not valid' "$(cat "$TEST_DIR/res/result")" "project"
+  assert_not_contains "$(cat "$TEST_DIR/screen")" "$_esc" "project on the screen"
+  window --guard "G${_esc}[2J"
+  assert_eq 'failed: a guard name is not valid' "$RESULT" "guard name"
+  assert_not_contains "$SCREEN" "$_esc" "guard name on the screen"
   assert_eq '' "$(op_log)" "op calls"
 }
 
