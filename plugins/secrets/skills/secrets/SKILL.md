@@ -1,6 +1,6 @@
 ---
 name: secrets
-description: Use when a repo has a .secrets-refs file, a command needs an API key or token, a new secret must be stored, or a project or Mac needs secrets set up. Covers secrets run, import, add, setup and status, and what to do when one of them fails.
+description: Use when a repo has a .secrets-refs file, a command needs an API key or token, a new secret must be stored, or a project or Mac needs secrets set up. Load this skill BEFORE you run any command or script that prints, creates or needs a token, key or password: such output must go straight into `secrets add` and must never reach the screen or the chat. Covers secrets run, import, add, setup and status, and what to do when one fails.
 ---
 
 # secrets: 1Password secrets for agents
@@ -12,6 +12,7 @@ The repo holds names and `op://` addresses (`.secrets-refs`), never values. The 
 1. Run every command that needs a secret through `secrets run`.
 2. Never print, echo, log or copy a secret value. Never read a plaintext env file.
 3. Store a new secret with `secrets add`. Never paste it into the chat.
+   When a command or script creates or prints a secret, never run it by itself first, not even to see what it prints. Run it once, piped into add: `./make-token.sh | secrets add NAME`.
 4. When `secrets run` names a missing high-value item, ask the owner to move it. Go on with work that does not need it.
 5. Before a setup with `--import`, list the names (never the values), propose the high-value ones, and wait for the owner's list.
 6. Start `secrets setup` only when the owner asked for it: a new project, a repo move, a second Mac, or a renewed token.
