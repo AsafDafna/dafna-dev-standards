@@ -333,6 +333,23 @@ test_window_guard_moves_open_refs_line() {
   assert_status 0 secrets run -- sh -c 'test "$A" = val-a-long && test -z "${G+x}"'
 }
 
+test_window_guard_only_stage() {
+  sw_repo
+  printf 'G=val-g-long\n' > .env
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
+  assert_contains "$RESULT" 'secrets: wrote .secrets-refs.guarded, .secrets-refs'
+  assert_eq '' "$(cat .secrets-refs)" "open refs file"
+  TERM_PROGRAM=xterm
+  export TERM_PROGRAM
+  assert_status 0 secrets status
+  assert_contains "$OUT" 'secrets: G waits in proj-guarded'
+  mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj/G.value"
+  assert_status 0 secrets run --guarded -- sh -c 'test "$G" = val-g-long'
+  assert_status 0 secrets status
+  assert_contains "$OUT" 'secrets: G open to agents'
+}
+
 test_window_screen_shows_files() {
   sw_repo
   mkdir real

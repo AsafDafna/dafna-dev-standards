@@ -254,9 +254,9 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
   secrets_refs_set "$w_root/$w_refs_file" "$1" "$w_project" "$w_title"
   w_wrote "$w_refs_file"
   [ "$w_guard" = 1 ] || return 0
-  # A line left in the open refs file would stop every daily run on the moved item.
+  # A line left in the open refs file would stop every daily run on the moved item. The file is
+  # also created when missing: run --guarded and status need it, also when it holds no line.
   w_refs_file=$(secrets_refs_file "$w_stage" 0)
-  [ -f "$w_root/$w_refs_file" ] || return 0
   secrets_refs_unset "$w_root/$w_refs_file" "$1"
   w_wrote "$w_refs_file"
 }
