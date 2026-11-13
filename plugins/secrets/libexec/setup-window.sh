@@ -85,9 +85,14 @@ while [ $# -gt 0 ]; do
   case $1 in
     --import)
       [ $# -ge 2 ] || w_fail '--import needs a file'
-      case $2 in *'
-'*) w_fail 'an import path cannot hold a newline' ;; esac
-      w_specs="$w_specs$2
+      # A control character in a path on the screen could rewrite what the owner sees.
+      case $2 in *[[:cntrl:]]*) w_fail 'an import path holds a control character' ;; esac
+      w_stage=$(secrets_stage_of "$2") || exit 1
+      w_path=$(secrets_spec_file "$2")
+      w_real=$(realpath -- "$w_path" 2>/dev/null) && [ -f "$w_real" ] && [ -r "$w_real" ] ||
+        w_fail "cannot read $w_path"
+      case $w_real in *[[:cntrl:]]*) w_fail 'an import path holds a control character' ;; esac
+      w_specs="$w_specs$w_stage:$w_real
 "
       shift ;;
     --guard)
@@ -115,10 +120,19 @@ w_note() { # TEXT: one summary line, shown now and written to the result
 "
 }
 
-# w_specs_do CALLBACK: calls CALLBACK NAME VALUE for each entry of each import file, with w_stage
-# set. CALLBACK "" runs secrets_env_check on the import files instead.
+w_notes() { # LINES: w_note for each line
+  while IFS= read -r w_line; do
+    [ -z "$w_line" ] || w_note "$w_line"
+  done <<EOF
+$1
+EOF
+}
+
+# w_specs_do CALLBACK [FILE-CALLBACK]: for each import file (STAGE:RESOLVED-PATH in w_specs),
+# runs FILE-CALLBACK, then CALLBACK NAME VALUE for each entry, with w_file and w_stage set.
 w_specs_do() {
   w_cb=$1
+  w_file_cb=${2-}
   IFS='
 '
   set -f
@@ -126,11 +140,26 @@ w_specs_do() {
   set -- $w_specs
   set +f
   unset IFS
-  [ -n "$w_cb" ] || { secrets_env_check "$@"; return; }
   for w_spec do
-    w_stage=$(secrets_stage_of "$w_spec") || exit 1
-    secrets_env_each "$(secrets_spec_file "$w_spec")" "$w_cb"
+    w_stage=${w_spec%%:*}
+    w_file=${w_spec#*:}
+    [ -z "$w_file_cb" ] || "$w_file_cb"
+    secrets_env_each "$w_file" "$w_cb"
   done
+}
+
+# w_dup NAME VALUE: the check of secrets_env_check, on the resolved files: dies when NAME came
+# before for this stage.
+w_dup() {
+  w_key="
+$w_stage$secrets_tab$1$secrets_tab"
+  case $w_keys in
+    *"$w_key"*)
+      w_first=${w_keys#*"$w_key"}
+      secrets_die "$1 is in ${w_first%%'
+'*} and $w_file for the same stage. Keep one." ;;
+  esac
+  w_keys=$w_keys$w_key$w_file
 }
 
 w_target() { # NAME: sets w_title, w_vault, w_tags and w_guard (0 or 1) for NAME in stage w_stage
@@ -143,32 +172,53 @@ $1
   esac
 }
 
+w_show_file() {
+  printf '  From %s, stage %s:\n' "$w_file" "${w_stage:-default}"
+}
+
 w_show() { # NAME VALUE: the screen line of one entry
   w_target "$1"
   w_plan="$w_plan$1 ${2:+$w_vault/$w_title}
 "
   if [ -n "$2" ]; then
-    printf '  %s → %s (%s)%s\n' "$1" "$w_vault" "$w_title" "$(secrets_short_mark "$2")"
+    printf '    %s → %s (%s)%s\n' "$1" "$w_vault" "$w_title" "$(secrets_short_mark "$2")"
   else
-    printf '  %s  (empty, skipped)\n' "$1"
+    printf '    %s  (empty, skipped)\n' "$1"
   fi
 }
 
-# w_check NAME VALUE: before any write, dies when the title is in the other vault of the
-# project, or twice in its own vault.
-w_check() {
+# w_dest: after w_target, from the titles listed before any write, sets w_dvault (where the item
+# is written and read), w_exists (0 or 1) and w_kind: "moved" for a guard name whose item the
+# owner moved to the project vault, "guarded" for an open name whose item is in the guarded vault.
+w_dest() {
+  w_np=$(secrets_title_exists "$w_titles_p" "$w_title" "$w_project") || exit 1
+  w_ng=$(secrets_title_exists "$w_titles_g" "$w_title" "$w_project-guarded") || exit 1
+  [ "$w_np$w_ng" != 11 ] ||
+    secrets_die "more than one item is titled $w_title in vaults $w_project and $w_project-guarded. Keep one."
+  w_dvault=$w_vault
+  w_kind=''
+  if [ "$w_guard" = 0 ]; then
+    w_exists=$w_np
+    [ "$w_ng" = 0 ] || w_kind=guarded
+  elif [ "$w_np" = 1 ]; then
+    w_dvault=$w_project w_exists=1 w_kind=moved
+  else
+    w_exists=$w_ng
+  fi
+}
+
+w_check() { # NAME VALUE: before any write, collects the entries that need the owner
   w_target "$1"
   w_seen="$w_seen$1 ${2:+$w_vault/$w_title}
 "
   [ -n "$2" ] || return 0
-  if [ "$w_guard" = 1 ]; then
-    w_other=$w_project w_theirs=$w_titles_p w_mine=$w_titles_g
-  else
-    w_other=$w_project-guarded w_theirs=$w_titles_g w_mine=$w_titles_p
-  fi
-  w_n=$(secrets_title_exists "$w_theirs" "$w_title" "$w_other") || exit 1
-  [ "$w_n" = 0 ] || secrets_die "more than one item is titled $w_title in vault $w_other. Keep one."
-  secrets_title_exists "$w_mine" "$w_title" "$w_vault" > /dev/null
+  w_dest
+  case $w_kind in
+    moved) w_moved="$w_moved$1 is already in vault $w_project; its value will be replaced there
+" ;;
+    guarded) w_blocked="$w_blocked$w_title is in vault $w_project-guarded. Add $1 to --guard, or move the item.
+" ;;
+  esac
 }
 
 w_put() { # NAME VALUE: stores one entry and sets its refs line
@@ -184,23 +234,25 @@ $1 $w_vault/$w_title
 "*) ;;
     *) w_fail 'an import file changed after the screen was shown' ;;
   esac
-  if [ "$w_guard" = 1 ]; then w_mine=$w_titles_g; else w_mine=$w_titles_p; fi
-  w_n=$(secrets_title_exists "$w_mine" "$w_title" "$w_vault") || exit 1
-  printf '%s' "$2" | secrets_item_put "$w_vault" "$w_title" "$w_tags" "$w_n" "$w_project" || exit 1
-  w_file=$(secrets_refs_file "$w_stage" "$w_guard")
-  secrets_refs_set "$w_root/$w_file" "$1" "$w_project" "$w_title"
-  case ", $w_refs, " in *", $w_file, "*) ;; *) w_refs="$w_refs${w_refs:+, }$w_file" ;; esac
-  if [ "$w_guard" = 1 ]; then
-    w_stored_g="$w_stored_g${w_stored_g:+, }$w_title"
-  else
+  w_dest
+  printf '%s' "$2" | secrets_item_put "$w_dvault" "$w_title" "$w_tags" "$w_exists" "$w_project" || exit 1
+  w_refs_file=$(secrets_refs_file "$w_stage" "$w_guard")
+  secrets_refs_set "$w_root/$w_refs_file" "$1" "$w_project" "$w_title"
+  case ", $w_refs, " in *", $w_refs_file, "*) ;; *) w_refs="$w_refs${w_refs:+, }$w_refs_file" ;; esac
+  if [ "$w_guard" = 0 ]; then
     w_stored_p="$w_stored_p${w_stored_p:+, }$w_title"
+  elif [ "$w_kind" = moved ]; then
+    w_stored_m="$w_stored_m${w_stored_m:+, }$w_title"
+  else
+    w_stored_g="$w_stored_g${w_stored_g:+, }$w_title"
   fi
 }
 
 w_verify() { # NAME VALUE: reads the item back as the owner and compares it with VALUE
   [ -n "$2" ] || return 0
   w_target "$1"
-  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" 2>/dev/null && printf x) &&
+  w_dest
+  if w_back=$(op read --cache=false -n "op://$w_dvault/$w_title/password" 2>/dev/null && printf x) &&
     [ "${w_back%x}" = "$2" ]; then
     printf 'secrets: %s match\n' "$1"
   else
@@ -237,8 +289,9 @@ w_keychain_put() {
   w_note "copied the token to the Keychain item op-sa-$w_project of this Mac"
 }
 
+w_keys=''
+w_specs_do w_dup
 w_plan=''
-w_specs_do ''
 printf 'secrets setup for project %s\n' "$w_project"
 [ -z "${SECRETS_OP_ACCOUNT-}" ] || printf '  1Password account: %s\n' "$SECRETS_OP_ACCOUNT"
 printf '  Vaults, each created if missing: agent-tokens, agent-shared, %s%s\n' "$w_project" \
@@ -250,7 +303,7 @@ else
 fi
 if [ -n "$w_specs" ]; then
   printf '  Secrets, as NAME → vault (item title):\n'
-  w_specs_do w_show
+  w_specs_do w_show w_show_file
 fi
 printf 'Press Enter to sign in to 1Password with Touch ID, or Ctrl-C to cancel. '
 IFS= read -r w_answer || w_fail cancelled
@@ -315,6 +368,10 @@ if [ "$w_tok_n" = 0 ] || [ -n "$w_renew" ]; then
       fi
     done
   fi
+  if [ -n "$w_stored" ]; then
+    w_back=$(op read --cache=false "op://agent-tokens/$w_project/password" 2>/dev/null)
+    [ "$w_back" = "$w_token" ] || w_stored=''
+  fi
   if [ -z "$w_stored" ]; then
     w_note "service account $w_sa has no stored token. Delete $w_sa on 1password.com, then start the setup again."
     w_fail 'token not stored'
@@ -341,16 +398,29 @@ if [ -n "$w_specs" ]; then
   if w_has "$w_project-guarded"; then
     w_titles_g=$(secrets_titles "$w_project-guarded" "$w_project") || exit 1
   fi
-  w_specs_do ''
   w_seen=''
+  w_moved=''
+  w_blocked=''
   w_specs_do w_check
   [ "$w_seen" = "$w_plan" ] || w_fail 'an import file changed after the screen was shown'
+  if [ -n "$w_blocked" ]; then
+    w_notes "$w_blocked"
+    w_fail 'item is guarded'
+  fi
+  if [ -n "$w_moved" ]; then
+    w_notes "$w_moved"
+    printf 'Type yes to replace these values in vault %s: ' "$w_project"
+    IFS= read -r w_answer || w_answer=''
+    [ "$w_answer" = yes ] || w_fail cancelled
+  fi
   w_stored_p=''
+  w_stored_m=''
   w_stored_g=''
   w_skipped=''
   w_refs=''
   w_specs_do w_put
   [ -z "$w_stored_p" ] || w_note "stored in $w_project: $w_stored_p"
+  [ -z "$w_stored_m" ] || w_note "stored in $w_project, with tag high-value: $w_stored_m"
   [ -z "$w_stored_g" ] || w_note "stored in $w_project-guarded, with tag high-value: $w_stored_g"
   [ -z "$w_skipped" ] || w_note "skipped (empty value): $w_skipped"
   [ -z "$w_refs" ] || w_note "wrote $w_refs"

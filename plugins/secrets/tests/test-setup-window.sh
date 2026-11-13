@@ -100,7 +100,7 @@ test_window_screen_marks_short() {
   printf 'LOG_LEVEL=info\n' >> .env
   window --import "$TEST_DIR/proj/.env"
   assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
-  assert_eq '  LOG_LEVEL → proj (LOG_LEVEL)  (short value: masked in all output)' \
+  assert_eq '    LOG_LEVEL → proj (LOG_LEVEL)  (short value: masked in all output)' \
     "$(printf '%s\n' "$SCREEN" | grep -F 'LOG_LEVEL →')"
   assert_not_contains "$SCREEN" info
   assert_contains "$SCREEN" 'secrets: LOG_LEVEL match'
@@ -230,16 +230,124 @@ test_window_existing_vault_needs_yes() {
   assert_eq val-a-longx "$(stored Proj A)"
 }
 
-test_window_title_in_other_vault() {
+test_window_open_name_in_guarded_vault() {
   sw_repo
   fake_item agent-tokens proj tok-1
   fake_keychain op-sa-proj tok-1
   mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj"
   fake_item proj-guarded A val-old
   window --import "$TEST_DIR/proj/.env"
-  assert_eq 'failed: more than one item is titled A in vault proj-guarded. Keep one.' "$(first_line "$RESULT")"
+  assert_eq 'failed: item is guarded' "$(first_line "$RESULT")"
+  assert_contains "$SCREEN" 'secrets: A is in vault proj-guarded. Add A to --guard, or move the item.'
+  assert_contains "$RESULT" 'secrets: A is in vault proj-guarded. Add A to --guard, or move the item.'
   assert_not_contains "$(op_log)" 'item create'
   assert_not_contains "$(op_log)" 'item edit'
+  fake_item proj A val-old
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: more than one item is titled A in vaults proj and proj-guarded. Keep one.' \
+    "$(first_line "$RESULT")" "the same title in both vaults"
+  assert_not_contains "$(op_log)" 'item create'
+  assert_not_contains "$(op_log)" 'item edit'
+}
+
+# sw_approved: a first setup with G guarded, then the owner moves item G into vault proj.
+sw_approved() {
+  window --import "$TEST_DIR/proj/.env" --guard G
+  [ "$RC" = 0 ] || fail "first run (screen: $SCREEN)"
+  mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj-guarded/G.tags" "$FAKE_OP_DIR/vaults/proj/"
+  printf 'A=val-a-long\nG=val-g-new\n' > .env
+  : > "$FAKE_OP_DIR/argv.log"
+}
+
+test_window_rerun_after_approval() {
+  sw_repo
+  sw_approved
+  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
+  assert_contains "$SCREEN" 'secrets: G is already in vault proj; its value will be replaced there'
+  assert_eq val-g-newx "$(stored proj G)" "replaced in proj"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/G.tags")" "tag kept"
+  assert_contains "$(op_log)" 'item edit G --vault proj --tags high-value'
+  [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "an item G in proj-guarded"
+  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "guarded refs"
+  assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "open refs"
+  assert_contains "$SCREEN" 'secrets: G match'
+}
+
+test_window_rerun_after_approval_no() {
+  sw_repo
+  sw_approved
+  printf '\nno\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq 'failed: cancelled' "$(first_line "$RESULT")"
+  assert_not_contains "$(op_log)" 'item create'
+  assert_not_contains "$(op_log)" 'item edit'
+  assert_eq val-g-longx "$(stored proj G)" "unchanged"
+}
+
+test_window_screen_shows_files() {
+  sw_repo
+  mkdir real
+  printf 'B=val-b-long\n' > real/vals.env
+  ln -s real/vals.env .env.e2e
+  : > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/.env.e2e"
+  assert_contains "$SCREEN" "From $TEST_DIR/proj/.env, stage default:
+    A → proj (A)
+    G → proj (G)"
+  assert_contains "$SCREEN" "From $TEST_DIR/proj/real/vals.env, stage e2e:
+    B → proj (B.e2e)"
+  assert_not_contains "$SCREEN" '.env.e2e'
+}
+
+test_window_reads_the_shown_file() {
+  sw_repo
+  printf 'G=val-g-other\n' > other.env
+  printf 'G=val-g-shown\n' > shown.env
+  ln -s shown.env .env.e2e
+  window_bg --import "$TEST_DIR/proj/.env.e2e"
+  window_wait 'Press Enter'
+  ln -sfn other.env .env.e2e
+  printf '\n' >&5
+  window_end
+  assert_eq ok "$(first_line "$RESULT")" "result"
+  assert_eq val-g-shownx "$(stored proj G.e2e)"
+}
+
+test_window_import_unreadable() {
+  sw_repo
+  mkdir adir
+  ln -s nowhere.env dangling.env
+  for _p in missing.env adir dangling.env; do
+    window --import "$TEST_DIR/proj/$_p"
+    assert_eq "failed: cannot read $TEST_DIR/proj/$_p" "$(first_line "$RESULT")" "$_p"
+    assert_not_contains "$SCREEN" 'Press Enter' "$_p"
+  done
+  window --import "$TEST_DIR/proj/$(printf 'a\033[2Jb.env')"
+  assert_eq 'failed: an import path holds a control character' "$(first_line "$RESULT")"
+  assert_eq '' "$(op_log)" "op calls"
+}
+
+test_window_repeated_name() {
+  sw_repo
+  printf 'A=val-a-other\n' > .env.local
+  ln -s .env.local link.env
+  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/link.env"
+  assert_eq "failed: A is in $TEST_DIR/proj/.env and $TEST_DIR/proj/.env.local for the same stage. Keep one." \
+    "$(first_line "$RESULT")"
+  assert_not_contains "$SCREEN" 'Press Enter'
+  assert_eq '' "$(op_log)" "op calls"
+}
+
+test_window_token_item_readback() {
+  sw_repo
+  export FAKE_OP_READ_CHANGE=proj
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: token not stored' "$(first_line "$RESULT")"
+  assert_contains "$(op_log)" 'read --cache=false op://agent-tokens/proj/password'
+  assert_contains "$SCREEN" 'Delete proj-agent on 1password.com'
+  assert_eq '' "$(sec_log)" "Keychain calls"
 }
 
 test_window_token_store_fails() {
