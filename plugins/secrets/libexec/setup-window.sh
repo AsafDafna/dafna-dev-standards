@@ -199,15 +199,15 @@ w_show() { # NAME VALUE: the screen line of one entry
   fi
 }
 
-# w_dest: after w_target, from the titles listed before any write, sets w_dvault (where the item
-# is written and read), w_exists (0 or 1) and w_kind: "skip" for a guard name whose title is in
-# the project vault, "guarded" for an open name whose item is in the guarded vault.
+# w_dest NAME: w_target, then, from the titles listed before any write, sets w_exists (0 or 1)
+# and w_kind: "skip" for a guard name whose title is in the project vault, "guarded" for an open
+# name whose item is in the guarded vault.
 w_dest() {
+  w_target "$1"
   w_np=$(secrets_title_exists "$w_titles_p" "$w_title" "$w_project") || exit 1
   w_ng=$(secrets_title_exists "$w_titles_g" "$w_title" "$w_project-guarded") || exit 1
   [ "$w_np$w_ng" != 11 ] ||
     secrets_die "more than one item is titled $w_title in vaults $w_project and $w_project-guarded. Keep one."
-  w_dvault=$w_vault
   w_kind=''
   if [ "$w_guard" = 0 ]; then
     w_exists=$w_np
@@ -224,8 +224,7 @@ w_dest() {
 # guarded secret, and reading or comparing it would tell its state back to the agent.
 w_check() {
   [ -n "$2" ] || return 0
-  w_target "$1"
-  w_dest
+  w_dest "$1"
   case $w_kind in
     skip)
       w_nskip=$((w_nskip + 1))
@@ -241,10 +240,9 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
     w_skipped="$w_skipped${w_skipped:+, }$1"
     return 0
   fi
-  w_target "$1"
-  w_dest
+  w_dest "$1"
   [ "$w_kind" != skip ] || return 0
-  printf '%s' "$2" | secrets_item_put "$w_dvault" "$w_title" "$w_tags" "$w_exists" "$w_project" || exit 1
+  printf '%s' "$2" | secrets_item_put "$w_vault" "$w_title" "$w_tags" "$w_exists" "$w_project" || exit 1
   if [ "$w_guard" = 0 ]; then
     w_stored_p="$w_stored_p${w_stored_p:+, }$w_title"
   else
@@ -257,10 +255,9 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
 
 w_verify() { # NAME VALUE: reads the item back as the owner and compares it with VALUE
   [ -n "$2" ] || return 0
-  w_target "$1"
-  w_dest
+  w_dest "$1"
   [ "$w_kind" != skip ] || return 0
-  if w_back=$(op read --cache=false -n "op://$w_dvault/$w_title/password" 2>/dev/null && printf x) &&
+  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" 2>/dev/null && printf x) &&
     [ "${w_back%x}" = "$2" ]; then
     printf 'secrets: %s match\n' "$1"
     w_checked=$((w_checked + 1))
@@ -296,6 +293,50 @@ w_keychain_put() {
   printf '%s' "$w_token" | secrets_keychain_put "$w_project" ||
     w_fail "cannot write the Keychain item op-sa-$w_project"
   w_note "copied the token to the Keychain item op-sa-$w_project of this Mac"
+}
+
+w_token_new() { # sets w_token to a new service account's token, stored in agent-tokens and the Keychain
+  # Until the token is in agent-tokens and the Keychain, it exists only in memory: a signal here
+  # would lose it and leave a service account behind. Child processes inherit the ignore.
+  trap '' HUP INT TERM
+  w_token=$(op service-account create "$w_sa" --vault "$w_project:read_items,write_items" \
+    --vault agent-shared:read_items --raw 2> "$w_tmp/err") ||
+    secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not create service account $w_sa"
+  w_stored=''
+  if [ -n "$w_token" ]; then
+    for w_try in 1 2; do
+      [ "$w_try" = 1 ] || sleep 2
+      if printf '%s' "$w_token" | secrets_item_put agent-tokens "$w_project" '' "$w_tok_n" "$w_project"; then
+        w_stored=1
+        break
+      fi
+    done
+  fi
+  if [ -n "$w_stored" ]; then
+    w_back=$(op read --cache=false "op://agent-tokens/$w_project/password" 2>/dev/null)
+    [ "$w_back" = "$w_token" ] || w_stored=''
+  fi
+  if [ -z "$w_stored" ]; then
+    w_note "service account $w_sa has no stored token. Delete $w_sa on 1password.com, then start the setup again."
+    w_fail 'token not stored'
+  fi
+  rm -f "$w_tmp/reason"
+  w_note "created service account $w_sa, with its token in agent-tokens"
+  w_keychain_put
+  w_traps
+}
+
+w_token_copy() { # sets w_token from agent-tokens, and the Keychain item to it when it differs
+  w_token=$(op read --cache=false "op://agent-tokens/$w_project/password" 2> "$w_tmp/err") ||
+    secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not read item $w_project in vault agent-tokens"
+  [ -n "$w_token" ] || w_fail "item $w_project in vault agent-tokens is empty"
+  w_kc=$(w_keychain)
+  w_rc=$?
+  case $w_rc in
+    0 | 44) ;;
+    *) secrets_die "cannot read the Keychain item op-sa-$w_project (security exit $w_rc)" ;;
+  esac
+  [ "$w_kc" = "$w_token" ] || w_keychain_put
 }
 
 printf 'secrets setup for project %s\n' "$w_project"
@@ -361,45 +402,9 @@ w_vault_make "$w_project"
 [ -z "$w_made" ] || w_note "created vaults: $w_made"
 
 if [ "$w_tok_n" = 0 ] || [ -n "$w_renew" ]; then
-  # Until the token is in agent-tokens and the Keychain, it exists only in memory: a signal here
-  # would lose it and leave a service account behind. Child processes inherit the ignore.
-  trap '' HUP INT TERM
-  w_token=$(op service-account create "$w_sa" --vault "$w_project:read_items,write_items" \
-    --vault agent-shared:read_items --raw 2> "$w_tmp/err") ||
-    secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not create service account $w_sa"
-  w_stored=''
-  if [ -n "$w_token" ]; then
-    for w_try in 1 2; do
-      [ "$w_try" = 1 ] || sleep 2
-      if printf '%s' "$w_token" | secrets_item_put agent-tokens "$w_project" '' "$w_tok_n" "$w_project"; then
-        w_stored=1
-        break
-      fi
-    done
-  fi
-  if [ -n "$w_stored" ]; then
-    w_back=$(op read --cache=false "op://agent-tokens/$w_project/password" 2>/dev/null)
-    [ "$w_back" = "$w_token" ] || w_stored=''
-  fi
-  if [ -z "$w_stored" ]; then
-    w_note "service account $w_sa has no stored token. Delete $w_sa on 1password.com, then start the setup again."
-    w_fail 'token not stored'
-  fi
-  rm -f "$w_tmp/reason"
-  w_note "created service account $w_sa, with its token in agent-tokens"
-  w_keychain_put
-  w_traps
+  w_token_new
 else
-  w_token=$(op read --cache=false "op://agent-tokens/$w_project/password" 2> "$w_tmp/err") ||
-    secrets_op_fail "$(cat "$w_tmp/err")" "$w_project" "could not read item $w_project in vault agent-tokens"
-  [ -n "$w_token" ] || w_fail "item $w_project in vault agent-tokens is empty"
-  w_kc=$(w_keychain)
-  w_rc=$?
-  case $w_rc in
-    0 | 44) ;;
-    *) secrets_die "cannot read the Keychain item op-sa-$w_project (security exit $w_rc)" ;;
-  esac
-  [ "$w_kc" = "$w_token" ] || w_keychain_put
+  w_token_copy
 fi
 
 w_nskip=0

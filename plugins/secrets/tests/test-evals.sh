@@ -198,8 +198,6 @@ test_op_wrapper_maps_the_run_token() {
   assert_contains "$ERR" 'DecodeSACredentials'
 }
 
-# fake_claude CODE [SIGNAL]: a claude on the PATH that records its arguments and whether the
-# dispatcher is installed, then exits CODE, or sends SIGNAL to run.sh first.
 # fake_claude CODE [SIGNAL]: a claude on the PATH that records its arguments, keeps a copy of the
 # installed dispatcher, builds a run-with-secrets workspace as the eval would (HOME of its own,
 # ~/.local/bin first on the PATH) and runs the check there, then exits CODE, or sends SIGNAL to
