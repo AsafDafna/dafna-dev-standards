@@ -26,14 +26,14 @@ High-value means the secret can change production data, spend money, or control 
 |---|---|
 | `secrets run [--stage NAME] [--guarded] -- CMD` | `secrets run -- npm run dev` |
 | `secrets import [--names-only] FILE[:STAGE]...` | `secrets import --names-only .env.local` |
-| `secrets add NAME [--stage NAME]` | `printf '%s' "$VALUE" \| secrets add API_KEY` |
+| `secrets add NAME [--stage NAME]` | `./make-token.sh \| secrets add API_KEY` |
 | `secrets setup PROJECT [--import FILE[:STAGE]]... [--guard NAME,...] [--renew]` | `secrets setup myapp --import .env --guard STRIPE_KEY` |
 | `secrets status` | `secrets status` |
 
 - `run` passes the exit code of the command through. The command never gets the service-account token. `--stage` reads `.secrets-refs.<stage>`. `--guarded` also reads the guarded refs file of that stage.
 - `import` stores each value of an env file in the project vault and writes the refs lines. The stage is `<x>` for `.env.<x>`, the default for `.env` and `.env.local`, and `:STAGE` wins. It takes at most 50 names per file. Larger files go through `setup --import`. `import` and `add` refuse a guarded name.
 - `import --names-only` prints names and stages, never values. It marks a value shorter than 8 characters: `op run` hides such a value everywhere in the output of a command.
-- `add` reads one value from stdin and replaces an older value of the same name.
+- `add` reads one value from stdin and replaces an older value of the same name. Pipe in the output of the command that creates the value (`./make-token.sh | secrets add NAME`), or the owner runs `secrets add NAME` in a terminal and types the value at the hidden prompt.
 - `setup` opens a Terminal window and waits up to 15 minutes for the owner. Run it with `run_in_background`, then end the turn. Its screen shows each import file's full path and every name with its target vault.
 - `status` reads names only. Inside a sandboxed tool call it cannot prove that the host app lacks the 1Password folder permission.
 
@@ -45,7 +45,7 @@ Before `setup --import` or `import`, run `secrets import --names-only` on every 
 |---|---|
 | `no token for P on this Mac. Run: secrets setup P` | Ask the owner. Setup needs the owner at the Mac. |
 | `the token for P does not work. Run: secrets setup P, with --renew ...` | Ask the owner to run setup with `--renew`. |
-| `cannot read NAME (item T in vault V)` | The item is missing. Store it with `secrets add`, or fix the refs line. |
+| `cannot read NAME (item T in vault V)` | Read the next line first. If it asks to move the item, follow that line: ask the owner, and go on with other work. Otherwise store the value with `secrets add NAME` (with `--stage` for a stage ref), or fix the refs line. Never store a high-value secret this way. |
 | `ask the owner to move T from P-guarded to P` | Ask the owner to approve the item in the 1Password app. Go on with other work. |
 | `NAME is a guarded secret. Ask the owner to change it in 1Password.` | Do not work around it. Ask the owner. |
 | `more than one item is titled T in vault V. Keep one.` | Ask the owner to delete the extra item. |
@@ -53,5 +53,6 @@ Before `setup --import` or `import`, run `secrets import --names-only` on every 
 | `FILE line N: ... Fix the line, then try again.` | The line reads differently in env loaders (a `$` or `\`, backticks, `#` without quotes, a CR, a multi-line value). The owner stores it with `secrets add NAME` or in the 1Password app, and removes the line. |
 | `1Password is not reachable` or `the 1Password request limit is reached` | Wait, then try again once. |
 | `op failed: ...` | Report the line to the owner. Do not retry in a loop. |
+| A `FAIL: ...` line of `status`, `cannot read the Keychain item op-sa-P (security exit N)`, or `FILE has N names. import takes at most 50; ...` | You cannot fix these. Report the line to the owner. |
 
 More detail: the plugin README.
