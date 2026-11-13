@@ -4,6 +4,7 @@
 # subshell, so call a printing function as `x=$(f) || exit 1`.
 
 secrets_tab=$(printf '\t')
+secrets_cr=$(printf '\r')
 
 secrets_die() {
   printf 'secrets: %s\n' "$1" >&2
@@ -170,4 +171,147 @@ secrets_titles() {
   rm -f "$_ti_err"
   [ "$_ti_rc" -eq 0 ] || secrets_op_fail "$_ti_msg" "${2:-$1}"
   printf '%s\n' "$_ti_json" | jq -r '.[].title'
+}
+
+# secrets_spec_file SPEC: the FILE part of FILE[:STAGE].
+secrets_spec_file() {
+  printf '%s\n' "${1%:*}"
+}
+
+# secrets_stage_of SPEC: STAGE when SPEC is FILE:STAGE, else <x> for a file named .env.<x>,
+# else "" (the default stage, also for .env.local).
+secrets_stage_of() {
+  case $1 in
+    *:*) _so_stage=${1##*:} ;;
+    *)
+      _so_stage=${1##*/}
+      case $_so_stage in
+        .env.local) _so_stage='' ;;
+        .env.?*) _so_stage=${_so_stage#.env.} ;;
+        *) _so_stage='' ;;
+      esac
+      [ -n "$_so_stage" ] || { echo; return 0; } ;;
+  esac
+  secrets_check stage "$_so_stage"
+  printf '%s\n' "$_so_stage"
+}
+
+secrets_env_bad() { # REASON: for the line of secrets_env_each that it reads now
+  secrets_die "$_ee_file line $_ee_n: $1. Fix the line, then try again."
+}
+
+# secrets_env_each FILE CALLBACK: calls CALLBACK NAME VALUE for each entry of the env file,
+# with VALUE "" for an empty one. CALLBACK must be a shell function, so that the value is in no
+# argv. A line it cannot parse dies before its callback runs; earlier lines had theirs.
+secrets_env_each() {
+  _ee_file=$1
+  [ -f "$_ee_file" ] && [ -r "$_ee_file" ] || secrets_die "cannot read $_ee_file"
+  _ee_n=0
+  # The file is on fd 3, so that a program the callback starts cannot read the rest of it.
+  while IFS= read -r _ee_line <&3 || [ -n "$_ee_line" ]; do
+    _ee_n=$((_ee_n + 1))
+    _ee_line=${_ee_line%"$secrets_cr"}
+    _ee_line=${_ee_line#"${_ee_line%%[![:blank:]]*}"}
+    case $_ee_line in '' | '#'*) continue ;; esac
+    case $_ee_line in
+      export[[:blank:]]*)
+        _ee_line=${_ee_line#export}
+        _ee_line=${_ee_line#"${_ee_line%%[![:blank:]]*}"} ;;
+    esac
+    case $_ee_line in *=*) ;; *) secrets_env_bad 'bad name' ;; esac
+    _ee_name=${_ee_line%%=*}
+    secrets_valid name "$_ee_name" || secrets_env_bad 'bad name'
+    _ee_raw=${_ee_line#*=}
+    _ee_val=${_ee_raw#"${_ee_raw%%[![:blank:]]*}"}
+    _ee_q=''
+    case $_ee_val in
+      \'*) _ee_q=\' ;;
+      \"*) _ee_q=\" ;;
+    esac
+    if [ -n "$_ee_q" ]; then
+      _ee_rest=${_ee_val#?}
+      case $_ee_rest in *"$_ee_q"*) ;; *) secrets_env_bad 'no closing quote' ;; esac
+      _ee_val=${_ee_rest%%"$_ee_q"*}
+      _ee_rest=${_ee_rest#*"$_ee_q"}
+      _ee_rest=${_ee_rest#"${_ee_rest%%[![:blank:]]*}"}
+    else
+      _ee_rest=''
+      _ee_val=${_ee_raw%%[[:blank:]]#*}
+      _ee_val=${_ee_val#"${_ee_val%%[![:blank:]]*}"}
+      _ee_val=${_ee_val%"${_ee_val##*[![:blank:]]}"}
+    fi
+    if [ "$_ee_q" != \' ]; then
+      case $_ee_val in *'$'* | *\\*) secrets_env_bad "uses \$ or \\" ;; esac
+    fi
+    case $_ee_rest in '' | '#'*) ;; *) secrets_env_bad 'no closing quote' ;; esac
+    "$2" "$_ee_name" "$_ee_val"
+  done 3< "$_ee_file"
+}
+
+# secrets_env_check SPEC...: parses each env file, and dies when one NAME comes twice for
+# one stage, in one file or across files.
+secrets_env_check() {
+  _ec_seen=''
+  for _ec_spec do
+    _ec_file=$(secrets_spec_file "$_ec_spec")
+    _ec_stage=$(secrets_stage_of "$_ec_spec") || exit 1
+    secrets_env_each "$_ec_file" secrets_env_seen
+  done
+}
+
+secrets_env_seen() { # NAME VALUE: the callback of secrets_env_check
+  _es_key="
+$_ec_stage$secrets_tab$1$secrets_tab"
+  case $_ec_seen in
+    *"$_es_key"*)
+      _es_first=${_ec_seen#*"$_es_key"}
+      secrets_die "$1 is in ${_es_first%%'
+'*} and $_ec_file for the same stage. Keep one." ;;
+  esac
+  _ec_seen=$_ec_seen$_es_key$_ec_file
+}
+
+# secrets_short_mark VALUE: op run masks every match of a value in the output, and a short
+# value such as "info" also matches ordinary words, so a value of 1 to 7 characters gets this mark.
+secrets_short_mark() {
+  [ "${#1}" -lt 1 ] || [ "${#1}" -gt 7 ] || printf '  (short value: masked in all output)'
+}
+
+# secrets_item_put VAULT TITLE TAGS EXISTS: stores stdin, as it is, as the password of item
+# TITLE. EXISTS 0 creates the item, 1 replaces its value. TAGS "" sets no tag.
+secrets_item_put() {
+  _ip_vault=$1
+  _ip_title=$2
+  if [ "$4" = 1 ]; then
+    set -- item edit "$2" --vault "$1" ${3:+--tags "$3"}
+  else
+    set -- item create --vault "$1" ${3:+--tags "$3"} -
+  fi
+  # op prints the stored item, value included, on stdout.
+  _ip_err=$(jq -Rsc --arg title "$_ip_title" '{title: $title, category: "PASSWORD",
+      fields: [{id: "password", type: "CONCEALED", purpose: "PASSWORD", label: "password", value: .}]}' |
+    op "$@" 2>&1 >/dev/null) || secrets_op_fail "$_ip_err" "$_ip_vault"
+}
+
+# secrets_refs_set FILE NAME VAULT TITLE: puts the line for NAME in place of its old line,
+# else at the end. The other lines keep their order.
+secrets_refs_set() {
+  _rs_new="$2=op://$3/$4/password"
+  _rs_out=''
+  _rs_done=''
+  if [ -f "$1" ]; then
+    while IFS= read -r _rs_line || [ -n "$_rs_line" ]; do
+      case $_rs_line in
+        "$2="*)
+          [ -z "$_rs_done" ] || continue
+          _rs_line=$_rs_new
+          _rs_done=1 ;;
+      esac
+      _rs_out="$_rs_out$_rs_line
+"
+    done < "$1"
+  fi
+  [ -n "$_rs_done" ] || _rs_out="$_rs_out$_rs_new
+"
+  printf '%s' "$_rs_out" > "$1" || secrets_die "cannot write $1"
 }
