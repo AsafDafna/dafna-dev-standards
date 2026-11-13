@@ -87,6 +87,12 @@ secrets_refs_read() {
     case $_rr_path in /* | */ | */*/*) _rr_ok='' ;; esac
     case $_rr_line in *"$secrets_tab"*) _rr_ok='' ;; esac
     secrets_valid name "$_rr_name" || _rr_ok=''
+    case $_rr_vault in
+      '' | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-]*) _rr_ok='' ;;
+    esac
+    case $_rr_title in
+      '' | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-]*) _rr_ok='' ;;
+    esac
     [ -n "$_rr_ok" ] || secrets_die "${1##*/} line $_rr_n is not NAME=op://vault/title/password"
     _rr_out=$_rr_out$_rr_name$secrets_tab$_rr_vault$secrets_tab$_rr_title'
 '
@@ -158,7 +164,7 @@ secrets_op_fail() {
 # The invalid-token line names PROJECT (default VAULT); pass it when VAULT is agent-shared.
 secrets_titles() {
   _ti_err=$(mktemp) || secrets_die "cannot make a temp file in ${TMPDIR:-/tmp}"
-  _ti_json=$(op item list --vault "$1" --format json 2>"$_ti_err")
+  _ti_json=$(op item list --vault "$1" --format json --cache=false 2>"$_ti_err")
   _ti_rc=$?
   _ti_msg=$(cat "$_ti_err")
   rm -f "$_ti_err"

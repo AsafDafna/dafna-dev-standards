@@ -55,6 +55,18 @@ test_refs_bad_line() {
   assert_eq '' "$OUT" "stdout for the good line before the bad one"
 }
 
+# shellcheck disable=SC2016 # the refs lines hold a literal $, which op would expand
+test_refs_strict_characters() {
+  for ref in 'op://p/$T/password' 'op://$V/T/password' 'op://p/${X}/password' 'op://p/a b/password' \
+    'op://p/a"b/password' "op://p'x/T/password" 'op://p/a`b/password' 'op://p/a\b/password'; do
+    printf 'A=%s\n' "$ref" > "$HOME/.secrets-refs"
+    assert_status 1 secrets_refs_read "$HOME/.secrets-refs"
+    assert_eq 'secrets: .secrets-refs line 1 is not NAME=op://vault/title/password' "$ERR" "$ref"
+  done
+  printf 'A=op://p-1/My_Item.v-2/password\n' > "$HOME/.secrets-refs"
+  assert_status 0 secrets_refs_read "$HOME/.secrets-refs"
+}
+
 test_reserved_names() {
   for p in agent-shared agent-tokens x-guarded; do
     assert_status 1 secrets_check project "$p"

@@ -46,9 +46,8 @@ test_run_stage() {
 
 test_run_guarded_adds_file() {
   run_repo
-  printf 'G=op://proj-guarded/G/password\n' > .secrets-refs.guarded
-  fake_item proj-guarded G v-g
-  fake_token tok proj proj-guarded
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
+  fake_item proj G v-g
   assert_status 0 secrets run --guarded -- sh -c 'test "$G" = v-g && test "$A" = v1'
   assert_status 0 secrets run -- sh -c 'test -z "${G+x}" && test "$A" = v1'
 }
@@ -65,11 +64,10 @@ test_run_hard_stop_names_each() {
 
 test_run_guarded_hint() {
   run_repo
-  printf 'G=op://proj-guarded/G/password\n' > .secrets-refs.guarded
-  mkdir "$FAKE_OP_DIR/vaults/proj-guarded"
-  fake_token tok proj proj-guarded
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
+  fake_item proj-guarded G v-g
   assert_status 1 secrets run --guarded -- true
-  assert_contains "$ERR" 'secrets: cannot read G (item G in vault proj-guarded)'
+  assert_contains "$ERR" 'secrets: cannot read G (item G in vault proj)'
   assert_contains "$ERR" 'ask the owner to move G from proj-guarded to proj'
 }
 
@@ -78,6 +76,21 @@ test_run_duplicate_title() {
   fake_item proj A v1 '' 2
   assert_status 1 secrets run -- true
   assert_contains "$ERR" 'secrets: more than one item is titled A in vault proj. Keep one.'
+}
+
+test_run_bad_refs_chars_no_op() {
+  run_repo
+  printf 'A=op://proj/$OP_SERVICE_ACCOUNT_TOKEN/password\n' > .secrets-refs
+  assert_status 1 secrets run -- true
+  assert_contains "$ERR" 'line 1 is not NAME=op://vault/title/password'
+  [ ! -s "$FAKE_OP_DIR/argv.log" ] || fail "op was called"
+}
+
+test_run_titles_uncached() {
+  run_repo
+  printf 'B=op://proj/B/password\n' >> .secrets-refs
+  assert_status 1 secrets run -- true
+  assert_contains "$(cat "$FAKE_OP_DIR/argv.log")" 'item list --vault proj --format json --cache=false'
 }
 
 test_run_no_token() {
