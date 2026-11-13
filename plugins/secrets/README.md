@@ -42,7 +42,7 @@ Set `SECRETS_OP_ACCOUNT` to the 1Password account for secrets in the owner's she
 
 `setup` waits up to 15 minutes for the owner. Start it with `run_in_background`. The window shows each import file's full path and every name with its target vault. It is safe to run again: it creates only what is missing, and on a second Mac it installs the existing token into that Mac's Keychain.
 
-A guard name whose item is already in the project vault is skipped with a notice, because the owner approved it. A name that is not guarded whose item is in the guarded vault stops the setup.
+A guard name whose item is already in the project vault is skipped with a notice. Agents can write that vault, so an item there proves nothing about who put it there. Setup does not read or change it. If the owner did not move it there, the owner deletes it, or moves it to `PROJECT-guarded`, and runs setup again. A name that is not guarded whose item is in the guarded vault stops the setup.
 
 ### `run`
 
