@@ -1,0 +1,343 @@
+# shellcheck shell=sh
+# Tests of the setup window, libexec/setup-window.sh. Run: sh run.sh test-setup-window.sh
+# Most tests run the script directly, as the launcher does, with stdin from $TEST_DIR/stdin.
+
+secrets() { sh "$PLUGIN_DIR/bin/secrets" "$@"; }
+
+op_log() { cat "$FAKE_OP_DIR/argv.log" 2>/dev/null; }
+
+sec_log() { cat "$FAKE_SEC_DIR/argv.log" 2>/dev/null; }
+
+keychain() { cat "$FAKE_SEC_DIR/items/op-sa-$1" 2>/dev/null; }
+
+# stored VAULT TITLE: the stored value with an x after it, so a trailing newline shows.
+stored() { cat "$FAKE_OP_DIR/vaults/$1/$2.value" && printf x; }
+
+first_line() { printf '%s\n' "${1%%
+*}"; }
+
+# sw_repo: the repo proj (the working folder), with .env holding A and G, and the result folder.
+sw_repo() {
+  new_repo "$TEST_DIR/proj" || return 1
+  cd "$TEST_DIR/proj" || return 1
+  printf 'A=val-a-long\nG=val-g-long\n' > .env
+  mkdir "$TEST_DIR/res"
+}
+
+# window [FLAG...]: runs the window for project proj, with stdin from $TEST_DIR/stdin (default:
+# one Enter). Sets RC, SCREEN (its output) and RESULT (the result file; empty when there is none).
+window() {
+  rm -f "$TEST_DIR/res/result"
+  [ -f "$TEST_DIR/stdin" ] || printf '\n' > "$TEST_DIR/stdin"
+  "$PLUGIN_DIR/libexec/setup-window.sh" "$TEST_DIR/proj" "$TEST_DIR/res/result" proj "$@" \
+    < "$TEST_DIR/stdin" > "$TEST_DIR/screen" 2>&1
+  RC=$?
+  SCREEN=$(cat "$TEST_DIR/screen")
+  RESULT=$(cat "$TEST_DIR/res/result" 2>/dev/null)
+}
+
+# window_bg [FLAG...]: starts the window in its own process group, as a Terminal window runs,
+# with its stdin on fd 5 of the test. Sets W_PID.
+window_bg() {
+  mkfifo "$TEST_DIR/enter"
+  perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$PLUGIN_DIR/libexec/setup-window.sh" \
+    "$TEST_DIR/proj" "$TEST_DIR/res/result" proj "$@" < "$TEST_DIR/enter" > "$TEST_DIR/screen" 2>&1 &
+  W_PID=$!
+  exec 5> "$TEST_DIR/enter"
+}
+
+window_wait() { # TEXT: returns once the window output shows TEXT
+  _ww_n=0
+  until grep -qF -- "$1" "$TEST_DIR/screen"; do
+    [ "$_ww_n" -lt 20 ] || fail "the window did not show [$1]"
+    sleep 1
+    _ww_n=$((_ww_n + 1))
+  done
+}
+
+window_end() { # closes the window's stdin, waits for it, and sets RC and RESULT
+  exec 5>&-
+  wait "$W_PID"
+  RC=$?
+  RESULT=$(cat "$TEST_DIR/res/result" 2>/dev/null)
+}
+
+test_window_no_op_before_enter() {
+  sw_repo
+  export FAKE_OPEN_STDIN=''
+  assert_status 1 secrets setup proj --import .env --guard G
+  assert_eq 'secrets: setup failed: cancelled' "$ERR"
+  assert_eq '' "$(op_log)" "op calls"
+  assert_contains "$(cat "$FAKE_OPEN_DIR/window.log")" 'A → proj (A)' "the screen"
+}
+
+test_window_agent_gone() {
+  sw_repo
+  rmdir "$TEST_DIR/res"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 1 "$RC" "exit"
+  assert_eq '' "$(op_log)" "op calls"
+  assert_contains "$SCREEN" 'secrets: setup failed: the agent stopped waiting'
+  [ ! -e "$TEST_DIR/res" ] || fail "the window made the result folder"
+}
+
+test_window_screen_lists_targets() {
+  sw_repo
+  printf 'B=val-b-long\nE=\n' > .env.e2e
+  : > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/.env.e2e" --guard G
+  assert_contains "$SCREEN" 'A → proj (A)'
+  assert_contains "$SCREEN" 'G → proj-guarded (G)'
+  assert_contains "$SCREEN" 'B → proj (B.e2e)'
+  assert_contains "$SCREEN" 'E  (empty, skipped)'
+  assert_contains "$SCREEN" 'agent-tokens, agent-shared, proj, proj-guarded'
+  assert_contains "$SCREEN" 'proj-agent'
+  assert_eq 'failed: cancelled' "$RESULT"
+}
+
+test_window_screen_marks_short() {
+  sw_repo
+  printf 'LOG_LEVEL=info\n' >> .env
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
+  assert_eq '  LOG_LEVEL → proj (LOG_LEVEL)  (short value: masked in all output)' \
+    "$(printf '%s\n' "$SCREEN" | grep -F 'LOG_LEVEL →')"
+  assert_not_contains "$SCREEN" info
+  assert_contains "$SCREEN" 'secrets: LOG_LEVEL match'
+}
+
+test_window_first_call_is_vault_list() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'vault list --format json' "$(op_log | sed -n 1p)"
+}
+
+test_window_two_accounts() {
+  sw_repo
+  export FAKE_OP_ACCOUNTS=2
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: set SECRETS_OP_ACCOUNT' "$(first_line "$RESULT")"
+  assert_eq "$(printf '%s\n' 'vault list --format json' 'account list --format json' signout)" "$(op_log)" "op calls"
+  : > "$FAKE_OP_DIR/argv.log"
+  export SECRETS_OP_ACCOUNT=account2.example.invalid
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq ok "$(first_line "$RESULT")" "with SECRETS_OP_ACCOUNT (screen: $SCREEN)"
+  assert_contains "$SCREEN" 'account2.example.invalid'
+  assert_not_contains "$(op_log)" 'account list'
+}
+
+test_window_new_project() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq 0 "$RC" "exit (screen: $SCREEN)"
+  _log=$(op_log)
+  for _v in agent-tokens agent-shared proj proj-guarded; do
+    assert_contains "$_log" "vault create $_v"
+  done
+  assert_eq 4 "$(printf '%s\n' "$_log" | grep -c '^vault create ')" "vault creates"
+  assert_eq 'service-account create proj-agent --vault proj:read_items,write_items --vault agent-shared:read_items --raw' \
+    "$(printf '%s\n' "$_log" | grep '^service-account create')"
+  assert_eq ops_fake_proj-agentx "$(stored agent-tokens proj)" "token item"
+  assert_eq ops_fake_proj-agent "$(keychain proj)" "Keychain"
+  assert_eq val-a-longx "$(stored proj A)"
+  assert_eq val-g-longx "$(stored proj-guarded G)"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj-guarded/G.tags")" "tag of G"
+  [ ! -f "$FAKE_OP_DIR/vaults/proj/A.tags" ] || fail "A has a tag"
+  assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)"
+  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)"
+  assert_contains "$SCREEN" 'secrets: A match'
+  assert_contains "$SCREEN" 'secrets: G match'
+  assert_contains "$SCREEN" 'secrets: keychain match'
+  assert_eq signout "$(printf '%s\n' "$_log" | sed -n '$p')" "last op call"
+  assert_eq ok "$(first_line "$RESULT")"
+  assert_contains "$RESULT" 'secrets: stored in proj: A'
+}
+
+test_window_again_creates_nothing() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq 0 "$RC" "first run (screen: $SCREEN)"
+  : > "$FAKE_OP_DIR/argv.log"
+  : > "$FAKE_SEC_DIR/argv.log"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq 0 "$RC" "second run (screen: $SCREEN)"
+  assert_not_contains "$(op_log)" 'vault create'
+  assert_not_contains "$(op_log)" 'service-account create'
+  assert_not_contains "$(op_log)" 'item create'
+  assert_eq 0 "$(sec_log | grep -cx -- -i)" "Keychain writes"
+  assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "one refs line"
+  [ ! -f "$FAKE_OP_DIR/vaults/proj/A.copies" ] || fail "a second item titled A"
+}
+
+test_window_second_mac() {
+  sw_repo
+  fake_item agent-tokens proj tok-from-item
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 0 "$RC" "exit (screen: $SCREEN)"
+  assert_eq tok-from-item "$(keychain proj)"
+  assert_not_contains "$(op_log)" 'service-account create'
+  assert_contains "$SCREEN" 'secrets: keychain match'
+}
+
+test_window_stale_keychain() {
+  sw_repo
+  fake_item agent-tokens proj tok-new
+  fake_keychain op-sa-proj tok-old
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj"
+  window
+  assert_eq 0 "$RC" "exit (screen: $SCREEN)"
+  assert_eq tok-new "$(keychain proj)"
+}
+
+test_window_renew() {
+  sw_repo
+  window
+  assert_eq 0 "$RC" "first run (screen: $SCREEN)"
+  window --renew
+  assert_eq 0 "$RC" "renew (screen: $SCREEN)"
+  _sa=$(op_log | sed -n 's/^service-account create \(proj-agent-[0-9]*\) .*/\1/p')
+  case $_sa in
+    proj-agent-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+    *) fail "renewed service account [$_sa]" ;;
+  esac
+  assert_contains "$(op_log)" 'item edit proj --vault agent-tokens'
+  assert_eq "ops_fake_${_sa}x" "$(stored agent-tokens proj)" "token item"
+  [ ! -f "$FAKE_OP_DIR/vaults/agent-tokens/proj.copies" ] || fail "a second token item"
+  assert_eq "ops_fake_$_sa" "$(keychain proj)" "Keychain"
+}
+
+test_window_existing_vault_needs_yes() {
+  sw_repo
+  mkdir -p "$FAKE_OP_DIR/vaults/Proj"
+  printf '\nno\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: vault exists' "$RESULT"
+  assert_not_contains "$(op_log)" create
+  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq ok "$(first_line "$RESULT")" "after yes (screen: $SCREEN)"
+  assert_not_contains "$(op_log)" 'vault create proj'
+  assert_eq val-a-longx "$(stored Proj A)"
+}
+
+test_window_title_in_other_vault() {
+  sw_repo
+  fake_item agent-tokens proj tok-1
+  fake_keychain op-sa-proj tok-1
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj"
+  fake_item proj-guarded A val-old
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: more than one item is titled A in vault proj-guarded. Keep one.' "$(first_line "$RESULT")"
+  assert_not_contains "$(op_log)" 'item create'
+  assert_not_contains "$(op_log)" 'item edit'
+}
+
+test_window_token_store_fails() {
+  sw_repo
+  export FAKE_OP_FAIL_MATCH='item create --vault agent-tokens'
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: token not stored' "$(first_line "$RESULT")"
+  assert_eq 2 "$(op_log | grep -c '^item create --vault agent-tokens')" "tries"
+  assert_contains "$SCREEN" 'Delete proj-agent on 1password.com'
+  assert_contains "$RESULT" 'Delete proj-agent on 1password.com'
+  assert_eq '' "$(sec_log)" "Keychain calls"
+  assert_not_contains "$(op_log)" 'item create --vault proj '
+}
+
+test_window_mismatch() {
+  sw_repo
+  export FAKE_OP_READ_CHANGE=A
+  window --import "$TEST_DIR/proj/.env"
+  assert_contains "$SCREEN" 'secrets: A mismatch'
+  assert_contains "$SCREEN" 'secrets: G match'
+  assert_eq 'failed: mismatch' "$(first_line "$RESULT")"
+  assert_eq signout "$(op_log | sed -n '$p')" "last op call"
+}
+
+test_window_signout_on_error() {
+  sw_repo
+  export FAKE_OP_FAIL_AFTER=1
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: 1Password is not reachable. Check the network, then try again.' "$(first_line "$RESULT")"
+  assert_eq signout "$(op_log | sed -n '$p')" "last op call"
+}
+
+test_window_no_account() {
+  sw_repo
+  export FAKE_OP_FAIL=noaccount
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: no account found' "$(first_line "$RESULT")"
+  assert_contains "$RESULT" '"Integrate with 1Password CLI"'
+  assert_contains "$RESULT" '"Data shared by 1Password and affiliated apps"'
+  assert_contains "$SCREEN" '"Integrate with 1Password CLI"'
+  assert_eq "$(printf '%s\n' 'vault list --format json' signout)" "$(op_log)" "op calls"
+  assert_not_contains "$RESULT" 'SECRETS_OP_ACCOUNT'
+  export SECRETS_OP_ACCOUNT=account9.example.invalid
+  window --import "$TEST_DIR/proj/.env"
+  assert_contains "$RESULT" 'check that SECRETS_OP_ACCOUNT (account9.example.invalid) names an account of this Mac'
+}
+
+test_window_keychain_readback() {
+  sw_repo
+  export FAKE_SEC_TRUNCATE=10
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq 'failed: keychain mismatch' "$(first_line "$RESULT")"
+  assert_not_contains "$SCREEN" 'keychain match'
+}
+
+test_window_interrupt_at_enter() {
+  sw_repo
+  window_bg --import "$TEST_DIR/proj/.env"
+  window_wait 'Press Enter'
+  kill -INT "-$W_PID"
+  window_end
+  assert_eq 130 "$RC" "exit"
+  assert_eq 'failed: cancelled' "$RESULT"
+  assert_eq '' "$(op_log)" "op calls"
+  assert_eq '' "$(ls "$TMPDIR")" "temp folders"
+}
+
+test_window_closed_signs_out() {
+  sw_repo
+  mkdir -p "$FAKE_OP_DIR/vaults/Proj"
+  window_bg --import "$TEST_DIR/proj/.env"
+  window_wait 'Press Enter'
+  printf '\n' >&5
+  window_wait 'Type yes'
+  kill -HUP "-$W_PID"
+  window_end
+  assert_eq 129 "$RC" "exit"
+  assert_eq 'failed: the window was closed' "$RESULT"
+  assert_eq signout "$(op_log | sed -n '$p')" "last op call"
+  assert_not_contains "$(op_log)" create
+  assert_eq '' "$(ls "$TMPDIR")" "temp folders"
+}
+
+test_window_files_changed_after_screen() {
+  sw_repo
+  window_bg --import "$TEST_DIR/proj/.env"
+  window_wait 'Press Enter'
+  printf 'NEW=val-new-long\n' >> .env
+  printf '\n' >&5
+  window_end
+  assert_eq 'failed: an import file changed after the screen was shown' "$(first_line "$RESULT")"
+  assert_not_contains "$(op_log)" 'item create --vault proj '
+}
+
+test_window_no_value_printed() {
+  sw_repo
+  printf 'S=SENTINEL-7f3a\nG=SENTINEL-7f3a-g\n' > .env
+  assert_status 0 secrets setup proj --import .env --guard G
+  assert_eq SENTINEL-7f3ax "$(stored proj S)" "import"
+  assert_contains "$OUT" 'secrets: stored in proj: S' "the result reached the agent"
+  assert_not_contains "$OUT$ERR" SENTINEL-7f3a "agent stdout and stderr"
+  assert_not_contains "$OUT$ERR" ops_fake_ "agent stdout and stderr: the token"
+  assert_contains "$(cat "$SHIM_LOG")" 'jq -Rsc --arg title S ' "the shim log"
+  for _f in "$FAKE_OPEN_DIR/window.log" "$FAKE_OPEN_DIR/launched" "$FAKE_OP_DIR/argv.log" \
+    "$FAKE_SEC_DIR/argv.log" "$SHIM_LOG"; do
+    [ -s "$_f" ] || fail "$_f is empty"
+    assert_not_contains "$(cat "$_f")" SENTINEL-7f3a "$_f"
+    assert_not_contains "$(cat "$_f")" ops_fake_ "$_f: the token"
+  done
+}

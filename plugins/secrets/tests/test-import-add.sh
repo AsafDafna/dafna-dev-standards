@@ -237,6 +237,16 @@ test_item_put_tags_on_replace() {
   assert_contains "$(op_log)" 'item edit B --vault proj --tags high-value'
 }
 
+test_item_put_names_project() {
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-tokens"
+  printf v > "$TEST_DIR/in"
+  export OP_SERVICE_ACCOUNT_TOKEN=ops_unknown
+  assert_status 1 secrets_item_put agent-tokens proj '' 0 proj < "$TEST_DIR/in"
+  assert_eq 'secrets: the token for proj does not work. Run: secrets setup proj, with --renew if the owner revoked it' "$ERR"
+  assert_status 1 secrets_item_put agent-tokens proj '' 0 < "$TEST_DIR/in"
+  assert_contains "$ERR" 'the token for agent-tokens does not work' "PROJECT defaults to VAULT"
+}
+
 test_import_add_duplicate_title() {
   ia_repo
   fake_item proj A val-old '' 2

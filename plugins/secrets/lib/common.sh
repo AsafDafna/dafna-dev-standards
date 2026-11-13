@@ -132,14 +132,15 @@ secrets_token() { # PROJECT
 }
 
 # secrets_keychain_put PROJECT: reads the token on stdin. It goes to security on stdin
-# as well (security -i), so it never shows in a process list.
+# as well (security -i), so it never shows in a process list. The stderr of security is dropped:
+# it is not proven to leave out the command line, which holds the token.
 secrets_keychain_put() {
   secrets_check project "$1"
   _kp_token=$(cat)
   case $_kp_token in
     '' | *[[:space:]\"\'\\]*) secrets_die "the token for $1 is empty or has a space, a quote or a backslash" ;;
   esac
-  printf 'add-generic-password -U -a secrets -s op-sa-%s -w %s\n' "$1" "$_kp_token" | security -i >/dev/null
+  printf 'add-generic-password -U -a secrets -s op-sa-%s -w %s\n' "$1" "$_kp_token" | security -i >/dev/null 2>&1
 }
 
 # secrets_op_fail STDERR PROJECT [TEXT]: dies with the failure line for this op error text.
@@ -281,11 +282,21 @@ secrets_short_mark() {
   [ "${#1}" -lt 1 ] || [ "${#1}" -gt 7 ] || printf '  (short value: masked in all output)'
 }
 
-# secrets_item_put VAULT TITLE TAGS EXISTS: stores stdin, as it is, as the password of item
-# TITLE. EXISTS 0 creates the item, 1 replaces its value. TAGS "" sets no tag.
+# secrets_title_exists TITLES TITLE VAULT: prints 1 when TITLES holds TITLE once, 0 when not,
+# and dies when it holds TITLE more than once.
+secrets_title_exists() {
+  _te_n=$(printf '%s\n' "$1" | grep -Fxc -- "$2")
+  [ "$_te_n" -le 1 ] || secrets_die "more than one item is titled $2 in vault $3. Keep one."
+  printf '%s\n' "$_te_n"
+}
+
+# secrets_item_put VAULT TITLE TAGS EXISTS [PROJECT]: stores stdin, as it is, as the password of
+# item TITLE. EXISTS 0 creates the item, 1 replaces its value. TAGS "" sets no tag. The
+# invalid-token line names PROJECT (default VAULT); pass it when VAULT is agent-tokens or agent-shared.
 secrets_item_put() {
   _ip_vault=$1
   _ip_title=$2
+  _ip_project=${5:-$1}
   if [ "$4" = 1 ]; then
     set -- item edit "$2" --vault "$1" ${3:+--tags "$3"}
   else
@@ -296,7 +307,7 @@ secrets_item_put() {
   _ip_err=$(jq -Rsc --arg title "$_ip_title" '{title: $title, category: "PASSWORD",
       fields: [{id: "password", type: "CONCEALED", purpose: "PASSWORD", label: "password", value: .}]}' |
     op "$@" 2>&1 >/dev/null) ||
-    secrets_op_fail "$_ip_err" "$_ip_vault" "could not write item $_ip_title in vault $_ip_vault"
+    secrets_op_fail "$_ip_err" "$_ip_project" "could not write item $_ip_title in vault $_ip_vault"
 }
 
 # secrets_refs_set FILE NAME VAULT TITLE: puts the line for NAME in place of its old line,

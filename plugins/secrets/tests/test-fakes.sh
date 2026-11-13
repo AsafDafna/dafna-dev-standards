@@ -157,6 +157,32 @@ test_fake_op_fail_knobs() {
   assert_status 0 op item list --vault proj --format json
 }
 
+test_fake_op_fail_after_and_read_change() {
+  fake_item proj A val-a
+  fake_item proj B val-b
+  export FAKE_OP_FAIL_AFTER=1
+  assert_status 0 op vault list --format json
+  assert_status 1 op read op://proj/A/password
+  assert_contains "$ERR" 'connection refused' "the second call"
+  export FAKE_OP_FAIL=noaccount
+  assert_status 1 op signout
+  assert_eq '[ERROR] 2026/01/01 00:00:00 no account found' "$ERR" "FAKE_OP_FAIL after the first call"
+  unset FAKE_OP_FAIL_AFTER FAKE_OP_FAIL
+  export FAKE_OP_READ_CHANGE=A
+  assert_status 0 op read -n op://proj/A/password
+  assert_eq val-a-changed "$OUT"
+  assert_status 0 op read op://proj/B/password
+  assert_eq val-b "$OUT" "another title"
+}
+
+test_fake_security_truncate() {
+  printf '%s\n' 'add-generic-password -U -a secrets -s op-sa-proj -w tok-123456' > "$TEST_DIR/in"
+  export FAKE_SEC_TRUNCATE=5
+  assert_status 0 security -i < "$TEST_DIR/in"
+  assert_status 0 security find-generic-password -a secrets -s op-sa-proj -w
+  assert_eq tok-1 "$OUT"
+}
+
 test_fake_security() {
   printf '%s\n' 'add-generic-password -U -a secrets -s op-sa-proj -w "tok-1"' > "$TEST_DIR/in"
   assert_status 0 security -i < "$TEST_DIR/in"
@@ -180,6 +206,9 @@ test_fake_open() {
   assert_eq "$HOME" "$(cat "$HOME/where")" "the window starts in HOME"
   assert_eq '|' "$(cat "$HOME/got")" "default stdin: one empty line"
   assert_eq 'window text' "$(cat "$FAKE_OPEN_DIR/window.log")"
+  assert_eq "$(cat "$TEST_DIR/w.command")" "$(cat "$FAKE_OPEN_DIR/launched")" "the copy of FILE"
+  assert_eq '-rw------- -rwx------ ' "$(grep -F w.command "$FAKE_OPEN_DIR/modes" | awk '{print substr($1, 1, 10)}' | tr '\n' ' ')" \
+    "the modes of FILE"
   export FAKE_OPEN_STDIN='yes
 '
   assert_status 0 open -a Terminal "$TEST_DIR/w.command"
