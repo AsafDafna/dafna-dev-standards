@@ -147,3 +147,25 @@ test_status_every_line_has_prefix() {
   _bad=$(printf '%s\n' "$OUT" | grep -vc '^secrets: ')
   assert_eq 0 "$_bad"
 }
+
+test_status_token_not_in_temp_files() {
+  status_repo
+  fake_keychain op-sa-proj SENTINEL-TOKEN-9c1d
+  fake_token SENTINEL-TOKEN-9c1d proj agent-shared
+  mkdir "$TEST_DIR/bin" || return 1
+  cat > "$TEST_DIR/bin/cat" <<'EOF'
+#!/bin/sh
+for f in "$TMPDIR"/secrets-status.*/*; do
+  [ -f "$f" ] && /bin/cat "$f" >> "$TEST_DIR/seen.log"
+done
+exec /bin/cat "$@"
+EOF
+  chmod +x "$TEST_DIR/bin/cat"
+  PATH=$TEST_DIR/bin:$PATH
+  export PATH
+  assert_status 0 secrets status
+  assert_contains "$OUT" 'ok: the Keychain item op-sa-proj holds a token'
+  _seen=''
+  [ ! -f "$TEST_DIR/seen.log" ] || _seen=$(cat "$TEST_DIR/seen.log")
+  assert_not_contains "$_seen" SENTINEL-TOKEN-9c1d
+}
