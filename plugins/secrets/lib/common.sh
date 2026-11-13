@@ -213,6 +213,8 @@ secrets_env_each() {
   while IFS= read -r _ee_line <&3 || [ -n "$_ee_line" ]; do
     _ee_n=$((_ee_n + 1))
     _ee_line=${_ee_line%"$secrets_cr"}
+    # Before the comment test: in a file with CR-only line ends, one "line" holds several.
+    case $_ee_line in *"$secrets_cr"*) secrets_env_bad 'has a CR character' ;; esac
     _ee_line=${_ee_line#"${_ee_line%%[![:blank:]]*}"}
     case $_ee_line in '' | '#'*) continue ;; esac
     case $_ee_line in

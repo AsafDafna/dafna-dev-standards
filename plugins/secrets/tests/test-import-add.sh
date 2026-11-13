@@ -83,6 +83,16 @@ test_env_parse_multiline_dies() {
   assert_eq 'secrets: .env line 1: no closing quote. Fix the line, then try again.' "$ERR" "single quote"
 }
 
+test_env_parse_cr_dies() {
+  cd "$TEST_DIR" || fail cd
+  for line in 'A=crval1\r\r\n' 'A=crval2\rB=crval3\r' '# note\rA=crval4\r'; do
+    printf 'OK=1\n%b' "$line" > .env
+    assert_status 1 secrets_env_each .env show
+    assert_eq 'secrets: .env line 2: has a CR character. Fix the line, then try again.' "$ERR" "$line"
+    assert_eq 'OK=[1]' "$OUT" "$line"
+  done
+}
+
 test_env_parse_bad_name() {
   cd "$TEST_DIR" || fail cd
   printf '1BAD=x\n' > .env
@@ -209,6 +219,22 @@ test_import_cap() {
   rm "$FAKE_SEC_DIR/items/op-sa-proj"
   assert_status 1 secrets import .env.e2e
   assert_eq 'secrets: no token for proj on this Mac. Run: secrets setup proj' "$ERR" "50 values"
+}
+
+test_item_put_tags_on_replace() {
+  fake_item proj A old-a high-value
+  fake_item proj B old-b
+  printf new-a > "$TEST_DIR/in"
+  assert_status 0 secrets_item_put proj A '' 1 < "$TEST_DIR/in"
+  assert_eq new-ax "$(stored proj A)"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/A.tags")" "a replace without TAGS keeps the tag"
+  assert_contains "$(op_log)" 'item edit A --vault proj'
+  assert_not_contains "$(op_log)" '--tags'
+  printf new-b > "$TEST_DIR/in"
+  assert_status 0 secrets_item_put proj B high-value 1 < "$TEST_DIR/in"
+  assert_eq new-bx "$(stored proj B)"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/B.tags")" "a replace with TAGS sets the tag"
+  assert_contains "$(op_log)" 'item edit B --vault proj --tags high-value'
 }
 
 test_import_add_duplicate_title() {
