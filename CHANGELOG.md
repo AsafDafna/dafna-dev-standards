@@ -1,5 +1,21 @@
 # Changelog
 
+## secrets 0.1.0 — new opt-in plugin
+
+- New plugin `secrets`: one command for secrets from 1Password, for people and
+  agents. Subcommands: `setup`, `run`, `import`, `add`, `status`.
+- A `secrets` skill tells agents how to use it and what each failure line means.
+- macOS only, needs `jq`. The README covers the machine setup and the link
+  command.
+
+## core 1.7.0 — Secrets rule line
+
+- RULES.md: new "Secrets" section. In a repo with a `.secrets-refs` file,
+  commands that need a secret run through `secrets run`, and no secret value is
+  printed.
+- The SubagentStart sentence names Secrets among the rules that apply to
+  subagents.
+
 ## open-items 0.2.1 — shorter tool descriptions, no system-prompt copy
 
 - Shorter descriptions for `add_item`, `reply_item`, `close_item` and

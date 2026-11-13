@@ -21,7 +21,7 @@ if [ "$1" = "subagent" ]; then
   {
     rules
     echo
-    echo "Subagents: Git, Code comments and the Workflow gates \"Bugs\" line apply to your own work; the other Workflow gates, CI-minute economy, Pre-merge gates and Logs belong to the main session that dispatched you."
+    echo "Subagents: Git, Code comments, Secrets and the Workflow gates \"Bugs\" line apply to your own work; the other Workflow gates, CI-minute economy, Pre-merge gates and Logs belong to the main session that dispatched you."
   } | tr -d '\000-\010\013-\037' \
     | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$tab/\\\\t/g" \
     | awk '{ s = s $0 "\\n" }

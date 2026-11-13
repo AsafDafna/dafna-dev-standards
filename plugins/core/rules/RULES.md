@@ -51,3 +51,7 @@
   to a shared rule via PR to dafna-dev-standards.
 - Significant decisions: append one line to docs/DECISIONS.md
   (format documented in that file's header; seeded by /bootstrap-repo).
+
+## Secrets
+- In a repo with a `.secrets-refs` file, run every command that needs a secret
+  through `secrets run`, and follow the `secrets` skill. Never print a secret value.
