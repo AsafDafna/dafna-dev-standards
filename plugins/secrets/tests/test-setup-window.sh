@@ -160,6 +160,7 @@ test_window_new_project() {
   assert_eq signout "$(printf '%s\n' "$_log" | sed -n '$p')" "last op call"
   assert_eq ok "$(first_line "$RESULT")"
   assert_contains "$RESULT" 'secrets: stored in proj: A'
+  assert_eq 'secrets: read back: 2 stored and matched' "$(printf '%s\n' "$RESULT" | sed -n '$p')" "last summary line"
 }
 
 test_window_again_creates_nothing() {
@@ -291,6 +292,12 @@ test_window_guard_name_in_open_vault_is_skipped() {
     for _text in "$SCREEN" "$RESULT" "$_log" "$(sec_log)" "$(cat "$SHIM_LOG")"; do
       assert_not_contains "$_text" SENTINEL- "$_g"
     done
+    assert_eq "ok
+$_notice
+$_advice
+secrets: stored in proj: A
+secrets: wrote .secrets-refs
+secrets: read back: 1 stored and matched, 1 skipped and not read" "$RESULT" "$_g: the summary"
     if [ -z "$_first" ]; then
       _first=$SCREEN$RESULT
     else
@@ -454,15 +461,43 @@ test_window_closed_signs_out() {
   assert_eq '' "$(ls "$TMPDIR")" "temp folders"
 }
 
-test_window_files_changed_after_screen() {
+test_window_reads_each_file_once() {
   sw_repo
+  printf 'G=val-g-other\n' > other.env
+  printf 'G=val-g-shown\n' > shown.env
+  ln -s shown.env .env.e2e
+  window_bg --import "$TEST_DIR/proj/.env.e2e"
+  window_wait 'Press Enter'
+  rm shown.env
+  ln -s other.env shown.env
+  printf '\n' >&5
+  window_end
+  assert_eq ok "$(first_line "$RESULT")" "result"
+  assert_eq val-g-shownx "$(stored proj G.e2e)" "the resolved file was replaced after the screen"
+  rm "$TEST_DIR/enter"
   window_bg --import "$TEST_DIR/proj/.env"
   window_wait 'Press Enter'
   printf 'NEW=val-new-long\n' >> .env
   printf '\n' >&5
   window_end
-  assert_eq 'failed: an import file changed after the screen was shown' "$(first_line "$RESULT")"
-  assert_not_contains "$(op_log)" 'item create --vault proj '
+  assert_eq ok "$(first_line "$RESULT")" "result after a line was added"
+  assert_eq val-a-longx "$(stored proj A)"
+  [ ! -e "$FAKE_OP_DIR/vaults/proj/NEW.value" ] || fail "a line added after the screen was stored"
+}
+
+test_window_no_interrupt_around_token_store() {
+  sw_repo
+  export FAKE_OP_FAIL_MATCH='item create --vault agent-tokens'
+  window_bg --import "$TEST_DIR/proj/.env"
+  window_wait 'Press Enter'
+  printf '\n' >&5
+  window_wait 'secrets: 1Password is not reachable'
+  kill -INT "-$W_PID" || fail "the window ended before the interrupt"
+  window_end
+  assert_eq 1 "$RC" "exit"
+  assert_eq 'failed: token not stored' "$(first_line "$RESULT")"
+  assert_contains "$RESULT" 'Delete proj-agent on 1password.com'
+  assert_eq 2 "$(op_log | grep -c '^item create --vault agent-tokens')" "tries"
 }
 
 test_window_no_value_printed() {
