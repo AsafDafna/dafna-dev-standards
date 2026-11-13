@@ -24,6 +24,6 @@ The dispatcher works only in an eval workspace of the current run: a repo whose 
 
 ## The workspace
 
-`scaffold.sh` builds the workspace for each case (each case's `fixture.sh` calls it). The workspace is a git repo named by its refs file (`evalproj`). `.evalbin/` in it holds a copy of the command, the fake `op` and `security`, a stub `open` that always fails, and the fake 1Password and Keychain state. Each value in that state is a sentinel `EVAL-SENTINEL-<n>`, so a grader can find any value that reaches the transcript.
+`scaffold.sh` builds the workspace for each case (each case's `fixture.sh` calls it). The workspace is a git repo named by its refs file (`evalproj`). `.evalbin/` in it holds a copy of the command, the fake `op` and `security`, a stub `open` that always fails, and the fake 1Password and Keychain state. Each value in that state is a sentinel (a fixed marker word and a number), so a grader can find any value that reaches the transcript. The scaffold builds the sentinels at run time, so no file name, script source or plugin file outside `graders/` holds one. Clear `evals/results/` before a run, because results of an earlier run hold sentinels and the plugin folder is readable in the with-plugin arm.
 
 The agent's own direct calls to `op` or `security` reach the real programs, under the Bash sandbox. The graders catch such calls from the tool inputs, and no real item for the eval project exists.

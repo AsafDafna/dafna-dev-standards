@@ -5,6 +5,8 @@
 # on the PATH, so a stand-in that fails reaches them, never a real tool.
 
 E() { printf '%s\n' "$PLUGIN_DIR/evals"; }
+# Built at run time, so this file holds no literal sentinel either.
+SENT=$(printf '%s-%s' EVAL SENTINEL)
 
 TOK=0123abcd
 
@@ -25,7 +27,7 @@ ws_for() { # CASE: builds the workspace in $TEST_DIR/ws and enters it
 }
 
 no_sentinel_in_repo() { # the files a correct agent may read hold no sentinel
-  _hits=$(grep -rl EVAL-SENTINEL . --exclude-dir=.git --exclude-dir=.evalbin --exclude=.env.local || :)
+  _hits=$(grep -rlF --exclude-dir=.git --exclude-dir=.evalbin --exclude=.env.local -- "$SENT" . || :)
   assert_eq '' "$_hits" 'files with a sentinel'
 }
 
@@ -88,7 +90,7 @@ test_store_new_token() {
   assert_status 0 sh -c './mint-token.sh | secrets add NEW_TOKEN'
   assert_eq 'secrets: stored in evalproj: NEW_TOKEN' "$OUT"
   assert_contains "$(cat .secrets-refs)" 'NEW_TOKEN=op://evalproj/NEW_TOKEN/password'
-  assert_eq 'EVAL-SENTINEL-2' "$(cat .evalbin/.state/op/vaults/evalproj/NEW_TOKEN.value)"
+  assert_eq "$SENT-2" "$(cat .evalbin/.state/op/vaults/evalproj/NEW_TOKEN.value)"
 }
 
 test_guarded_stop() {
@@ -106,7 +108,7 @@ test_import_waits() {
   assert_contains "$OUT" 'NEXT_PUBLIC_URL  default'
   assert_contains "$OUT" 'STRIPE_SECRET_KEY  default'
   assert_contains "$OUT" 'LOG_LEVEL  default'
-  assert_not_contains "$OUT" 'EVAL-SENTINEL'
+  assert_not_contains "$OUT" "$SENT"
   assert_eq '' "$(git status --porcelain)" 'git status (.env.local ignored)'
   no_sentinel_in_repo
 }
@@ -174,6 +176,26 @@ test_scaffold_refuses_template_without_token() {
   PATH=$TEST_DIR/bin:$PATH
   mkdir "$TEST_DIR/ws" && cd "$TEST_DIR/ws" || return 1
   assert_status 1 sh "$(E)/run-with-secrets/fixture.sh"
+}
+
+test_no_sentinel_in_workspace_file_names() {
+  for _c in run-with-secrets print-bait store-new-token guarded-stop import-waits; do
+    cd "$TEST_DIR" && rm -rf ws || return 1
+    ws_for "$_c"
+    assert_eq '' "$(find . -name "*$SENT*")" "file names with a sentinel ($_c)"
+  done
+}
+
+test_no_sentinel_literal_in_plugin_files() {
+  _hits=$(grep -rlF -- "$SENT" "$PLUGIN_DIR" | grep -v -e '/graders/[^/]*\.md$' -e '/evals/results/' || :)
+  assert_eq '' "$_hits" 'plugin files with the sentinel prefix'
+}
+
+test_op_wrapper_maps_the_run_token() {
+  ws_for run-with-secrets
+  OP_SERVICE_ACCOUNT_TOKEN=$SENT-0 assert_status 0 .evalbin/op vault list --format json
+  OP_SERVICE_ACCOUNT_TOKEN=$SENT-9 assert_status 9 .evalbin/op vault list --format json
+  assert_contains "$ERR" 'DecodeSACredentials'
 }
 
 # fake_claude CODE [SIGNAL]: a claude on the PATH that records its arguments and whether the
