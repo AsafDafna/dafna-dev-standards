@@ -194,13 +194,24 @@ test_fake_open() {
   assert_eq 5 "$(wc -l < "$FAKE_OPEN_DIR/argv.log" | tr -d ' ')" "argv.log lines"
 }
 
+test_fake_open_async() {
+  printf '%s\n' '#!/bin/sh' 'sleep 1' 'echo late > "$HOME/late"' > "$TEST_DIR/w.command"
+  chmod 700 "$TEST_DIR/w.command"
+  export FAKE_OPEN_MODE=async
+  assert_status 0 open -a Terminal "$TEST_DIR/w.command"
+  [ ! -e "$HOME/late" ] || fail "async open waited for the file"
+  _n=0
+  while [ ! -e "$HOME/late" ] && [ "$_n" -lt 50 ]; do sleep 0.2; _n=$((_n + 1)); done
+  assert_eq late "$(cat "$HOME/late")" "the file ran in the background"
+}
+
 test_shims_log_only_the_caller() {
   assert_eq "$PLUGIN_DIR/tests/shims:$PLUGIN_DIR/tests/fakes:/usr/bin:/bin:/usr/sbin:/sbin" "$PATH" "test PATH"
   assert_eq '{"a":1}' "$(printf '{"a": 1}' | jq -c .)"
   assert_eq axc "$(printf abc | sed s/b/x/)"
   fake_item proj A val-a
   op item list --vault proj --format json > /dev/null
-  assert_eq "$(printf '%s\n' 'jq -c .' 'sed s/b/x/')" "$(cat "$SHIM_LOG")" "SHIM_LOG"
+  assert_eq "$(printf '%s\n' 'jq -c .' 'sed s/b/x/')" "$(/bin/cat "$SHIM_LOG")" "SHIM_LOG"
 }
 
 test_titles_maps_op_errors() {
