@@ -149,15 +149,14 @@ secrets_op_fail() {
   secrets_die "op failed: $_of_line"
 }
 
-# secrets_titles VAULT: one title per line, with the sign-in this process has. Set
-# secrets_proj to the project first: the invalid-token line names it, and VAULT can be
-# agent-shared.
+# secrets_titles VAULT [PROJECT]: one title per line, with the sign-in this process has.
+# The invalid-token line names PROJECT (default VAULT); pass it when VAULT is agent-shared.
 secrets_titles() {
   _ti_err=$(mktemp) || secrets_die "cannot make a temp file in ${TMPDIR:-/tmp}"
   _ti_json=$(op item list --vault "$1" --format json 2>"$_ti_err")
   _ti_rc=$?
   _ti_msg=$(cat "$_ti_err")
   rm -f "$_ti_err"
-  [ "$_ti_rc" -eq 0 ] || secrets_op_fail "$_ti_msg" "${secrets_proj:-$1}"
+  [ "$_ti_rc" -eq 0 ] || secrets_op_fail "$_ti_msg" "${2:-$1}"
   printf '%s\n' "$_ti_json" | jq -r '.[].title'
 }

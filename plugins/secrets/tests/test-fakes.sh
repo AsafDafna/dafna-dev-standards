@@ -27,7 +27,7 @@ test_fake_op_token_scope() {
   assert_eq '[ERROR] 2026/01/01 00:00:00 unable to process line 1: Permission: (101) You do not have permission to perform this action' "$ERR"
   assert_status 0 op item create --vault proj - < "$TEST_DIR/in.json"
   export OP_SERVICE_ACCOUNT_TOKEN=ops_unknown
-  assert_status 9 op vault list
+  assert_status 9 op vault list --format json
   assert_eq "[ERROR] 2026/01/01 00:00:00 failed to DecodeSACredentials: invalid character '\\u008a' looking for beginning of value" "$ERR"
 }
 
@@ -41,6 +41,19 @@ test_fake_op_vault_case() {
   assert_eq A "$(printf '%s' "$OUT" | jq -r '.[].title')"
   assert_status 0 op vault get proj --format json
   assert_eq Proj "$(printf '%s' "$OUT" | jq -r .name)"
+}
+
+test_fake_op_lists_need_format_json() {
+  fake_item proj A val-a
+  assert_status 2 op account list
+  assert_contains "$ERR" 'fake op: not modeled: account list without --format json'
+  assert_status 2 op vault list
+  assert_contains "$ERR" 'fake op: not modeled: vault list without --format json'
+  assert_status 2 op vault get proj
+  assert_contains "$ERR" 'fake op: not modeled: vault get without --format json'
+  assert_status 2 op item list --vault proj
+  assert_contains "$ERR" 'fake op: not modeled: item list without --format json'
+  assert_status 0 op item list --vault proj --format=json
 }
 
 test_fake_op_service_account() {
@@ -122,19 +135,19 @@ test_fake_op_fail_knobs() {
   fake_item proj A val-a
   printf '%s\n' 'A=op://proj/A/password' > "$HOME/a.env"
   export FAKE_OP_FAIL=unreachable
-  assert_status 1 op item list --vault proj
+  assert_status 1 op item list --vault proj --format json
   assert_eq '[ERROR] 2026/01/01 00:00:00 Get "/api/v2/account/keysets": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused' "$ERR"
   assert_status 1 op run --env-file "$HOME/a.env" -- true
   assert_contains "$ERR" '00:00:00 error initializing client: Get "/api/v2/account/keysets"'
   assert_status 0 op --version
   assert_eq 2.42.0 "$OUT"
   export FAKE_OP_FAIL=ratelimit
-  assert_status 1 op vault list
+  assert_status 1 op vault list --format json
   assert_contains "$ERR" '00:00:00 (429) Too Many Requests: '
   unset FAKE_OP_FAIL
   export FAKE_OP_FAIL_MATCH=agent-tokens
-  assert_status 0 op item list --vault proj
-  assert_status 1 op item list --vault agent-tokens
+  assert_status 0 op item list --vault proj --format json
+  assert_status 1 op item list --vault agent-tokens --format json
   assert_contains "$ERR" 'connection refused'
   assert_contains "$(cat "$FAKE_OP_DIR/argv.log")" 'item list --vault agent-tokens' "argv.log"
 }
@@ -181,7 +194,7 @@ test_shims_log_only_the_caller() {
   assert_eq '{"a":1}' "$(printf '{"a": 1}' | jq -c .)"
   assert_eq axc "$(printf abc | sed s/b/x/)"
   fake_item proj A val-a
-  op item list --vault proj > /dev/null
+  op item list --vault proj --format json > /dev/null
   assert_eq "$(printf '%s\n' 'jq -c .' 'sed s/b/x/')" "$(cat "$SHIM_LOG")" "SHIM_LOG"
 }
 
@@ -191,8 +204,6 @@ test_titles_maps_op_errors() {
   mkdir -p "$FAKE_OP_DIR/vaults/agent-shared"
   fake_token tok1 proj:w agent-shared
   export OP_SERVICE_ACCOUNT_TOKEN=tok1
-  # shellcheck disable=SC2034 # secrets_titles reads it
-  secrets_proj=proj
   assert_status 0 secrets_titles proj
   assert_eq "$(printf 'A\nB.e2e')" "$OUT"
   assert_status 0 secrets_titles agent-shared
@@ -207,8 +218,10 @@ test_titles_maps_op_errors() {
   assert_eq 'secrets: the 1Password request limit is reached. Wait, then try again.' "$ERR"
   unset FAKE_OP_FAIL
   export OP_SERVICE_ACCOUNT_TOKEN=ops_unknown
-  assert_status 1 secrets_titles agent-shared
-  assert_eq 'secrets: the token for proj does not work. Run: secrets setup proj, with --renew if the owner revoked it' "$ERR"
+  assert_status 1 secrets_titles agent-shared proj
+  assert_eq 'secrets: the token for proj does not work. Run: secrets setup proj, with --renew if the owner revoked it' "$ERR" "PROJECT given"
+  assert_status 1 secrets_titles proj
+  assert_eq 'secrets: the token for proj does not work. Run: secrets setup proj, with --renew if the owner revoked it' "$ERR" "PROJECT defaults to VAULT"
 }
 
 test_token_keychain_round_trip() {
