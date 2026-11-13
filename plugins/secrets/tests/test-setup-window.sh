@@ -250,40 +250,49 @@ test_window_open_name_in_guarded_vault() {
   assert_not_contains "$(op_log)" 'item edit'
 }
 
-# sw_approved: a first setup with G guarded, then the owner moves item G into vault proj.
-sw_approved() {
-  window --import "$TEST_DIR/proj/.env" --guard G
-  [ "$RC" = 0 ] || fail "first run (screen: $SCREEN)"
-  mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj-guarded/G.tags" "$FAKE_OP_DIR/vaults/proj/"
-  printf 'A=val-a-long\nG=val-g-new\n' > .env
-  : > "$FAKE_OP_DIR/argv.log"
-}
-
-test_window_rerun_after_approval() {
+test_window_rerun_same_value() {
   sw_repo
-  sw_approved
-  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq 0 "$RC" "first run (screen: $SCREEN)"
+  mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj-guarded/G.tags" "$FAKE_OP_DIR/vaults/proj/"
+  rm .secrets-refs.guarded
+  : > "$FAKE_OP_DIR/argv.log"
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
-  assert_contains "$SCREEN" 'secrets: G is already in vault proj; its value will be replaced there'
-  assert_eq val-g-newx "$(stored proj G)" "replaced in proj"
-  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/G.tags")" "tag kept"
-  assert_contains "$(op_log)" 'item edit G --vault proj --tags high-value'
+  assert_not_contains "$(op_log)" 'item edit G '
+  assert_not_contains "$(op_log)" 'item create'
+  assert_contains "$(op_log)" 'item edit A --vault proj' "the open name is written"
+  assert_not_contains "$SCREEN" 'Type yes'
+  assert_contains "$SCREEN" 'secrets: G match (already in proj)'
+  assert_eq val-g-longx "$(stored proj G)" "unchanged"
   [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "an item G in proj-guarded"
   assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "guarded refs"
   assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "open refs"
-  assert_contains "$SCREEN" 'secrets: G match'
 }
 
-test_window_rerun_after_approval_no() {
+test_window_guard_name_planted() {
   sw_repo
-  sw_approved
-  printf '\nno\n' > "$TEST_DIR/stdin"
+  fake_item agent-tokens proj tok-1
+  fake_keychain op-sa-proj tok-1
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared"
+  fake_item proj G SENTINEL-g-planted
+  printf 'A=SENTINEL-a-file\nG=SENTINEL-g-file\n' > .env
   window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq 'failed: cancelled' "$(first_line "$RESULT")"
+  assert_eq 'failed: guarded name is open' "$(first_line "$RESULT")" "result (screen: $SCREEN)"
+  _line1='secrets: G: an item G is in vault proj, which agents can read, and it differs from the file. Setup did not change it.'
+  _line2='secrets: If you did not move it there, delete it. To update a guarded secret, move the item to proj-guarded, then run setup again.'
+  for _out in "$SCREEN" "$RESULT"; do
+    assert_contains "$_out" "$_line1"
+    assert_contains "$_out" "$_line2"
+  done
   assert_not_contains "$(op_log)" 'item create'
   assert_not_contains "$(op_log)" 'item edit'
-  assert_eq val-g-longx "$(stored proj G)" "unchanged"
+  assert_eq SENTINEL-g-plantedx "$(stored proj G)" "unchanged"
+  [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "an item G in proj-guarded"
+  [ ! -e "$FAKE_OP_DIR/vaults/proj/A.value" ] || fail "an item A in proj"
+  for _text in "$SCREEN" "$RESULT" "$(op_log)" "$(sec_log)" "$(cat "$SHIM_LOG")"; do
+    assert_not_contains "$_text" SENTINEL-
+  done
 }
 
 test_window_screen_shows_files() {
