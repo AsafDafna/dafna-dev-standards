@@ -333,3 +333,17 @@ secrets_refs_set() {
 "
   printf '%s' "$_rs_out" > "$1" || secrets_die "cannot write $1"
 }
+
+# secrets_refs_unset FILE NAME: removes the lines for NAME. The other lines keep their order.
+# It writes FILE in every case, so a missing FILE is created empty.
+secrets_refs_unset() {
+  _rn_out=''
+  if [ -f "$1" ]; then
+    while IFS= read -r _rn_line || [ -n "$_rn_line" ]; do
+      case $_rn_line in "$2="*) continue ;; esac
+      _rn_out="$_rn_out$_rn_line
+"
+    done < "$1"
+  fi
+  printf '%s' "$_rn_out" > "$1" || secrets_die "cannot write $1"
+}

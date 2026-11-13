@@ -252,7 +252,17 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
   fi
   w_refs_file=$(secrets_refs_file "$w_stage" "$w_guard")
   secrets_refs_set "$w_root/$w_refs_file" "$1" "$w_project" "$w_title"
-  case ", $w_refs, " in *", $w_refs_file, "*) ;; *) w_refs="$w_refs${w_refs:+, }$w_refs_file" ;; esac
+  w_wrote "$w_refs_file"
+  [ "$w_guard" = 1 ] || return 0
+  # A line left in the open refs file would stop every daily run on the moved item.
+  w_refs_file=$(secrets_refs_file "$w_stage" 0)
+  [ -f "$w_root/$w_refs_file" ] || return 0
+  secrets_refs_unset "$w_root/$w_refs_file" "$1"
+  w_wrote "$w_refs_file"
+}
+
+w_wrote() { # REFS-FILE: adds it once to w_refs, the list of the "wrote" line
+  case ", $w_refs, " in *", $1, "*) ;; *) w_refs="$w_refs${w_refs:+, }$1" ;; esac
 }
 
 w_verify() { # NAME VALUE: reads the item back as the owner and compares it with VALUE

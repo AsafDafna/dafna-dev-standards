@@ -1,4 +1,5 @@
 # shellcheck shell=sh
+# shellcheck disable=SC2016 # single-quoted scripts run in a child shell, which expands them
 # Tests of the setup window, libexec/setup-window.sh. Run: sh run.sh test-setup-window.sh
 # Most tests run the script directly, as the launcher does, with stdin from $TEST_DIR/stdin.
 
@@ -314,6 +315,22 @@ test_window_skip_keeps_existing_refs_line() {
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
   assert_eq "$_before" "$(cat .secrets-refs.guarded)" "guarded refs file"
+}
+
+test_window_guard_moves_open_refs_line() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
+  assert_eq "$(printf '%s\n' 'A=op://proj/A/password' 'G=op://proj/G/password')" "$(cat .secrets-refs)" "open refs"
+  mkdir "$FAKE_OP_DIR/vaults/proj-guarded"
+  mv "$FAKE_OP_DIR/vaults/proj/G.value" "$FAKE_OP_DIR/vaults/proj-guarded/G.value"
+  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "run with --guard G (screen: $SCREEN)"
+  assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "open refs after --guard G"
+  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "guarded refs"
+  assert_contains "$RESULT" 'secrets: wrote .secrets-refs, .secrets-refs.guarded'
+  assert_status 0 secrets run -- sh -c 'test "$A" = val-a-long && test -z "${G+x}"'
 }
 
 test_window_screen_shows_files() {
