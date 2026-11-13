@@ -5,6 +5,7 @@ jq . .claude-plugin/marketplace.json >/dev/null
 for p in plugins/*/.claude-plugin/plugin.json; do jq . "$p" >/dev/null; done
 for h in plugins/*/hooks/hooks.json; do [ -f "$h" ] && jq . "$h" >/dev/null; done
 find plugins -name '*.sh' -exec shellcheck {} +
+find plugins/secrets/bin plugins/secrets/tests -type f ! -name '*.*' -exec shellcheck {} +
 [ "$(wc -l < plugins/core/rules/RULES.md)" -le 60 ]
 head -1 plugins/core/rules/RULES.md | grep -q '^\[dafna-core rules v'
 for s in plugins/*/skills/*/SKILL.md; do

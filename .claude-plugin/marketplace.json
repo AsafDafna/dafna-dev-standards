@@ -20,6 +20,11 @@
       "name": "open-items",
       "source": "./plugins/open-items",
       "description": "Pane for the decisions, questions, actions and info Claude needs you to see (opt-in mod)"
+    },
+    {
+      "name": "secrets",
+      "source": "./plugins/secrets",
+      "description": "One command for secrets from 1Password: run, import, add, setup, status (opt-in)"
     }
   ]
 }
