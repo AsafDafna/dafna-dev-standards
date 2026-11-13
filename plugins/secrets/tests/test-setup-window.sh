@@ -178,6 +178,7 @@ test_window_again_creates_nothing() {
   assert_eq 0 "$RC" "first run (screen: $SCREEN)"
   : > "$FAKE_OP_DIR/argv.log"
   : > "$FAKE_SEC_DIR/argv.log"
+  printf '\nyes\n' > "$TEST_DIR/stdin"
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq 0 "$RC" "second run (screen: $SCREEN)"
   assert_not_contains "$(op_log)" 'vault create'
@@ -186,6 +187,64 @@ test_window_again_creates_nothing() {
   assert_eq 0 "$(sec_log | grep -cx -- -i)" "Keychain writes"
   assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "one refs line"
   [ ! -f "$FAKE_OP_DIR/vaults/proj/A.copies" ] || fail "a second item titled A"
+}
+
+sw_replace_line='secrets: G: an item G already exists in vault proj-guarded; this setup will replace its value'
+
+test_window_replace_guarded_with_yes() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
+  printf 'A=val-a-long\nG=val-g-new\n' > .env
+  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "after yes (screen: $SCREEN)"
+  assert_contains "$SCREEN" "$sw_replace_line"
+  assert_contains "$SCREEN" 'Type yes to replace the value of each item above: '
+  assert_not_contains "$SCREEN" 'secrets: A: an item'
+  assert_eq val-g-newx "$(stored proj-guarded G)"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj-guarded/G.tags")" "tag of G"
+  assert_contains "$SCREEN" 'secrets: G match'
+}
+
+test_window_replace_guarded_declined() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
+  _refs=$(cat .secrets-refs .secrets-refs.guarded)
+  printf 'A=val-a-new\nG=val-g-new\n' > .env
+  for _answer in no EOF; do
+    if [ "$_answer" = EOF ]; then printf '\n'; else printf '\n%s\n' "$_answer"; fi > "$TEST_DIR/stdin"
+    : > "$FAKE_OP_DIR/argv.log"
+    : > "$FAKE_SEC_DIR/argv.log"
+    window --import "$TEST_DIR/proj/.env" --guard G --renew
+    assert_eq 'failed: cancelled' "$RESULT" "$_answer (screen: $SCREEN)"
+    assert_contains "$SCREEN" "$sw_replace_line" "$_answer"
+    assert_not_contains "$(op_log)" 'create' "$_answer"
+    assert_not_contains "$(op_log)" 'item edit' "$_answer"
+    assert_eq 0 "$(sec_log | grep -cx -- -i)" "$_answer: Keychain writes"
+  done
+  assert_eq val-a-longx "$(stored proj A)"
+  assert_eq val-g-longx "$(stored proj-guarded G)"
+  assert_eq "$_refs" "$(cat .secrets-refs .secrets-refs.guarded)" "refs files"
+}
+
+test_window_interrupt_at_replace() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
+  printf 'A=val-a-new\nG=val-g-new\n' > .env
+  : > "$FAKE_OP_DIR/argv.log"
+  window_bg --import "$TEST_DIR/proj/.env" --guard G
+  window_wait 'Press Enter'
+  printf '\n' >&5
+  window_wait 'Type yes to replace'
+  kill -INT "-$W_PID"
+  window_end
+  assert_eq 130 "$RC" "exit"
+  assert_eq 'failed: cancelled' "$RESULT"
+  assert_not_contains "$(op_log)" 'item edit'
+  assert_eq val-a-longx "$(stored proj A)"
 }
 
 test_window_second_mac() {

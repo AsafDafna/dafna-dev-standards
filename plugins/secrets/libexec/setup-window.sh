@@ -221,9 +221,10 @@ w_dest() {
   fi
 }
 
-# w_check NAME VALUE: before any write, collects the entries that stop the import or are skipped.
-# An agent can write the project vault, so an item there is no proof that the owner moved a
-# guarded secret, and reading or comparing it would tell its state back to the agent.
+# w_check NAME VALUE: before any write, collects the entries that stop the import, are skipped,
+# or replace an item in the guarded vault. An agent can write the project vault, so an item there
+# is no proof that the owner moved a guarded secret, and reading or comparing it would tell its
+# state back to the agent.
 w_check() {
   [ -n "$2" ] || return 0
   w_dest "$1"
@@ -233,6 +234,11 @@ w_check() {
       w_open_g="$w_open_g$1 skipped: an item $w_title is already in vault $w_project, which agents can read. Setup did not read or change it.
 " ;;
     guarded) w_blocked="$w_blocked$w_title is in vault $w_project-guarded. Add $1 to --guard, or move the item.
+" ;;
+    *)
+      # Only the guarded vault: an agent can already change the items of the project vault.
+      [ "$w_guard:$w_exists" != 1:1 ] ||
+        w_replace="${w_replace}secrets: $1: an item $w_title already exists in vault $w_project-guarded; this setup will replace its value
 " ;;
   esac
 }
@@ -408,6 +414,32 @@ if w_has "$w_project" && [ "$w_tok_n" = 0 ]; then
   [ "$w_answer" = yes ] || w_fail 'vault exists'
 fi
 
+w_nskip=0
+w_titles_p=''
+w_titles_g=''
+if [ "$w_nfiles" -gt 0 ]; then
+  if w_has "$w_project"; then
+    w_titles_p=$(secrets_titles "$w_project") || exit 1
+  fi
+  if w_has "$w_project-guarded"; then
+    w_titles_g=$(secrets_titles "$w_project-guarded" "$w_project") || exit 1
+  fi
+  w_open_g=''
+  w_blocked=''
+  w_replace=''
+  w_each w_check
+  if [ -n "$w_blocked" ]; then
+    w_notes "$w_blocked"
+    w_fail 'item is guarded'
+  fi
+  if [ -n "$w_replace" ]; then
+    printf '%s' "$w_replace"
+    printf 'Type yes to replace the value of each item above: '
+    IFS= read -r w_answer || w_answer=''
+    [ "$w_answer" = yes ] || w_fail cancelled
+  fi
+fi
+
 w_made=''
 w_vault_make agent-tokens
 w_vault_make agent-shared
@@ -421,20 +453,7 @@ else
   w_token_copy
 fi
 
-w_nskip=0
 if [ "$w_nfiles" -gt 0 ]; then
-  w_titles_p=$(secrets_titles "$w_project") || exit 1
-  w_titles_g=''
-  if w_has "$w_project-guarded"; then
-    w_titles_g=$(secrets_titles "$w_project-guarded" "$w_project") || exit 1
-  fi
-  w_open_g=''
-  w_blocked=''
-  w_each w_check
-  if [ -n "$w_blocked" ]; then
-    w_notes "$w_blocked"
-    w_fail 'item is guarded'
-  fi
   if [ -n "$w_open_g" ]; then
     w_notes "$w_open_g"
     w_note "If you moved it there yourself, nothing is needed. If not, delete it or move it to $w_project-guarded, then run setup again."
