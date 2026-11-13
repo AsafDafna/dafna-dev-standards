@@ -32,6 +32,13 @@ test_setup_validates_before_window() {
   assert_eq "secrets: cannot read $TEST_DIR/proj/missing.env" "$ERR"
   assert_status 1 secrets setup proj --import .env:guarded
   assert_eq 'secrets: "guarded" is not a valid stage name' "$ERR"
+  assert_status 1 secrets setup proj --import .env --guard ''
+  assert_eq 'secrets: "" is not a valid secret name' "$ERR" "empty guard"
+  assert_status 1 secrets setup proj --import .env --guard A,
+  assert_eq 'secrets: "" is not a valid secret name' "$ERR" "trailing comma"
+  assert_status 1 secrets setup proj --import 'a
+b.env'
+  assert_eq 'secrets: an import path cannot hold a newline' "$ERR"
   assert_status 1 secrets setup proj --frob
   assert_contains "$ERR" 'secrets: unknown option "--frob"'
   assert_eq '' "$(open_log)" "open calls"
@@ -51,11 +58,24 @@ test_setup_bad_project() {
 test_setup_launcher_quoting() {
   sa_plugin
   mkdir "d 'q'"
-  printf 'A=1\n' > "d 'q'/x.env"
-  assert_status 0 secrets setup proj --import "d 'q'/x.env:e2e" --guard A --renew
-  _root=$(cd "$TEST_DIR/proj" && pwd -P)
-  assert_eq "$(printf '%s\n' "$_root" "$TMPDIR" proj --import "$TEST_DIR/proj/d 'q'/x.env:e2e" --guard A --renew |
-    sed -n '1p;3,$p')" "$(sed '2d' "$HOME/stub.args")" "arguments"
+  printf 'A=1\nB=2\n' > "d 'q'/x.env"
+  printf 'A=1\n' > xa.env
+  printf 'A=1\n' > 'x[ab].env'
+  printf 'A=1\n' > ./-dash.env
+  assert_status 0 secrets setup proj --import "d 'q'/x.env:e2e" --import 'x[ab].env' --import ./-dash.env:ci \
+    --guard A,B --renew
+  _root=$(pwd -P)
+  assert_eq "$_root
+proj
+--import
+$TEST_DIR/proj/d 'q'/x.env:e2e
+--import
+$TEST_DIR/proj/x[ab].env
+--import
+$TEST_DIR/proj/./-dash.env:ci
+--guard
+A,B
+--renew" "$(sed 2d "$HOME/stub.args")" "arguments"
   case $(sed -n 2p "$HOME/stub.args") in
     "$TMPDIR"/secrets-setup.*/result) ;;
     *) fail "result file is $(sed -n 2p "$HOME/stub.args")" ;;
@@ -83,9 +103,22 @@ test_setup_reports_result() {
   assert_status 0 secrets setup proj
   assert_eq 'stored 2 items' "$OUT"
   assert_eq '' "$(ls "$TMPDIR")" "temp folder"
-  sa_plugin 'printf "fail\nsecrets: the owner said no\n" > "$2.tmp" && mv "$2.tmp" "$2"'
+}
+
+test_setup_reports_failure() {
+  sa_plugin 'printf "failed: the owner said no\nsecrets: details\n" > "$2.tmp" && mv "$2.tmp" "$2"'
   assert_status 1 secrets setup proj
-  assert_contains "$ERR" 'the owner said no'
+  assert_eq 'secrets: setup failed: the owner said no
+secrets: details' "$ERR"
+  assert_eq '' "$OUT"
+  sa_plugin 'printf "failed: no op\n" > "$2.tmp" && mv "$2.tmp" "$2"'
+  assert_status 1 secrets setup proj
+  assert_eq 'secrets: setup failed: no op' "$ERR" "no more lines"
+  for body in 'printf "fail\n" > "$2"' ': > "$2"' 'printf "stored\n" > "$2"'; do
+    sa_plugin "$body"
+    assert_status 1 secrets setup proj
+    assert_eq 'secrets: the setup window failed' "$ERR" "$body"
+  done
 }
 
 test_setup_waits_for_late_result() {
