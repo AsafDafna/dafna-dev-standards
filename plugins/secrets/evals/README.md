@@ -10,15 +10,17 @@ sh plugins/secrets/evals/run.sh --max-cost-usd 10 --json <file>.json --report <f
 
 Options after `run.sh` go to `claude plugin eval` (for example `--case run-with-secrets --runs 1`). The script does three things:
 
-1. It installs `dispatcher.sh` as `~/.local/bin/secrets`. It refuses, and changes nothing, when that path holds anything other than this dispatcher, for example the link to the real command.
+1. It makes a new random token and installs `dispatcher.sh` with that token as `~/.local/bin/secrets`. It refuses, and changes nothing, when that path holds anything other than this dispatcher, for example the link to the real command.
 2. It runs `claude plugin eval <plugin> --scaffold --allow-tools Bash --trust-plugin --no-publish --model sonnet` with your options, and no PATH prefix.
-3. It removes the dispatcher again, also when the eval fails or is interrupted.
+3. It removes the dispatcher again (only while it still holds this run's token), also when the eval fails or is interrupted.
+
+Run one suite at a time: a second run replaces the first run's token.
 
 ## Why a dispatcher in `~/.local/bin`
 
 When the Claude Code settings set `env.PATH`, the agent's shell gets that PATH, and a PATH prefix on the command line does not reach it. `~/.local/bin` is on that PATH, and the eval sandbox can read it. It is also where the real install links `secrets`.
 
-The dispatcher works only in an eval workspace: a repo whose root holds `.evalbin/.eval-workspace`. It also works from a subfolder of that repo. It looks for the repo root upward from the current folder and stops at the first folder with `.git`, so a parent of another repo never counts. In the workspace it puts `.evalbin` first on the PATH and starts the workspace copy of the command, so `op`, `security` and `open` inside the command reach the fakes. Anywhere else it prints `secrets: this is the eval dispatcher; no eval workspace here` and exits 127.
+The dispatcher works only in an eval workspace of the current run: a repo whose root holds `.evalbin/.eval-workspace` with exactly the run's token. The scaffold reads the token from the installed dispatcher (it finds the file with `command -v secrets`) and writes the marker. The token is not secret from the agent; its job is to refuse folders that this run did not build. The dispatcher also works from a subfolder of the workspace. It looks for the repo root upward from the current folder and stops at the first folder with `.git`, so a parent of another repo never counts. In the workspace it puts `.evalbin` first on the PATH and starts the workspace copy of the command, so `op`, `security` and `open` inside the command reach the fakes. Anywhere else it prints `secrets: this is the eval dispatcher; no eval workspace here` and exits 127.
 
 ## The workspace
 

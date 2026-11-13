@@ -8,6 +8,18 @@ set -eu
 
 case_name=${1:?usage: scaffold.sh CASE}
 plugin=$(cd "$(dirname "$0")/.." && pwd -P)
+
+# The token of this run is in the dispatcher that run.sh installed; the scaffold's HOME is the
+# run's temp home, so it finds the file on the PATH. The file is read, never passed as an argument.
+token=
+dispatcher=$(command -v secrets) || dispatcher=
+if [ -n "$dispatcher" ] && [ "$(sed -n 2p "$dispatcher")" = '# secrets-eval-dispatcher' ]; then
+  token=$(sed -n 's/^token=\([0123456789abcdef][0123456789abcdef]*\)$/\1/p' "$dispatcher")
+fi
+if [ -z "$token" ]; then
+  echo 'scaffold.sh: no eval dispatcher with a token on the PATH. Run the suite with evals/run.sh.' >&2
+  exit 1
+fi
 bin=$PWD/.evalbin
 state=$bin/.state
 
@@ -17,8 +29,8 @@ cp "$plugin/bin/secrets" "$bin/.plugin/bin/"
 cp "$plugin/lib/common.sh" "$bin/.plugin/lib/"
 cp "$plugin/libexec/setup-window.sh" "$bin/.plugin/libexec/"
 cp "$plugin/tests/fakes/op" "$plugin/tests/fakes/security" "$bin/.fakes/"
-# dispatcher.sh starts the command only in a repo whose root holds this file.
-: > "$bin/.eval-workspace"
+# dispatcher.sh starts the command only in a repo whose root holds this file with its token.
+printf '%s\n' "$token" > "$bin/.eval-workspace"
 
 tool() { # NAME: writes stdin to .evalbin/NAME as an executable
   cat > "$bin/$1"
