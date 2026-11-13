@@ -162,6 +162,19 @@ test_run_interrupt_cleans() {
   assert_eq '' "$(ls "$TMPDIR")" "temp folders left"
 }
 
+test_run_trace_prints_no_token() {
+  run_repo
+  fake_keychain op-sa-proj SENTINEL-TOKEN-9c1d
+  fake_token SENTINEL-TOKEN-9c1d proj
+  assert_status 0 sh -x "$PLUGIN_DIR/bin/secrets" run -- true
+  _all=$OUT$ERR
+  _first=$ERR
+  assert_status 0 env SHELLOPTS=xtrace sh "$PLUGIN_DIR/bin/secrets" run -- true
+  _all=$_all$OUT$ERR
+  assert_not_contains "$_all" SENTINEL-TOKEN-9c1d
+  assert_contains "$_first" "+ set +x" "the trace was on"
+}
+
 test_run_signal_death_code() {
   run_repo
   assert_status 255 secrets run -- sh -c 'kill -TERM $$'

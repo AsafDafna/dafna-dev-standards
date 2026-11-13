@@ -6,6 +6,8 @@
 # starts with `secrets: `. The script writes RESULT_FILE.tmp and renames it, because the agent
 # side polls RESULT_FILE.
 
+# A trace (sh -x, or SHELLOPTS=xtrace) would print every value and the token.
+set +x
 w_result=${2-}
 w_written=''
 w_reason=''

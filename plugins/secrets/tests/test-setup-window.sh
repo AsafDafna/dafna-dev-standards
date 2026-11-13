@@ -500,6 +500,25 @@ test_window_no_interrupt_around_token_store() {
   assert_eq 2 "$(op_log | grep -c '^item create --vault agent-tokens')" "tries"
 }
 
+test_window_trace_prints_no_value() {
+  sw_repo
+  printf 'S=SENTINEL-7f3a\nG=SENTINEL-7f3a-g\n' > .env
+  printf '\n' > "$TEST_DIR/stdin"
+  sh -x "$PLUGIN_DIR/libexec/setup-window.sh" "$TEST_DIR/proj" "$TEST_DIR/res/result" proj \
+    --import "$TEST_DIR/proj/.env" --guard G < "$TEST_DIR/stdin" > "$TEST_DIR/screen" 2>&1
+  assert_eq ok "$(first_line "$(cat "$TEST_DIR/res/result")")" "sh -x (screen: $(cat "$TEST_DIR/screen"))"
+  _all=$(cat "$TEST_DIR/screen")
+  _first=$_all
+  rm -rf "$TEST_DIR/res/result" "$FAKE_OP_DIR/vaults" "$FAKE_OP_DIR/tokens" "$FAKE_SEC_DIR/items"
+  env SHELLOPTS=xtrace sh "$PLUGIN_DIR/libexec/setup-window.sh" "$TEST_DIR/proj" "$TEST_DIR/res/result" proj \
+    --import "$TEST_DIR/proj/.env" --guard G < "$TEST_DIR/stdin" > "$TEST_DIR/screen" 2>&1
+  assert_eq ok "$(first_line "$(cat "$TEST_DIR/res/result")")" "SHELLOPTS (screen: $(cat "$TEST_DIR/screen"))"
+  _all=$_all$(cat "$TEST_DIR/screen")
+  assert_not_contains "$_all" SENTINEL-7f3a "a value"
+  assert_not_contains "$_all" ops_fake_ "the token"
+  assert_contains "$_first" "+ set +x" "the trace was on"
+}
+
 test_window_no_value_printed() {
   sw_repo
   printf 'S=SENTINEL-7f3a\nG=SENTINEL-7f3a-g\n' > .env

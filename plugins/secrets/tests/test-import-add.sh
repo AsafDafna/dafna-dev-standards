@@ -337,6 +337,32 @@ test_add_no_refs_uses_main_name() {
   assert_eq vx "$(stored myproj K)"
 }
 
+test_trace_prints_no_value() {
+  ia_repo
+  fake_keychain op-sa-proj SENTINEL-TOKEN-9c1d
+  fake_token SENTINEL-TOKEN-9c1d proj:w
+  printf 'S=SENTINEL-7f3a\n' > .env
+  printf SENTINEL-7f3a > "$TEST_DIR/in"
+  _all=''
+  assert_status 0 sh -x "$PLUGIN_DIR/bin/secrets" add T < "$TEST_DIR/in"
+  _first=$ERR
+  _all=$_all$OUT$ERR
+  assert_status 0 sh -x "$PLUGIN_DIR/bin/secrets" import .env
+  _all=$_all$OUT$ERR
+  assert_status 0 sh -x "$PLUGIN_DIR/bin/secrets" import --names-only .env
+  _all=$_all$OUT$ERR
+  assert_status 0 env SHELLOPTS=xtrace sh "$PLUGIN_DIR/bin/secrets" add T < "$TEST_DIR/in"
+  _all=$_all$OUT$ERR
+  assert_status 0 env SHELLOPTS=xtrace sh "$PLUGIN_DIR/bin/secrets" import .env
+  _all=$_all$OUT$ERR
+  assert_status 0 env SHELLOPTS=xtrace sh "$PLUGIN_DIR/bin/secrets" import --names-only .env
+  _all=$_all$OUT$ERR
+  assert_eq SENTINEL-7f3ax "$(stored proj T)" "add"
+  assert_not_contains "$_all" SENTINEL-7f3a "a value"
+  assert_not_contains "$_all" SENTINEL-TOKEN-9c1d "the token"
+  assert_contains "$_first" "+ set +x" "the trace was on"
+}
+
 test_values_never_leak() {
   ia_repo
   printf 'S=SENTINEL-7f3a\n' > .env
