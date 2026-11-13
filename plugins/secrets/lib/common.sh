@@ -168,7 +168,7 @@ secrets_op_fail() {
 # TAG lists only the items with that tag. The invalid-token line names PROJECT (default VAULT);
 # pass it when VAULT is agent-shared.
 secrets_titles() {
-  _ti_err=$(mktemp) || secrets_die "cannot make a temp file in ${TMPDIR:-/tmp}"
+  _ti_err=$(mktemp "${TMPDIR:-/tmp}/secrets-titles.XXXXXX") || secrets_die "cannot make a temp file in ${TMPDIR:-/tmp}"
   _ti_json=$(op item list --vault "$1" ${3:+--tags "$3"} --format json --cache=false 2>"$_ti_err")
   _ti_rc=$?
   _ti_msg=$(cat "$_ti_err")

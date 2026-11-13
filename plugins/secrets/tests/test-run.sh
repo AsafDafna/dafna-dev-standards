@@ -166,3 +166,45 @@ test_run_signal_death_code() {
   run_repo
   assert_status 255 secrets run -- sh -c 'kill -TERM $$'
 }
+
+# sandbox_mktemp: a mktemp that refuses a path outside TMPDIR, like a sandboxed shell.
+sandbox_mktemp() {
+  mkdir "$TEST_DIR/sandbox-bin" || return 1
+  cat > "$TEST_DIR/sandbox-bin/mktemp" <<'WRAP'
+#!/bin/sh
+for a in "$@"; do
+  case $a in -d) ;; *) tpl=$a ;; esac
+done
+case ${tpl-} in
+  "$TMPDIR"/*) ;;
+  *) echo "mktemp: mkstemp failed on ${tpl-}: Operation not permitted" >&2; exit 1 ;;
+esac
+exec /usr/bin/mktemp "$@"
+WRAP
+  chmod +x "$TEST_DIR/sandbox-bin/mktemp"
+  PATH=$TEST_DIR/sandbox-bin:$PATH
+}
+
+test_sandbox_guarded_hint() {
+  run_repo
+  sandbox_mktemp
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
+  fake_item proj-guarded G v-g
+  assert_status 1 secrets run --guarded -- true
+  assert_contains "$ERR" 'secrets: cannot read G (item G in vault proj)'
+  assert_contains "$ERR" 'ask the owner to move G from proj-guarded to proj'
+}
+
+test_sandbox_status_and_add() {
+  run_repo
+  fake_item agent-shared S v2
+  fake_token tok2 proj:w agent-shared
+  fake_keychain op-sa-proj tok2
+  TERM_PROGRAM=xterm
+  export TERM_PROGRAM
+  sandbox_mktemp
+  assert_status 0 secrets status
+  assert_contains "$OUT" "secrets: A readable"
+  assert_status 0 sh -c 'printf "%s\n" newval | sh "$1/bin/secrets" add NEWNAME' sh "$PLUGIN_DIR"
+  assert_not_contains "$ERR" 'mktemp'
+}
