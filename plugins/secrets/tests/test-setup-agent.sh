@@ -84,6 +84,14 @@ test_setup_launcher_quoting() {
   assert_eq "$(printf '%s\n' 'A=op://proj/A.e2e/password' 'B=op://proj/B.e2e/password')" \
     "$(cat .secrets-refs.e2e.guarded)" "refs file in the repo root"
   assert_contains "$(cat "$FAKE_OP_DIR/argv.log")" 'service-account create proj-agent-' "--renew"
+  _copy="$TEST_DIR/p 'q' [ab]"
+  mkdir "$_copy" || fail "plugin copy"
+  cp -R "$PLUGIN_DIR/bin" "$PLUGIN_DIR/lib" "$PLUGIN_DIR/libexec" "$_copy/" || fail "plugin copy"
+  assert_status 0 sh "$_copy/bin/secrets" setup proj
+  case $(sed -n 2p "$FAKE_OPEN_DIR/launched") in
+    "exec '$TEST_DIR/p '\\''q'\\'' [ab]/libexec/setup-window.sh' "*) ;;
+    *) fail "a plugin folder with a quote and brackets: $(sed -n 2p "$FAKE_OPEN_DIR/launched")" ;;
+  esac
 }
 
 test_setup_import_path_allowlist() {
