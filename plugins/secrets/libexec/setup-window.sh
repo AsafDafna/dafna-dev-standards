@@ -382,8 +382,8 @@ IFS= read -r w_answer || w_fail cancelled
 [ -d "${w_result%/*}" ] || w_fail 'the agent stopped waiting'
 
 w_op_ran=1
-# Each op call that reads no pipe gets /dev/null: stdin is the terminal, where the owner answers.
-w_json=$(op vault list --format json 2> "$w_tmp/err" </dev/null) || {
+# The sign-in call keeps the terminal as stdin: the probe verified the Touch ID sign-in only so.
+w_json=$(op vault list --format json 2> "$w_tmp/err") || {
   w_err=$(cat "$w_tmp/err")
   case $w_err in
     *'no account found'*)
@@ -397,6 +397,7 @@ w_json=$(op vault list --format json 2> "$w_tmp/err" </dev/null) || {
   secrets_op_fail "$w_err" "$w_project"
 }
 w_vaults=$(printf '%s' "$w_json" | jq -r '.[].name | ascii_downcase') || w_fail 'cannot read the vault list'
+# Each later op call that reads no pipe gets /dev/null: stdin is the terminal, where the owner answers.
 if [ -z "${SECRETS_OP_ACCOUNT-}" ]; then
   w_json=$(op account list --format json 2> "$w_tmp/err" </dev/null) || secrets_op_fail "$(cat "$w_tmp/err")" "$w_project"
   w_n=$(printf '%s' "$w_json" | jq length)

@@ -5,6 +5,10 @@
 
 secrets() { sh "$PLUGIN_DIR/bin/secrets" "$@"; }
 
+# The window's sign-in call (op vault list) keeps the terminal as stdin, where the later answers are.
+FAKE_OP_VAULT_LIST_KEEPS_STDIN=1
+export FAKE_OP_VAULT_LIST_KEEPS_STDIN
+
 op_log() { cat "$FAKE_OP_DIR/argv.log" 2>/dev/null; }
 
 sec_log() { cat "$FAKE_SEC_DIR/argv.log" 2>/dev/null; }
@@ -297,6 +301,18 @@ test_window_existing_vault_needs_yes() {
   assert_eq ok "$(first_line "$RESULT")" "after yes (screen: $SCREEN)"
   assert_not_contains "$(op_log)" 'vault create proj'
   assert_eq val-a-longx "$(stored Proj A)"
+}
+
+test_window_sign_in_keeps_terminal_stdin() {
+  sw_repo
+  unset FAKE_OP_VAULT_LIST_KEEPS_STDIN
+  mkdir -p "$FAKE_OP_DIR/vaults/Proj"
+  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env"
+  # The fake vault list reads the rest of its stdin, so the yes is gone only when the sign-in
+  # call has the window's stdin.
+  assert_eq 'failed: vault exists' "$RESULT"
+  assert_eq 'vault list --format json' "$(op_log | sed -n 1p)" "first op call"
 }
 
 test_window_open_name_in_guarded_vault() {

@@ -69,6 +69,9 @@ test_fake_op_reads_stdin() {
   assert_eq '' "$(left_after op account list --format json)" "account list"
   assert_eq '' "$(left_after op read op://proj/A/password)" "read"
   assert_eq "$(printf 'one\ntwo')" "$(left_after op signout)" "signout leaves stdin"
+  export FAKE_OP_VAULT_LIST_KEEPS_STDIN=1
+  assert_eq "$(printf 'one\ntwo')" "$(left_after op vault list --format json)" "vault list with the knob"
+  assert_eq '' "$(left_after op item list --vault proj --format json)" "item list with the knob"
 }
 
 test_fake_op_service_account() {
