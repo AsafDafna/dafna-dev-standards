@@ -21,6 +21,9 @@ stored() { cat "$FAKE_OP_DIR/vaults/$1/$2.value" && printf x; }
 first_line() { printf '%s\n' "${1%%
 *}"; }
 
+NL='
+'
+
 # sw_repo: the repo proj (the working folder), with .env holding A and G, and the result folder.
 sw_repo() {
   new_repo "$TEST_DIR/proj" || return 1
@@ -96,14 +99,16 @@ test_window_agent_gone() {
 
 test_window_screen_lists_targets() {
   sw_repo
-  printf 'B=val-b-long\nE=\n' > .env.e2e
+  printf 'B=val-b-long\nE=\nS=info\n' > .env.e2e
   : > "$TEST_DIR/stdin"
-  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/.env.e2e" --guard G
-  assert_contains "$SCREEN" 'A → proj (A)'
-  assert_contains "$SCREEN" 'G → proj-guarded (G)'
-  assert_contains "$SCREEN" 'B → proj (B.e2e)'
-  assert_contains "$SCREEN" 'E  (empty, skipped)'
-  assert_contains "$SCREEN" 'agent-tokens, agent-shared, proj, proj-guarded'
+  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/.env.e2e" --guard G,E,S
+  assert_contains "$SCREEN" "$NL    A → proj (A)$NL"
+  assert_contains "$SCREEN" "$NL    G → proj (G)  [guarded: Claude Code asks before use]$NL"
+  assert_contains "$SCREEN" "$NL    B → proj (B.e2e)$NL"
+  assert_contains "$SCREEN" "$NL    E  (empty, skipped)$NL"
+  assert_contains "$SCREEN" "$NL    S → proj (S.e2e)  (short value: masked in all output)  [guarded: Claude Code asks before use]$NL"
+  assert_contains "$SCREEN" "Vaults, each created if missing: agent-tokens, agent-shared, proj$NL"
+  assert_not_contains "$SCREEN" 'proj-guarded'
   assert_contains "$SCREEN" 'proj-agent'
   assert_eq 'failed: cancelled' "$RESULT"
 }
@@ -153,17 +158,17 @@ test_window_new_project() {
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq 0 "$RC" "exit (screen: $SCREEN)"
   _log=$(op_log)
-  for _v in agent-tokens agent-shared proj proj-guarded; do
-    assert_contains "$_log" "vault create $_v"
-  done
-  assert_eq 4 "$(printf '%s\n' "$_log" | grep -c '^vault create ')" "vault creates"
+  assert_eq "$(printf '%s\n' 'vault create agent-tokens' 'vault create agent-shared' 'vault create proj')" \
+    "$(printf '%s\n' "$_log" | grep '^vault create ')" "vault creates"
+  [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded" ] || fail "a vault proj-guarded"
   assert_eq 'service-account create proj-agent --vault proj:read_items,write_items --vault agent-shared:read_items --raw' \
     "$(printf '%s\n' "$_log" | grep '^service-account create')"
   assert_eq ops_fake_proj-agentx "$(stored agent-tokens proj)" "token item"
   assert_eq ops_fake_proj-agent "$(keychain proj)" "Keychain"
   assert_eq val-a-longx "$(stored proj A)"
-  assert_eq val-g-longx "$(stored proj-guarded G)"
-  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj-guarded/G.tags")" "tag of G"
+  assert_eq val-g-longx "$(stored proj G)"
+  assert_contains "$_log" 'item create --vault proj --tags high-value -' "the create of G"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/G.tags")" "tag of G"
   [ ! -f "$FAKE_OP_DIR/vaults/proj/A.tags" ] || fail "A has a tag"
   assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)"
   assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)"
@@ -172,7 +177,8 @@ test_window_new_project() {
   assert_contains "$SCREEN" 'secrets: keychain match'
   assert_eq signout "$(printf '%s\n' "$_log" | sed -n '$p')" "last op call"
   assert_eq ok "$(first_line "$RESULT")"
-  assert_contains "$RESULT" 'secrets: stored in proj: A'
+  assert_contains "$RESULT" "${NL}secrets: stored in proj: A$NL"
+  assert_contains "$RESULT" "${NL}secrets: stored in proj, guarded, with tag high-value: G$NL"
   assert_eq 'secrets: read back: 2 stored and matched' "$(printf '%s\n' "$RESULT" | sed -n '$p')" "last summary line"
 }
 
@@ -182,7 +188,6 @@ test_window_again_creates_nothing() {
   assert_eq 0 "$RC" "first run (screen: $SCREEN)"
   : > "$FAKE_OP_DIR/argv.log"
   : > "$FAKE_SEC_DIR/argv.log"
-  printf '\nyes\n' > "$TEST_DIR/stdin"
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq 0 "$RC" "second run (screen: $SCREEN)"
   assert_not_contains "$(op_log)" 'vault create'
@@ -190,65 +195,24 @@ test_window_again_creates_nothing() {
   assert_not_contains "$(op_log)" 'item create'
   assert_eq 0 "$(sec_log | grep -cx -- -i)" "Keychain writes"
   assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "one refs line"
+  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "one guarded refs line"
   [ ! -f "$FAKE_OP_DIR/vaults/proj/A.copies" ] || fail "a second item titled A"
+  [ ! -f "$FAKE_OP_DIR/vaults/proj/G.copies" ] || fail "a second item titled G"
 }
 
-sw_replace_line='secrets: G: an item G already exists in vault proj-guarded; this setup will replace its value'
-
-test_window_replace_guarded_with_yes() {
+test_window_replaces_guard_name_without_prompt() {
   sw_repo
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
   printf 'A=val-a-long\nG=val-g-new\n' > .env
-  printf '\nyes\n' > "$TEST_DIR/stdin"
-  window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq ok "$(first_line "$RESULT")" "after yes (screen: $SCREEN)"
-  assert_contains "$SCREEN" "$sw_replace_line"
-  assert_contains "$SCREEN" 'Type yes to replace the value of each item above: '
-  assert_not_contains "$SCREEN" 'secrets: A: an item'
-  assert_eq val-g-newx "$(stored proj-guarded G)"
-  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj-guarded/G.tags")" "tag of G"
-  assert_contains "$SCREEN" 'secrets: G match'
-}
-
-test_window_replace_guarded_declined() {
-  sw_repo
-  window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
-  _refs=$(cat .secrets-refs .secrets-refs.guarded)
-  printf 'A=val-a-new\nG=val-g-new\n' > .env
-  for _answer in no EOF; do
-    if [ "$_answer" = EOF ]; then printf '\n'; else printf '\n%s\n' "$_answer"; fi > "$TEST_DIR/stdin"
-    : > "$FAKE_OP_DIR/argv.log"
-    : > "$FAKE_SEC_DIR/argv.log"
-    window --import "$TEST_DIR/proj/.env" --guard G --renew
-    assert_eq 'failed: cancelled' "$RESULT" "$_answer (screen: $SCREEN)"
-    assert_contains "$SCREEN" "$sw_replace_line" "$_answer"
-    assert_not_contains "$(op_log)" 'create' "$_answer"
-    assert_not_contains "$(op_log)" 'item edit' "$_answer"
-    assert_eq 0 "$(sec_log | grep -cx -- -i)" "$_answer: Keychain writes"
-  done
-  assert_eq val-a-longx "$(stored proj A)"
-  assert_eq val-g-longx "$(stored proj-guarded G)"
-  assert_eq "$_refs" "$(cat .secrets-refs .secrets-refs.guarded)" "refs files"
-}
-
-test_window_interrupt_at_replace() {
-  sw_repo
-  window --import "$TEST_DIR/proj/.env" --guard G
-  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
-  printf 'A=val-a-new\nG=val-g-new\n' > .env
   : > "$FAKE_OP_DIR/argv.log"
-  window_bg --import "$TEST_DIR/proj/.env" --guard G
-  window_wait 'Press Enter'
-  printf '\n' >&5
-  window_wait 'Type yes to replace'
-  kill -INT "-$W_PID"
-  window_end
-  assert_eq 130 "$RC" "exit"
-  assert_eq 'failed: cancelled' "$RESULT"
-  assert_not_contains "$(op_log)" 'item edit'
-  assert_eq val-a-longx "$(stored proj A)"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "second run (screen: $SCREEN)"
+  assert_not_contains "$SCREEN" 'Type yes'
+  assert_contains "$(op_log)" 'item edit G --vault proj --tags high-value'
+  assert_eq val-g-newx "$(stored proj G)"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/G.tags")" "tag of G"
+  assert_contains "$SCREEN" 'secrets: G match'
 }
 
 test_window_title_case_replaces() {
@@ -328,85 +292,38 @@ test_window_sign_in_keeps_terminal_stdin() {
   assert_eq 'vault list --format json' "$(op_log | sed -n 1p)" "first op call"
 }
 
-test_window_open_name_in_guarded_vault() {
+test_window_unguard_stops() {
   sw_repo
-  fake_item agent-tokens proj tok-1
-  fake_keychain op-sa-proj tok-1
-  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj"
-  fake_item proj-guarded A val-old
-  window --import "$TEST_DIR/proj/.env"
-  assert_eq 'failed: item is guarded' "$(first_line "$RESULT")"
-  assert_contains "$SCREEN" 'secrets: A is in vault proj-guarded. Add A to --guard, or move the item.'
-  assert_contains "$RESULT" 'secrets: A is in vault proj-guarded. Add A to --guard, or move the item.'
-  assert_not_contains "$(op_log)" 'item create'
-  assert_not_contains "$(op_log)" 'item edit'
-  fake_item proj A val-old
-  window --import "$TEST_DIR/proj/.env"
-  assert_eq 'failed: more than one item is titled A in vaults proj and proj-guarded. Keep one.' \
-    "$(first_line "$RESULT")" "the same title in both vaults"
-  assert_not_contains "$(op_log)" 'item create'
-  assert_not_contains "$(op_log)" 'item edit'
+  printf 'B=val-b-long\n' >> .env
+  printf '%s\n' 'G=op://proj/G/password' 'B=op://proj/B/password' > .secrets-refs.guarded
+  printf 'A=op://proj/A.e2e/password\n' > .secrets-refs.e2e.guarded
+  window --import "$TEST_DIR/proj/.env" --guard B
+  _lines="secrets: G is a guarded secret. Add G to --guard."
+  assert_eq "failed: name is guarded
+$_lines" "$RESULT" "the result (screen: $SCREEN)"
+  assert_contains "$SCREEN" "$_lines"
+  assert_contains "$SCREEN" 'secrets: setup failed: name is guarded'
+  assert_not_contains "$SCREEN" 'Press Enter'
+  assert_eq '' "$(op_log)" "op calls"
+  window --import "$TEST_DIR/proj/.env" --guard B,G
+  assert_eq ok "$(first_line "$RESULT")" "with every guarded name in --guard (screen: $SCREEN)"
 }
 
-# sw_open_g VALUE: the vaults, token item and Keychain item of an earlier setup, item G in vault
-# proj with VALUE, and no item A.
-sw_open_g() {
-  fake_item agent-tokens proj tok-1
-  fake_keychain op-sa-proj tok-1
-  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared" "$FAKE_OP_DIR/vaults/proj-guarded"
-  fake_item proj G "$1"
-  rm -f "$FAKE_OP_DIR/vaults/proj/A.value"
-  : > "$FAKE_OP_DIR/argv.log"
+test_window_unguard_stops_through_setup() {
+  sw_repo
+  printf '%s\n' 'G=op://proj/G/password' > .secrets-refs.guarded
+  assert_status 1 secrets setup proj --import .env
+  assert_eq 'secrets: setup failed: name is guarded
+secrets: G is a guarded secret. Add G to --guard.' "$ERR"
+  assert_eq '' "$OUT"
+  assert_eq '' "$(op_log)" "op calls"
+  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "guarded refs file"
+  [ ! -e .secrets-refs ] || fail "an open refs file"
 }
 
-test_window_guard_name_in_open_vault_is_skipped() {
+test_window_guard_keeps_other_guarded_lines() {
   sw_repo
-  printf 'A=SENTINEL-a-file\nG=SENTINEL-g-file\n' > .env
-  _notice='secrets: G skipped: an item G is already in vault proj, which agents can read. Setup did not read or change it.'
-  _advice='secrets: If you moved it there yourself, nothing is needed. If not, delete it or move it to proj-guarded, then run setup again.'
-  _first=''
-  for _g in SENTINEL-g-file SENTINEL-g-other; do
-    sw_open_g "$_g"
-    window --import "$TEST_DIR/proj/.env" --guard G
-    assert_eq ok "$(first_line "$RESULT")" "$_g: result (screen: $SCREEN)"
-    for _out in "$SCREEN" "$RESULT"; do
-      assert_contains "$_out" "$_notice" "$_g"
-      assert_contains "$_out" "$_advice" "$_g"
-    done
-    assert_contains "$SCREEN" 'secrets: A match' "$_g"
-    assert_not_contains "$SCREEN" 'secrets: G match' "$_g"
-    assert_not_contains "$SCREEN" 'secrets: G mismatch' "$_g"
-    assert_eq SENTINEL-a-filex "$(stored proj A)" "$_g: A imported"
-    _log=$(op_log)
-    assert_not_contains "$_log" '/G/password' "$_g: a read of G"
-    assert_not_contains "$_log" 'item get' "$_g"
-    assert_not_contains "$_log" 'item edit G ' "$_g"
-    assert_not_contains "$_log" 'item create --vault proj-guarded' "$_g"
-    assert_eq "${_g}x" "$(stored proj G)" "$_g: G unchanged"
-    [ ! -e "$FAKE_OP_DIR/vaults/proj-guarded/G.value" ] || fail "$_g: an item G in proj-guarded"
-    [ ! -e .secrets-refs.guarded ] || fail "$_g: a guarded refs file"
-    assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "$_g: open refs"
-    for _text in "$SCREEN" "$RESULT" "$_log" "$(sec_log)" "$(cat "$SHIM_LOG")"; do
-      assert_not_contains "$_text" SENTINEL- "$_g"
-    done
-    assert_eq "ok
-$_notice
-$_advice
-secrets: stored in proj: A
-secrets: wrote .secrets-refs
-secrets: read back: 1 stored and matched, 1 skipped and not read" "$RESULT" "$_g: the summary"
-    if [ -z "$_first" ]; then
-      _first=$SCREEN$RESULT
-    else
-      assert_eq "$_first" "$SCREEN$RESULT" "the output does not depend on the value of G"
-    fi
-  done
-}
-
-test_window_skip_keeps_existing_refs_line() {
-  sw_repo
-  sw_open_g val-g-other
-  printf '%s\n' '# guarded' 'G=op://proj/G/password' > .secrets-refs.guarded
+  printf '%s\n' '# guarded' 'G=op://proj/G/password' 'H=op://proj/H/password' > .secrets-refs.guarded
   _before=$(cat .secrets-refs.guarded)
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
@@ -418,15 +335,18 @@ test_window_guard_moves_open_refs_line() {
   window --import "$TEST_DIR/proj/.env"
   assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
   assert_eq "$(printf '%s\n' 'A=op://proj/A/password' 'G=op://proj/G/password')" "$(cat .secrets-refs)" "open refs"
-  mkdir "$FAKE_OP_DIR/vaults/proj-guarded"
-  mv "$FAKE_OP_DIR/vaults/proj/G.value" "$FAKE_OP_DIR/vaults/proj-guarded/G.value"
-  printf '\nyes\n' > "$TEST_DIR/stdin"
+  [ ! -f "$FAKE_OP_DIR/vaults/proj/G.tags" ] || fail "G has a tag before --guard"
+  : > "$FAKE_OP_DIR/argv.log"
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq ok "$(first_line "$RESULT")" "run with --guard G (screen: $SCREEN)"
+  assert_contains "$(op_log)" 'item edit G --vault proj --tags high-value'
+  assert_not_contains "$(op_log)" 'item create --vault proj'
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/G.tags")" "tag of G"
   assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "open refs after --guard G"
   assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)" "guarded refs"
   assert_contains "$RESULT" 'secrets: wrote .secrets-refs, .secrets-refs.guarded'
   assert_status 0 secrets run -- sh -c 'test "$A" = val-a-long && test -z "${G+x}"'
+  assert_status 0 secrets run --guarded -- sh -c 'test "$A" = val-a-long && test "$G" = val-g-long'
 }
 
 test_window_guard_only_stage() {
@@ -438,12 +358,10 @@ test_window_guard_only_stage() {
   assert_eq '' "$(cat .secrets-refs)" "open refs file"
   TERM_PROGRAM=xterm
   export TERM_PROGRAM
-  assert_status 1 secrets status
-  assert_contains "$OUT" 'secrets: G MISSING (item G in vault proj)'
-  mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj/G.value"
-  assert_status 0 secrets run --guarded -- sh -c 'test "$G" = val-g-long'
   assert_status 0 secrets status
   assert_contains "$OUT" 'secrets: G readable (guarded: Claude Code asks before use)'
+  assert_status 0 secrets run --guarded -- sh -c 'test "$G" = val-g-long'
+  assert_status 0 secrets run -- sh -c 'test -z "${G+x}"'
 }
 
 test_window_screen_shows_files() {

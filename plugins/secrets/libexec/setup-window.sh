@@ -147,7 +147,6 @@ w_count=0
 w_keys=''
 w_guards='
 '
-w_guarded=''
 w_renew=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -174,7 +173,6 @@ while [ $# -gt 0 ]; do
 "
         w_rest=${w_rest#*,}
       done
-      w_guarded=1
       shift ;;
     --renew) w_renew=1 ;;
     *) w_fail 'unknown argument' ;;
@@ -184,13 +182,13 @@ done
 w_sa=$w_project-agent
 [ -z "$w_renew" ] || w_sa=$w_sa-$(date +%Y%m%d%H%M)
 
-w_target() { # NAME: sets w_title, w_vault, w_tags and w_guard (0 or 1) for NAME in stage w_stage
+w_target() { # NAME: sets w_title, w_tags and w_guard (0 or 1) for NAME in stage w_stage
   w_title=$1${w_stage:+.$w_stage}
   case $w_guards in
     *"
 $1
-"*) w_vault=$w_project-guarded w_tags=high-value w_guard=1 ;;
-    *) w_vault=$w_project w_tags='' w_guard=0 ;;
+"*) w_tags=high-value w_guard=1 ;;
+    *) w_tags='' w_guard=0 ;;
   esac
 }
 
@@ -201,52 +199,43 @@ w_show_file() {
 w_show() { # NAME VALUE: the screen line of one entry
   w_target "$1"
   if [ -n "$2" ]; then
-    printf '    %s → %s (%s)%s\n' "$1" "$w_vault" "$w_title" "$(secrets_short_mark "$2")"
+    w_mark=''
+    [ "$w_guard" = 0 ] || w_mark='  [guarded: Claude Code asks before use]'
+    printf '    %s → %s (%s)%s%s\n' "$1" "$w_project" "$w_title" "$(secrets_short_mark "$2")" "$w_mark"
   else
     printf '    %s  (empty, skipped)\n' "$1"
   fi
 }
 
-# w_dest NAME: w_target, then, from the titles listed before any write, sets w_exists (0 or 1)
-# and w_kind: "skip" for a guard name whose title is in the project vault, "guarded" for an open
-# name whose item is in the guarded vault.
-w_dest() {
-  w_target "$1"
-  w_np=$(secrets_title_exists "$w_titles_p" "$w_title" "$w_project") || exit 1
-  w_ng=$(secrets_title_exists "$w_titles_g" "$w_title" "$w_project-guarded") || exit 1
-  [ "$w_np$w_ng" != 11 ] ||
-    secrets_die "more than one item is titled $w_title in vaults $w_project and $w_project-guarded. Keep one."
-  w_kind=''
-  if [ "$w_guard" = 0 ]; then
-    w_exists=$w_np
-    [ "$w_ng" = 0 ] || w_kind=guarded
-  elif [ "$w_np" = 1 ]; then
-    w_kind=skip
-  else
-    w_exists=$w_ng
-  fi
+w_guarded_file() { # the file callback of w_unguard: sets w_grefs to the guarded refs of stage w_stage
+  w_grefs=''
+  w_gfile=$w_root/$(secrets_refs_file "$w_stage" 1)
+  [ ! -f "$w_gfile" ] || w_grefs=$(secrets_refs_read "$w_gfile") || exit 1
+  w_grefs="
+$w_grefs"
 }
 
-# w_check NAME VALUE: before any write, collects the entries that stop the import, are skipped,
-# or replace an item in the guarded vault. An agent can write the project vault, so an item there
-# is no proof that the owner moved a guarded secret, and reading or comparing it would tell its
-# state back to the agent.
-w_check() {
+# w_unguard NAME VALUE: collects NAME when the guarded refs file of its stage lists it and it is not
+# in --guard. Storing it would put its refs line in the open refs file, where every run loads it.
+w_unguard() {
   [ -n "$2" ] || return 0
-  w_dest "$1"
-  case $w_kind in
-    skip)
-      w_nskip=$((w_nskip + 1))
-      w_open_g="$w_open_g$1 skipped: an item $w_title is already in vault $w_project, which agents can read. Setup did not read or change it.
-" ;;
-    guarded) w_blocked="$w_blocked$w_title is in vault $w_project-guarded. Add $1 to --guard, or move the item.
-" ;;
-    *)
-      # Only the guarded vault: an agent can already change the items of the project vault.
-      [ "$w_guard:$w_exists" != 1:1 ] ||
-        w_replace="${w_replace}secrets: $1: an item $w_title already exists in vault $w_project-guarded; this setup will replace its value
+  w_target "$1"
+  [ "$w_guard" = 0 ] || return 0
+  case $w_grefs in
+    *"
+$1$secrets_tab"*) w_stop="$w_stop$1 is a guarded secret. Add $1 to --guard.
 " ;;
   esac
+}
+
+# w_dest NAME: w_target, then sets w_exists (0 or 1) from the titles listed before any write.
+w_dest() {
+  w_target "$1"
+  w_exists=$(secrets_title_exists "$w_titles_p" "$w_title" "$w_project") || exit 1
+}
+
+w_check() { # NAME VALUE: w_dest before any write, so that a title held twice stops the import
+  [ -z "$2" ] || w_dest "$1"
 }
 
 w_put() { # NAME VALUE: stores one entry and sets its refs line
@@ -255,8 +244,7 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
     return 0
   fi
   w_dest "$1"
-  [ "$w_kind" != skip ] || return 0
-  printf '%s' "$2" | secrets_item_put "$w_vault" "$w_title" "$w_tags" "$w_exists" "$w_project" || exit 1
+  printf '%s' "$2" | secrets_item_put "$w_project" "$w_title" "$w_tags" "$w_exists" || exit 1
   if [ "$w_guard" = 0 ]; then
     w_stored_p="$w_stored_p${w_stored_p:+, }$w_title"
   else
@@ -266,8 +254,8 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
   secrets_refs_set "$w_root/$w_refs_file" "$1" "$w_project" "$w_title"
   w_wrote "$w_refs_file"
   [ "$w_guard" = 1 ] || return 0
-  # A line left in the open refs file would stop every daily run on the moved item. The file is
-  # also created when missing: run --guarded and status need it, also when it holds no line.
+  # A line left in the open refs file would load the secret without --guarded. The file is also
+  # created when missing: run --guarded and status need it, also when it holds no line.
   w_refs_file=$(secrets_refs_file "$w_stage" 0)
   secrets_refs_unset "$w_root/$w_refs_file" "$1"
   w_wrote "$w_refs_file"
@@ -279,9 +267,8 @@ w_wrote() { # REFS-FILE: adds it once to w_refs, the list of the "wrote" line
 
 w_verify() { # NAME VALUE: reads the item back as the owner and compares it with VALUE
   [ -n "$2" ] || return 0
-  w_dest "$1"
-  [ "$w_kind" != skip ] || return 0
-  if w_back=$(op read --cache=false -n "op://$w_vault/$w_title/password" 2>/dev/null </dev/null && printf x) &&
+  w_target "$1"
+  if w_back=$(op read --cache=false -n "op://$w_project/$w_title/password" 2>/dev/null </dev/null && printf x) &&
     [ "${w_back%x}" = "$2" ]; then
     printf 'secrets: %s match\n' "$1"
     w_checked=$((w_checked + 1))
@@ -363,10 +350,16 @@ w_token_copy() { # sets w_token from agent-tokens, and the Keychain item to it w
   [ "$w_kc" = "$w_token" ] || w_keychain_put
 }
 
+w_stop=''
+w_each w_unguard w_guarded_file
+if [ -n "$w_stop" ]; then
+  w_notes "$w_stop"
+  w_fail 'name is guarded'
+fi
+
 printf 'secrets setup for project %s\n' "$w_project"
 [ -z "${SECRETS_OP_ACCOUNT-}" ] || printf '  1Password account: %s\n' "$SECRETS_OP_ACCOUNT"
-printf '  Vaults, each created if missing: agent-tokens, agent-shared, %s%s\n' "$w_project" \
-  "${w_guarded:+, $w_project-guarded}"
+printf '  Vaults, each created if missing: agent-tokens, agent-shared, %s\n' "$w_project"
 if [ -n "$w_renew" ]; then
   printf '  New service account: %s\n' "$w_sa"
 else
@@ -421,37 +414,18 @@ if w_has "$w_project" && [ "$w_tok_n" = 0 ]; then
   [ "$w_answer" = yes ] || w_fail 'vault exists'
 fi
 
-w_nskip=0
 w_titles_p=''
-w_titles_g=''
 if [ "$w_nfiles" -gt 0 ]; then
   if w_has "$w_project"; then
     w_titles_p=$(secrets_titles "$w_project") || exit 1
   fi
-  if w_has "$w_project-guarded"; then
-    w_titles_g=$(secrets_titles "$w_project-guarded" "$w_project") || exit 1
-  fi
-  w_open_g=''
-  w_blocked=''
-  w_replace=''
   w_each w_check
-  if [ -n "$w_blocked" ]; then
-    w_notes "$w_blocked"
-    w_fail 'item is guarded'
-  fi
-  if [ -n "$w_replace" ]; then
-    printf '%s' "$w_replace"
-    printf 'Type yes to replace the value of each item above: '
-    IFS= read -r w_answer || w_answer=''
-    [ "$w_answer" = yes ] || w_fail cancelled
-  fi
 fi
 
 w_made=''
 w_vault_make agent-tokens
 w_vault_make agent-shared
 w_vault_make "$w_project"
-[ -z "$w_guarded" ] || w_vault_make "$w_project-guarded"
 [ -z "$w_made" ] || w_note "created vaults: $w_made"
 
 if [ "$w_tok_n" = 0 ] || [ -n "$w_renew" ]; then
@@ -461,17 +435,13 @@ else
 fi
 
 if [ "$w_nfiles" -gt 0 ]; then
-  if [ -n "$w_open_g" ]; then
-    w_notes "$w_open_g"
-    w_note "If you moved it there yourself, nothing is needed. If not, delete it or move it to $w_project-guarded, then run setup again."
-  fi
   w_stored_p=''
   w_stored_g=''
   w_skipped=''
   w_refs=''
   w_each w_put
   [ -z "$w_stored_p" ] || w_note "stored in $w_project: $w_stored_p"
-  [ -z "$w_stored_g" ] || w_note "stored in $w_project-guarded, with tag high-value: $w_stored_g"
+  [ -z "$w_stored_g" ] || w_note "stored in $w_project, guarded, with tag high-value: $w_stored_g"
   [ -z "$w_skipped" ] || w_note "skipped (empty value): $w_skipped"
   [ -z "$w_refs" ] || w_note "wrote $w_refs"
 fi
@@ -486,10 +456,6 @@ if [ -n "$w_bad" ]; then
   w_note "mismatch: $w_bad"
   w_fail mismatch
 fi
-if [ "$w_nfiles" -gt 0 ]; then
-  w_more=''
-  [ "$w_nskip" = 0 ] || w_more=", $w_nskip skipped and not read"
-  w_note "read back: $w_checked stored and matched$w_more"
-fi
+[ "$w_nfiles" = 0 ] || w_note "read back: $w_checked stored and matched"
 w_write ok
 printf 'secrets: setup done.\n'

@@ -77,8 +77,9 @@ test_setup_launcher_quoting() {
   printf 'D=val-d\n' > ./-dash.env
   assert_status 0 secrets setup proj --import "d q/x.env:e2e" --import 'x+y=z,w@v~.env' --import ./-dash.env:ci \
     --guard A,B --renew
-  assert_eq val-qax "$(stored proj-guarded A.e2e)" "a path with a space, and its stage"
-  assert_eq val-qbx "$(stored proj-guarded B.e2e)" "both guard names"
+  assert_eq val-qax "$(stored proj A.e2e)" "a path with a space, and its stage"
+  assert_eq val-qbx "$(stored proj B.e2e)" "both guard names"
+  assert_eq high-value "$(cat "$FAKE_OP_DIR/vaults/proj/B.e2e.tags")" "tag of a guard name"
   assert_eq val-cx "$(stored proj C)" "a path with the other allowed signs"
   assert_eq val-dx "$(stored proj D.ci)" "a path that starts with a dash"
   assert_eq "$(printf '%s\n' 'A=op://proj/A.e2e/password' 'B=op://proj/B.e2e/password')" \
