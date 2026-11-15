@@ -19,15 +19,9 @@ done
 raw=$raw$line
 case $raw in *--guarded*) ;; *) exit 0 ;; esac
 
-cmd=$(printf '%s' "$raw" | jq -er '.tool_input.command | strings' 2>/dev/null) || ask
-
-# The shell joins the two lines around a backslash at a line end.
-while :; do
-  case $cmd in
-    *"\\$nl"*) cmd=${cmd%%"\\$nl"*}${cmd#*"\\$nl"} ;;
-    *) break ;;
-  esac
-done
+# The join of a backslash and a line end, as the shell does it, is in jq: a loop in sh takes
+# quadratic time, and a hook that runs past its timeout lets the command run.
+cmd=$(printf '%s' "$raw" | jq -er '.tool_input.command | strings | split("\\\n") | join("")' 2>/dev/null) || ask
 
 # Words split at blanks, operators, quotes and backslashes: a quoted path, a compound command and
 # the text of `sh -c '...'` all become plain words. After `secrets` and `run`, only the options up

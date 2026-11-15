@@ -82,6 +82,28 @@ test_hook_silent_for_other_commands() {
   silent ''
 }
 
+ms_now() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
+
+# The hook runs before every Bash call, and a timed-out hook lets the command run.
+test_hook_long_command_is_fast() {
+  _i=0
+  while [ "$_i" -lt 5000 ]; do
+    printf 'echo line-%05d-abcdef \\\n' "$_i"
+    _i=$((_i + 1))
+  done > "$TEST_DIR/cmd"
+  printf '&& secrets run --guarded -- x' >> "$TEST_DIR/cmd"
+  _size=$(wc -c < "$TEST_DIR/cmd")
+  [ "$_size" -gt 90000 ] || fail "the command has only $_size bytes"
+  hook_input "$(cat "$TEST_DIR/cmd")" > "$TEST_DIR/in.json"
+  for _sh in $(hook_shells); do
+    _t0=$(ms_now)
+    assert_status 0 "$_sh" "$HOOK" < "$TEST_DIR/in.json"
+    _ms=$(($(ms_now) - _t0))
+    [ "$_ms" -lt 5000 ] || fail "$_sh: $_ms ms"
+    assert_eq "$ASK" "$OUT" "$_sh"
+  done
+}
+
 # A command without the text --guarded never reaches jq.
 test_hook_no_jq_without_the_flag() {
   hook_input 'secrets run -- x' > "$TEST_DIR/in.json"
