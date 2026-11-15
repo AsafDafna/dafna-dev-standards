@@ -187,6 +187,31 @@ test_import_replaces() {
     "$(cat .secrets-refs)" "refs line replaced in place"
 }
 
+test_import_add_replace_title_case() {
+  ia_repo
+  fake_item proj api_key val-old
+  printf 'API_KEY=val-new\n' > .env
+  assert_status 0 secrets import .env
+  assert_contains "$(op_log)" 'item edit API_KEY --vault proj' "import"
+  printf v2 > "$TEST_DIR/in"
+  assert_status 0 secrets add API_KEY < "$TEST_DIR/in"
+  assert_eq 2 "$(op_log | grep -c '^item edit API_KEY --vault proj')" "add"
+  assert_not_contains "$(op_log)" 'item create' "a second item"
+  assert_eq v2x "$(stored proj api_key)"
+}
+
+test_import_add_refuse_guarded_title_case() {
+  ia_repo
+  printf 'G=op://proj/a.e2e/password\nH=op://proj/t/password\n' > .secrets-refs.guarded
+  printf 'A=val-a\n' > .env.e2e
+  assert_status 1 secrets import .env.e2e
+  assert_eq 'secrets: A is a guarded secret. Ask the owner to change it in 1Password.' "$ERR" "import"
+  printf v > "$TEST_DIR/in"
+  assert_status 1 secrets add T < "$TEST_DIR/in"
+  assert_eq 'secrets: T is a guarded secret. Ask the owner to change it in 1Password.' "$ERR" "add"
+  assert_eq '' "$(op_log)" "op calls"
+}
+
 test_import_refuses_guarded_name() {
   ia_repo
   printf 'A=op://proj/A/password\n' > .secrets-refs.guarded

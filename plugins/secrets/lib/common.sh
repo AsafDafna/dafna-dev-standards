@@ -296,10 +296,16 @@ secrets_short_mark() {
   [ "${#1}" -lt 1 ] || [ "${#1}" -gt 7 ] || printf '  (short value: masked in all output)'
 }
 
+# secrets_title_count TITLE: the number of stdin lines equal to TITLE without case, as op matches
+# a title. The C locale folds A-Z only, so the result does not depend on the locale.
+secrets_title_count() {
+  LC_ALL=C grep -Fixc -- "$1"
+}
+
 # secrets_title_exists TITLES TITLE VAULT: prints 1 when TITLES holds TITLE once, 0 when not,
 # and dies when it holds TITLE more than once.
 secrets_title_exists() {
-  _te_n=$(printf '%s\n' "$1" | grep -Fxc -- "$2")
+  _te_n=$(printf '%s\n' "$1" | secrets_title_count "$2")
   [ "$_te_n" -le 1 ] || secrets_die "more than one item is titled $2 in vault $3. Keep one."
   printf '%s\n' "$_te_n"
 }

@@ -98,6 +98,13 @@ test_status_missing_and_guarded() {
   assert_contains "$OUT" 'secrets: G waits in proj-guarded'
 }
 
+test_status_title_case() {
+  status_repo
+  printf 'A=op://proj/a/password\n' > .secrets-refs
+  assert_status 0 secrets status
+  assert_contains "$OUT" 'secrets: A readable'
+}
+
 test_status_duplicate_title() {
   status_repo
   fake_item proj A v1 '' 2

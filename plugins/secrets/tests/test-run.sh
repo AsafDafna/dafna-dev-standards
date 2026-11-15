@@ -71,6 +71,14 @@ test_run_guarded_hint() {
   assert_contains "$ERR" 'ask the owner to move G from proj-guarded to proj'
 }
 
+test_run_diagnose_title_case() {
+  run_repo
+  printf 'A=op://proj/a/password\nB=op://proj/B/password\n' > .secrets-refs
+  assert_status 1 secrets run -- true
+  assert_contains "$ERR" 'secrets: cannot read B (item B in vault proj)'
+  assert_not_contains "$ERR" 'cannot read A' "op matches a title without case"
+}
+
 test_run_duplicate_title() {
   run_repo
   fake_item proj A v1 '' 2

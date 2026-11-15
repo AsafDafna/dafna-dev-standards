@@ -251,6 +251,19 @@ test_window_interrupt_at_replace() {
   assert_eq val-a-longx "$(stored proj A)"
 }
 
+test_window_title_case_replaces() {
+  sw_repo
+  printf 'A=val-a-long\n' > .env
+  fake_item proj a val-old
+  printf '\nyes\n' > "$TEST_DIR/stdin"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
+  assert_contains "$(op_log)" 'item edit A --vault proj'
+  assert_not_contains "$(op_log)" 'item create --vault proj -'
+  [ ! -f "$FAKE_OP_DIR/vaults/proj/a.copies" ] || fail "a second item titled A"
+  assert_eq val-a-longx "$(stored proj a)"
+}
+
 test_window_second_mac() {
   sw_repo
   fake_item agent-tokens proj tok-from-item
