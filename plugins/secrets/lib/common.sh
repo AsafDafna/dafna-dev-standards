@@ -114,6 +114,21 @@ secrets_refs_read() {
   printf '%s' "$_rr_out"
 }
 
+# secrets_guarded_refs ROOT: NAME<TAB>VAULT<TAB>TITLE for every line in the guarded refs files
+# of ROOT, with VAULT in lower case.
+secrets_guarded_refs() {
+  for _gr_file in "$1/.secrets-refs.guarded" "$1"/.secrets-refs.*.guarded; do
+    [ -f "$_gr_file" ] || continue
+    _gr_refs=$(secrets_refs_read "$_gr_file") || exit 1
+    while IFS=$secrets_tab read -r _gr_name _gr_vault _gr_title; do
+      [ -z "$_gr_name" ] ||
+        printf '%s\t%s\t%s\n' "$_gr_name" "$(secrets_lower "$_gr_vault")" "$_gr_title"
+    done <<EOF
+$_gr_refs
+EOF
+  done
+}
+
 # secrets_project ROOT: the project vault named in the refs files, else the main checkout name.
 secrets_project() {
   for _pj_file in "$1/.secrets-refs" "$1"/.secrets-refs.*; do

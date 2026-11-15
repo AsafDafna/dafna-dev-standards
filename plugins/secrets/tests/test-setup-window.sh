@@ -309,6 +309,26 @@ $_lines" "$RESULT" "the result (screen: $SCREEN)"
   assert_eq ok "$(first_line "$RESULT")" "with every guarded name in --guard (screen: $SCREEN)"
 }
 
+test_window_unguard_stops_on_title_case() {
+  sw_repo
+  printf 'api_key=val-k-long\nB=val-b-long\nU=val-u-long\n' > .env
+  printf 'K=val-k2-long\n' > .env.e2e
+  printf '%s\n' 'API_KEY=op://proj/API_KEY/password' 'X=op://Proj/b/password' \
+    'Y=op://agent-shared/U/password' > .secrets-refs.guarded
+  _before=$(cat .secrets-refs.guarded)
+  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/.env.e2e"
+  assert_eq "failed: name is guarded
+secrets: api_key is a guarded secret. Add api_key to --guard.
+secrets: B is a guarded secret. Add B to --guard." "$RESULT" "the result (screen: $SCREEN)"
+  assert_eq '' "$(op_log)" "op calls"
+  [ ! -e .secrets-refs ] || fail "an open refs file"
+  assert_eq "$_before" "$(cat .secrets-refs.guarded)" "guarded refs file"
+  printf 'X=op://proj/K.E2E/password\n' > .secrets-refs.e2e.guarded
+  window --import "$TEST_DIR/proj/.env.e2e"
+  assert_eq "failed: name is guarded
+secrets: K is a guarded secret. Add K to --guard." "$RESULT" "a stage title in another file"
+}
+
 test_window_unguard_stops_through_setup() {
   sw_repo
   printf '%s\n' 'G=op://proj/G/password' > .secrets-refs.guarded

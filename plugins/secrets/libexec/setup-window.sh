@@ -215,17 +215,22 @@ w_guarded_file() { # the file callback of w_unguard: sets w_grefs to the guarded
 $w_grefs"
 }
 
-# w_unguard NAME VALUE: collects NAME when the guarded refs file of its stage lists it and it is not
-# in --guard. Storing it would put its refs line in the open refs file, where every run loads it.
+# w_unguard NAME VALUE: collects NAME when it is not in --guard and either the guarded refs file of
+# its stage lists it, or its title is, without case, the title of a guarded ref in the project vault
+# (the rule of import and add). Storing it would put an open refs line on a guarded item.
 w_unguard() {
   [ -n "$2" ] || return 0
   w_target "$1"
   [ "$w_guard" = 0 ] || return 0
   case $w_grefs in
     *"
-$1$secrets_tab"*) w_stop="$w_stop$1 is a guarded secret. Add $1 to --guard.
-" ;;
+$1$secrets_tab"*) ;;
+    *)
+      [ -n "$w_gtitles" ] && [ "$(printf '%s' "$w_gtitles" | secrets_title_count "$w_title")" != 0 ] ||
+        return 0 ;;
   esac
+  w_stop="$w_stop$1 is a guarded secret. Add $1 to --guard.
+"
 }
 
 # w_dest NAME: w_target, then sets w_exists (0 or 1) from the titles listed before any write.
@@ -350,6 +355,14 @@ w_token_copy() { # sets w_token from agent-tokens, and the Keychain item to it w
   [ "$w_kc" = "$w_token" ] || w_keychain_put
 }
 
+w_gall=$(secrets_guarded_refs "$w_root") || exit 1
+w_gtitles=''
+while IFS=$secrets_tab read -r _ w_gvault w_gtitle; do
+  [ "$w_gvault" != "$w_project" ] || w_gtitles="$w_gtitles$w_gtitle
+"
+done <<EOF
+$w_gall
+EOF
 w_stop=''
 w_each w_unguard w_guarded_file
 if [ -n "$w_stop" ]; then
