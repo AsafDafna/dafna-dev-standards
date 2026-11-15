@@ -123,6 +123,35 @@ test_fake_op_items() {
   assert_eq "[ERROR] 2026/01/01 00:00:00 could not read secret 'op://proj/C/password': could not get item proj/C: \"C\" isn't an item in the \"proj\" vault. Specify the item with its UUID, name, or domain." "$ERR"
 }
 
+files_of() { # VAULT: the file names in the vault's folder, each with a space after it
+  for _fo_f in "$FAKE_OP_DIR/vaults/$1"/*; do
+    [ ! -e "$_fo_f" ] || printf '%s ' "${_fo_f##*/}"
+  done
+}
+
+# The test folder can be on a volume that ignores case, so the checks look at the stored file names.
+test_fake_op_title_case() {
+  fake_item proj Api_Key val-a
+  assert_status 0 op read op://proj/API_KEY/password
+  assert_eq val-a "$OUT" "read"
+  printf '%s\n' 'K=op://proj/api_key/password' > "$HOME/k.env"
+  assert_status 0 op run --env-file "$HOME/k.env" -- sh -c 'printf %s "$K"'
+  assert_eq val-a "$OUT" "run"
+  template API_KEY val-b > "$TEST_DIR/b.json"
+  assert_status 0 op item edit API_KEY --vault proj --tags high-value < "$TEST_DIR/b.json"
+  assert_eq 'Api_Key.tags Api_Key.value Api_Key.version ' "$(files_of proj)" "edit keeps the stored title"
+  assert_status 0 op read op://proj/api_key/password
+  assert_eq val-b "$OUT" "the edited value"
+  assert_status 0 op item create --vault proj - < "$TEST_DIR/b.json"
+  assert_eq 'Api_Key.copies Api_Key.tags Api_Key.value Api_Key.version ' "$(files_of proj)" "a create of the title in another case"
+  assert_status 1 op read op://proj/api_key/password
+  assert_contains "$ERR" 'More than one item matches "api_key".'
+  assert_contains "$ERR" '* for the item "Api_Key" in vault proj: item-proj-Api_Key-2'
+  rm "$FAKE_OP_DIR/vaults/proj/Api_Key.copies"
+  assert_status 0 op item delete API_KEY --vault proj
+  assert_eq '' "$(files_of proj)" "delete"
+}
+
 test_fake_op_run_stops_on_bad_ref() {
   fake_item proj A val-a
   fake_item proj D val-d '' 2
