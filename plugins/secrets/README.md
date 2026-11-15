@@ -44,7 +44,7 @@ Set `SECRETS_OP_ACCOUNT` to the 1Password account for secrets in the owner's she
 
 A guard name is created or replaced like any other name. The window marks its line with `[guarded: Claude Code asks before use]`. The owner's Enter confirms the guard list.
 
-Setup never removes a guard. When an import name is in a guarded refs file of the repo and is not in `--guard` of this run, setup stops before any write with `NAME is a guarded secret. Add NAME to --guard.` Only a person who edits the refs files removes a guard.
+Setup never removes a guard. When an import name is in a guarded refs file of the repo and is not in `--guard` of this run, setup stops before any write with `NAME is a guarded secret. Add NAME to --guard.` Only the owner removes a guard: the owner removes the line from the guarded refs file and the tag `high-value` from the item.
 
 ### `run`
 
@@ -54,7 +54,7 @@ The exit code of the command passes through. Ctrl-C gives 130. A program that st
 
 ### `import` and the env parser
 
-The stage is `<x>` for `.env.<x>`, the default for `.env` and `.env.local`, and `FILE:STAGE` wins. `import` takes at most 50 names per file. Larger files go through `secrets setup --import`. `import` and `add` refuse a guarded name, and a title that a guarded ref uses.
+The stage is `<x>` for `.env.<x>`, the default for `.env` and `.env.local`, and `FILE:STAGE` wins. `import` takes at most 50 names per file. Larger files go through `secrets setup --import`. `import` and `add` refuse a guarded name, a title that a guarded ref uses, and an item that has the tag `high-value`.
 
 `--names-only` marks a value shorter than 8 characters. The marked value is masked in all output of `secrets run`.
 
@@ -70,7 +70,7 @@ A guarded secret is a name in a guarded refs file (`.secrets-refs.guarded`, or `
 
 `secrets run` loads the open refs file only. `secrets run --guarded` also loads the guarded refs file of the stage.
 
-The plugin ships a `PreToolUse` hook for the Bash tool (`hooks/hooks.json`, `hooks/guard-ask.sh`). When a Bash command runs `secrets run` with `--guarded`, the hook returns the decision `ask`. Claude Code then asks the owner, also in auto mode and in a subagent. The prompt shows the reason and the choices Yes and No. The hook never allows or denies a command.
+The plugin ships a `PreToolUse` hook for the Bash tool and the Monitor tool (`hooks/hooks.json`, `hooks/guard-ask.sh`). When a command runs `secrets run` with `--guarded`, the hook returns the decision `ask`. Claude Code then asks the owner, also in auto mode and in a subagent. The prompt shows the reason and the choices Yes and No. The hook never allows or denies a command. If the hook cannot start (for example right after a plugin update, until the session restarts), Claude Code runs the command with no prompt.
 
 A headless session (`claude -p`) has no person to ask, so Claude Code denies a `--guarded` command there.
 

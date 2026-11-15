@@ -169,7 +169,8 @@ test_hook_json_wires_the_hook() {
   _h=$PLUGIN_DIR/hooks/hooks.json
   assert_eq PreToolUse "$(jq -r '.hooks | keys | join(" ")' "$_h")" "events"
   assert_eq 'Bash|Monitor' "$(jq -r '[.hooks.PreToolUse[].matcher] | join(" ")' "$_h")" "matcher"
-  assert_eq 'command|"${CLAUDE_PLUGIN_ROOT}"/hooks/guard-ask.sh|block' \
+  # No "onFailure": "block": a hook file that is gone after a plugin update would block every Bash call.
+  assert_eq 'command|"${CLAUDE_PLUGIN_ROOT}"/hooks/guard-ask.sh|null' \
     "$(jq -r '[.hooks.PreToolUse[].hooks[] | "\(.type)|\(.command)|\(.onFailure)"] | join(" ")' "$_h")" "the hook"
 }
 
