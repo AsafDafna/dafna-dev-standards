@@ -66,7 +66,7 @@ A command under `secrets run` sees no terminal on stdout and stderr. A program t
 
 ## Guarded secrets
 
-A guarded secret is a name in a guarded refs file (`.secrets-refs.guarded`, or `.secrets-refs.STAGE.guarded`). Its item is in the project vault, with the tag `high-value`.
+A guarded secret is a name in a guarded refs file (`.secrets-refs.guarded`, or `.secrets-refs.STAGE.guarded`). Its item is in the project vault, with the tag `high-value`. To open a guarded name for good, the owner removes its line from the guarded refs file and removes the tag `high-value` from the item in 1Password.
 
 `secrets run` loads the open refs file only. `secrets run --guarded` also loads the guarded refs file of the stage.
 
