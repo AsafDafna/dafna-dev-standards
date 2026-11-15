@@ -384,6 +384,28 @@ secrets: G in .secrets-refs.e2e also points at the guarded item G. Remove that l
   assert_eq ok "$(first_line "$RESULT")" "with only the guard name's own line (screen: $SCREEN)"
 }
 
+# A checkout without the guarded refs file still finds the guard by the tag of the item.
+test_window_tagged_item_stops_open_name() {
+  sw_repo
+  fake_item agent-tokens proj tok-1
+  fake_keychain op-sa-proj tok-1
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-shared"
+  fake_item proj g val-guarded high-value
+  : > "$FAKE_OP_DIR/argv.log"
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq "failed: name is guarded
+secrets: G is a guarded secret. Add G to --guard." "$RESULT" "the result (screen: $SCREEN)"
+  assert_contains "$(op_log)" 'item list --vault proj --tags high-value --format json'
+  assert_not_contains "$(op_log)" 'item create'
+  assert_not_contains "$(op_log)" 'item edit'
+  assert_eq val-guardedx "$(stored proj g)"
+  [ ! -e .secrets-refs ] || fail "an open refs file"
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "with G in --guard (screen: $SCREEN)"
+  assert_eq val-g-longx "$(stored proj g)"
+  assert_eq 'G=op://proj/G/password' "$(cat .secrets-refs.guarded)"
+}
+
 test_window_unguard_stops_through_setup() {
   sw_repo
   printf '%s\n' 'G=op://proj/G/password' > .secrets-refs.guarded

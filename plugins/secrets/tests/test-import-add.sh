@@ -212,6 +212,26 @@ test_import_add_refuse_guarded_title_case() {
   assert_eq '' "$(op_log)" "op calls"
 }
 
+# A checkout without the guarded refs file (a worktree cut before the guard) still finds the guard
+# by the tag of the item.
+test_import_add_refuse_tagged_item() {
+  ia_repo
+  fake_item proj g val-guarded high-value
+  printf 'B=val-b\nG=val-g\n' > .env
+  assert_status 1 secrets import .env
+  assert_eq 'secrets: G is a guarded secret. Ask the owner to change it in 1Password.' "$ERR" "import"
+  printf v > "$TEST_DIR/in"
+  assert_status 1 secrets add G < "$TEST_DIR/in"
+  assert_eq 'secrets: G is a guarded secret. Ask the owner to change it in 1Password.' "$ERR" "add"
+  assert_not_contains "$(op_log)" 'item create'
+  assert_not_contains "$(op_log)" 'item edit'
+  assert_eq val-guardedx "$(stored proj g)"
+  assert_eq 'X=op://proj/X/password' "$(cat .secrets-refs)" "refs unchanged"
+  fake_item proj T val-t other-tag
+  assert_status 0 secrets add T < "$TEST_DIR/in"
+  assert_eq vx "$(stored proj T)" "an item with another tag"
+}
+
 test_import_refuses_guarded_name() {
   ia_repo
   printf 'A=op://proj/A/password\n' > .secrets-refs.guarded

@@ -318,8 +318,15 @@ w_dest() {
   w_exists=$(secrets_title_exists "$w_titles_p" "$w_title" "$w_project") || exit 1
 }
 
-w_check() { # NAME VALUE: w_dest before any write, so that a title held twice stops the import
-  [ -z "$2" ] || w_dest "$1"
+# w_check NAME VALUE: w_dest before any write, so that a title held twice stops the import. Also
+# collects an open NAME whose item has the tag high-value: the tag holds the guard in a checkout
+# without the guarded refs file.
+w_check() {
+  [ -n "$2" ] || return 0
+  w_dest "$1"
+  [ "$w_guard" = 1 ] || ! secrets_tagged "$w_tagged" "$w_title" ||
+    w_stop="$w_stop$1 is a guarded secret. Add $1 to --guard.
+"
 }
 
 w_put() { # NAME VALUE: stores one entry and sets its refs line
@@ -516,11 +523,18 @@ if w_has "$w_project" && [ "$w_tok_n" = 0 ]; then
 fi
 
 w_titles_p=''
+w_tagged=''
 if [ "$w_nfiles" -gt 0 ]; then
   if w_has "$w_project"; then
     w_titles_p=$(secrets_titles "$w_project") || exit 1
+    w_tagged=$(secrets_titles "$w_project" "$w_project" high-value) || exit 1
   fi
+  w_stop=''
   w_each w_check
+  if [ -n "$w_stop" ]; then
+    w_notes "$w_stop"
+    w_fail 'name is guarded'
+  fi
 fi
 
 w_made=''

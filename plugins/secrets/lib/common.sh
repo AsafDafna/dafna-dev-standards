@@ -192,12 +192,12 @@ secrets_op_fail() {
   secrets_die "op failed: $_of_line"
 }
 
-# secrets_titles VAULT [PROJECT]: one title per line, with the sign-in this process has.
-# The invalid-token line names PROJECT (default VAULT); pass it when VAULT is agent-shared.
-# Callers run it inside read loops, so op gets no stdin.
+# secrets_titles VAULT [PROJECT [TAG]]: one title per line, with the sign-in this process has.
+# TAG lists only the items with that tag. The invalid-token line names PROJECT (default VAULT);
+# pass it when VAULT is agent-shared. Callers run it inside read loops, so op gets no stdin.
 secrets_titles() {
   _ti_err=$(mktemp "${TMPDIR:-/tmp}/secrets-titles.XXXXXX") || secrets_die "cannot make a temp file in ${TMPDIR:-/tmp}"
-  _ti_json=$(op item list --vault "$1" --format json --cache=false 2>"$_ti_err" </dev/null)
+  _ti_json=$(op item list --vault "$1" ${3:+--tags "$3"} --format json --cache=false 2>"$_ti_err" </dev/null)
   _ti_rc=$?
   _ti_msg=$(cat "$_ti_err")
   rm -f "$_ti_err"
@@ -315,6 +315,12 @@ secrets_short_mark() {
 # a title. The C locale folds A-Z only, so the result does not depend on the locale.
 secrets_title_count() {
   LC_ALL=C grep -Fixc -- "$1"
+}
+
+# secrets_tagged TAGGED TITLE: success when TAGGED, the titles of the items with the tag high-value,
+# holds TITLE. The tag is a second key of a guard: it holds in a checkout without the guarded refs file.
+secrets_tagged() {
+  [ -n "$1" ] && [ "$(printf '%s\n' "$1" | secrets_title_count "$2")" != 0 ]
 }
 
 # secrets_title_exists TITLES TITLE VAULT: prints 1 when TITLES holds TITLE once, 0 when not,
