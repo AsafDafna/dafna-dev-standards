@@ -1,6 +1,6 @@
 # Eval suite of the `secrets` skill
 
-Five cases check that an agent with the skill runs commands through `secrets run`, never prints a secret value, stores a new token with `secrets add`, stops at a guarded secret and asks the owner, and lists names before an import. A baseline arm without the plugin runs the same cases with the same workspace.
+Five cases check that an agent with the skill runs commands through `secrets run`, never prints a secret value, stores a new token with `secrets add`, runs a guarded secret only with `--guarded`, stops when Claude Code denies it and reports it to the owner, and lists names before an import. A baseline arm without the plugin runs the same cases with the same workspace.
 
 ## Run it
 

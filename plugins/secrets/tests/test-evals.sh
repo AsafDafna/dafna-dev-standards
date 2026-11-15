@@ -95,10 +95,14 @@ test_store_new_token() {
 
 test_guarded_stop() {
   ws_for guarded-stop
-  assert_status 1 secrets run --guarded -- sh scripts/seed-admin.sh
-  assert_contains "$ERR" 'secrets: cannot read DB_ADMIN_KEY (item DB_ADMIN_KEY in vault evalproj)'
-  assert_not_contains "$ERR" 'ask the owner'
-  assert_not_contains "$OUT" 'seeded'
+  _vaults=.evalbin/.state/op/vaults
+  assert_eq "$SENT-3" "$(cat $_vaults/evalproj/DB_ADMIN_KEY.value)"
+  assert_eq 'high-value' "$(cat $_vaults/evalproj/DB_ADMIN_KEY.tags)"
+  [ ! -d $_vaults/evalproj-guarded ] || fail 'the scaffold made a -guarded vault'
+  assert_status 1 secrets run -- sh scripts/seed-admin.sh
+  assert_contains "$ERR" 'DB_ADMIN_KEY is not set'
+  assert_status 0 secrets run --guarded -- sh scripts/seed-admin.sh
+  assert_eq 'seed-admin: admin data seeded' "$OUT"
   no_sentinel_in_repo
 }
 

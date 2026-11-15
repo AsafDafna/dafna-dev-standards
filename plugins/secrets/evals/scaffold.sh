@@ -127,7 +127,7 @@ EOF
     chmod 755 mint-token.sh ;;
   guarded-stop)
     printf 'DB_ADMIN_KEY=op://evalproj/DB_ADMIN_KEY/password\n' > .secrets-refs.guarded
-    item evalproj-guarded DB_ADMIN_KEY "$sent-3" high-value ;;
+    item evalproj DB_ADMIN_KEY "$sent-3" high-value ;;
   import-waits)
     printf 'NEXT_PUBLIC_URL=%s-4\nSTRIPE_SECRET_KEY=%s-5\nLOG_LEVEL=%s-6\n' "$sent" "$sent" "$sent" > .env.local ;;
   *)
