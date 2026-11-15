@@ -82,6 +82,8 @@ The guard is a Claude Code rule. It is not a 1Password lock. The service account
 
 The guard stops a mistake and an unnoticed use by an agent that follows the skill. It does not stop a hostile agent.
 
+A branch or worktree that was made before a name became guarded still has the open refs line for that name. There, a plain `secrets run` loads the value with no prompt, until the branch takes the change. After you guard a name that was open, merge or rebase the open branches.
+
 ### Allow rules for auto mode
 
 Auto mode needs two allow rules, one for `secrets import --names-only` and one for `secrets setup`. Add them to the Claude Code permissions (`allow`):

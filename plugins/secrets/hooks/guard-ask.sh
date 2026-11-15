@@ -1,5 +1,5 @@
 #!/bin/sh
-# PreToolUse hook for the Bash tool: when the command runs `secrets run` with --guarded, it returns
+# PreToolUse hook for the Bash and Monitor tools: when the command runs `secrets run` with --guarded, it returns
 # the decision "ask", so Claude Code asks the owner first. It runs before every Bash call: a call
 # whose input does not hold the text --guarded costs one read loop and one case, with no program.
 # Every error path asks and exits 0, because a hook that exits with another code may let the
