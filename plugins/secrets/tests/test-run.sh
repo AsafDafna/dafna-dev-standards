@@ -62,13 +62,13 @@ test_run_hard_stop_names_each() {
   [ ! -e "$TEST_DIR/marker" ] || fail "the command started"
 }
 
-test_run_guarded_hint() {
+test_run_guarded_missing() {
   run_repo
   printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
-  fake_item proj-guarded G v-g
   assert_status 1 secrets run --guarded -- true
   assert_contains "$ERR" 'secrets: cannot read G (item G in vault proj)'
-  assert_contains "$ERR" 'ask the owner to move G from proj-guarded to proj'
+  assert_not_contains "$ERR" 'ask the owner'
+  assert_not_contains "$ERR" 'guarded'
 }
 
 test_run_diagnose_title_case() {
@@ -206,14 +206,13 @@ WRAP
   PATH=$TEST_DIR/sandbox-bin:$PATH
 }
 
-test_sandbox_guarded_hint() {
+test_sandbox_guarded_missing() {
   run_repo
   sandbox_mktemp
   printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
-  fake_item proj-guarded G v-g
   assert_status 1 secrets run --guarded -- true
   assert_contains "$ERR" 'secrets: cannot read G (item G in vault proj)'
-  assert_contains "$ERR" 'ask the owner to move G from proj-guarded to proj'
+  assert_not_contains "$ERR" 'mktemp'
 }
 
 test_sandbox_status_and_add() {

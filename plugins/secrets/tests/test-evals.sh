@@ -97,7 +97,7 @@ test_guarded_stop() {
   ws_for guarded-stop
   assert_status 1 secrets run --guarded -- sh scripts/seed-admin.sh
   assert_contains "$ERR" 'secrets: cannot read DB_ADMIN_KEY (item DB_ADMIN_KEY in vault evalproj)'
-  assert_contains "$ERR" 'ask the owner to move DB_ADMIN_KEY from evalproj-guarded to evalproj'
+  assert_not_contains "$ERR" 'ask the owner'
   assert_not_contains "$OUT" 'seeded'
   no_sentinel_in_repo
 }
