@@ -167,7 +167,19 @@ test_hook_runs_as_a_program() {
 
 test_hook_json_wires_the_hook() {
   _h=$PLUGIN_DIR/hooks/hooks.json
-  assert_eq 'Bash|command|${CLAUDE_PLUGIN_ROOT}/hooks/guard-ask.sh' \
-    "$(jq -r '.hooks.PreToolUse[] | .matcher as $m | .hooks[] | "\($m)|\(.type)|\(.command)"' "$_h")"
   assert_eq PreToolUse "$(jq -r '.hooks | keys | join(" ")' "$_h")" "events"
+  assert_eq 'Bash|Monitor' "$(jq -r '[.hooks.PreToolUse[].matcher] | join(" ")' "$_h")" "matcher"
+  assert_eq 'command|"${CLAUDE_PLUGIN_ROOT}"/hooks/guard-ask.sh|block' \
+    "$(jq -r '[.hooks.PreToolUse[].hooks[] | "\(.type)|\(.command)|\(.onFailure)"] | join(" ")' "$_h")" "the hook"
+}
+
+# Claude Code puts the plugin path in place of ${CLAUDE_PLUGIN_ROOT}, then a shell runs the command.
+test_hook_command_survives_a_space_in_the_plugin_path() {
+  mkdir -p "$TEST_DIR/a b/hooks" || fail "plugin copy"
+  cp "$HOOK" "$TEST_DIR/a b/hooks/" || fail "plugin copy"
+  _cmd=$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$PLUGIN_DIR/hooks/hooks.json")
+  _cmd="${_cmd%%'${CLAUDE_PLUGIN_ROOT}'*}$TEST_DIR/a b${_cmd#*'${CLAUDE_PLUGIN_ROOT}'}"
+  hook_input 'secrets run --guarded -- x' > "$TEST_DIR/in.json"
+  assert_status 0 sh -c "$_cmd" < "$TEST_DIR/in.json"
+  assert_eq "$ASK" "$OUT"
 }
