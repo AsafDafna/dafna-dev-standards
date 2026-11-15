@@ -345,8 +345,9 @@ secrets_item_put() {
   fi
   # op prints the stored item, value included, on stdout. Its error text is not proven free
   # of the value either, so an unknown write error gets a fixed line.
+  # jq's stderr is dropped: when op exits before it reads stdin, jq reports a broken pipe.
   _ip_err=$(jq -Rsc --arg title "$_ip_title" '{title: $title, category: "PASSWORD",
-      fields: [{id: "password", type: "CONCEALED", purpose: "PASSWORD", label: "password", value: .}]}' |
+      fields: [{id: "password", type: "CONCEALED", purpose: "PASSWORD", label: "password", value: .}]}' 2>/dev/null |
     op "$@" 2>&1 >/dev/null) ||
     secrets_op_fail "$_ip_err" "$_ip_project" "could not write item $_ip_title in vault $_ip_vault"
 }

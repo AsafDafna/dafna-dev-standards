@@ -292,6 +292,17 @@ test_item_put_names_project() {
   assert_contains "$ERR" 'the token for agent-tokens does not work' "PROJECT defaults to VAULT"
 }
 
+# A value larger than a pipe buffer: op exits before it reads stdin, so jq always gets a broken pipe.
+# With PIPE ignored, as on a CI runner, jq reports it on stderr.
+test_item_put_hides_jq_pipe_error() {
+  trap '' PIPE
+  mkdir -p "$FAKE_OP_DIR/vaults/agent-tokens"
+  head -c 300000 /dev/zero | tr '\0' v > "$TEST_DIR/in"
+  export OP_SERVICE_ACCOUNT_TOKEN=ops_unknown
+  assert_status 1 secrets_item_put agent-tokens proj '' 0 proj < "$TEST_DIR/in"
+  assert_eq 'secrets: the token for proj does not work. Run: secrets setup proj, with --renew if the owner revoked it' "$ERR"
+}
+
 test_import_add_duplicate_title() {
   ia_repo
   fake_item proj A val-old '' 2
