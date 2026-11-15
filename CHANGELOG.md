@@ -1,5 +1,26 @@
 # Changelog
 
+## secrets 0.1.0 — new opt-in plugin
+
+- New plugin `secrets`: one command for secrets from 1Password, for people and
+  agents. Subcommands: `setup`, `run`, `import`, `add`, `status`.
+- A guarded secret loads only with `secrets run --guarded`. The plugin ships a
+  `PreToolUse` hook that makes Claude Code ask the owner before such a command.
+  A project has one vault. A guard name is a line in a guarded refs file, and
+  its item carries the tag `high-value`. The guard is a Claude Code rule, not a
+  1Password lock; the README states the limit.
+- A `secrets` skill tells agents how to use it and what each failure line means.
+- macOS only, needs `jq`. The README covers the machine setup and the link
+  command.
+
+## core 1.7.0 — Secrets rule line
+
+- RULES.md: new "Secrets" section. In a repo with a `.secrets-refs` file,
+  commands that need a secret run through `secrets run`, and no secret value is
+  printed.
+- The SubagentStart sentence names Secrets among the rules that apply to
+  subagents.
+
 ## open-items 0.2.1 — shorter tool descriptions, no system-prompt copy
 
 - Shorter descriptions for `add_item`, `reply_item`, `close_item` and
