@@ -36,7 +36,8 @@ for word do
     run:--guarded) ask ;;
     run:--) state='' ;;
     run:*) ;;
-    *:secrets | *:*/secrets) state=secrets ;;
+    # A volume that ignores case runs the tool for any spelling of its name.
+    *:[Ss][Ee][Cc][Rr][Ee][Tt][Ss] | *:*/[Ss][Ee][Cc][Rr][Ee][Tt][Ss]) state=secrets ;;
     secrets:run) state=run ;;
   esac
 done

@@ -70,6 +70,14 @@ test_hook_asks_for_more_forms() {
   asks 'secrets run --stage e2e && secrets run --guarded -- y'
 }
 
+# A volume that ignores case starts the tool for any spelling of its name.
+test_hook_asks_for_the_name_in_any_case() {
+  asks 'SECRETS run --guarded -- x'
+  asks 'Secrets run --guarded -- x'
+  asks '/opt/tools/bin/SeCrEtS run --guarded -- x'
+  silent 'SECRETS run -- x'
+}
+
 test_hook_silent_for_other_commands() {
   silent 'secrets run -- x'
   silent 'secrets run --stage guarded-x -- x'
