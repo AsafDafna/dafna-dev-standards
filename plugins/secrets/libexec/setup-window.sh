@@ -207,7 +207,7 @@ w_show() { # NAME VALUE: the screen line of one entry
   fi
 }
 
-w_guarded_file() { # the file callback of w_unguard: sets w_grefs to the guarded refs of stage w_stage
+w_guarded_file() { # the file callback of w_precheck: sets w_grefs to the guarded refs of stage w_stage
   w_grefs=''
   w_gfile=$w_root/$(secrets_refs_file "$w_stage" 1)
   [ ! -f "$w_gfile" ] || w_grefs=$(secrets_refs_read "$w_gfile") || exit 1
@@ -215,22 +215,101 @@ w_guarded_file() { # the file callback of w_unguard: sets w_grefs to the guarded
 $w_grefs"
 }
 
-# w_unguard NAME VALUE: collects NAME when it is not in --guard and either the guarded refs file of
-# its stage lists it, or its title is, without case, the title of a guarded ref in the project vault
-# (the rule of import and add). Storing it would put an open refs line on a guarded item.
-w_unguard() {
+# w_guarded_titles: sets w_gtitles to the titles, in lower case, of the guarded refs in the project
+# vault, one per line, with a line end before and after each.
+w_guarded_titles() {
+  w_gall=$(secrets_guarded_refs "$w_root") || exit 1
+  w_gtitles=''
+  while IFS=$secrets_tab read -r _ w_gvault w_gtitle; do
+    [ "$w_gvault" != "$w_project" ] || w_gtitles="$w_gtitles$w_gtitle
+"
+  done <<EOF
+$w_gall
+EOF
+  w_gtitles="
+$(secrets_lower "$w_gtitles")
+"
+}
+
+# w_open_refs: sets w_olines to FILE<TAB>NAME<TAB>TITLE, with TITLE in lower case, for each line in
+# the project vault of an open refs file that run reads: .secrets-refs or .secrets-refs.<stage>.
+w_open_refs() {
+  w_olines=''
+  for w_of in "$w_root/.secrets-refs" "$w_root"/.secrets-refs.*; do
+    [ -f "$w_of" ] || continue
+    w_of=${w_of##*/}
+    case $w_of in .secrets-refs) ;; *) secrets_valid stage "${w_of#.secrets-refs.}" || continue ;; esac
+    w_orefs=$(secrets_refs_read "$w_root/$w_of") || exit 1
+    while IFS=$secrets_tab read -r w_oname w_ovault w_otitle; do
+      [ -n "$w_oname" ] || continue
+      w_olow=$(secrets_lower "$w_ovault$secrets_tab$w_otitle")
+      [ "${w_olow%%"$secrets_tab"*}" = "$w_project" ] || continue
+      w_olines="$w_olines$w_of$secrets_tab$w_oname$secrets_tab${w_olow#*"$secrets_tab"}
+"
+    done <<EOF
+$w_orefs
+EOF
+  done
+}
+
+# w_precheck NAME VALUE: the checks before the screen, from local files only. Each collects lines
+# for one stop. op finds an item by its title without case, so two refs whose titles differ only
+# in case name one item.
+w_precheck() {
   [ -n "$2" ] || return 0
   w_target "$1"
-  [ "$w_guard" = 0 ] || return 0
+  w_low=$(secrets_lower "$w_title")
+  w_twice "$1"
+  if [ "$w_guard" = 0 ]; then
+    w_unguard "$1"
+  else
+    w_open_guarded "$1"
+  fi
+}
+
+w_twice() { # NAME: collects NAME when an earlier entry of this run has the same title
+  case $w_seen in
+    *"
+$w_low$secrets_tab"*)
+      w_first=${w_seen#*"
+$w_low$secrets_tab"}
+      w_tstop="$w_tstop${w_first%%"
+"*} and $1 have the same item title $w_title. Keep one.
+" ;;
+  esac
+  w_seen="$w_seen
+$w_low$secrets_tab$1"
+}
+
+# w_unguard NAME: collects an open NAME that the guarded refs file of its stage lists, or whose
+# title is the title of a guarded ref in the project vault (the rule of import and add).
+w_unguard() {
   case $w_grefs in
     *"
 $1$secrets_tab"*) ;;
     *)
-      [ -n "$w_gtitles" ] && [ "$(printf '%s' "$w_gtitles" | secrets_title_count "$w_title")" != 0 ] ||
-        return 0 ;;
+      case $w_gtitles in
+        *"
+$w_low
+"*) ;;
+        *) return 0 ;;
+      esac ;;
   esac
   w_stop="$w_stop$1 is a guarded secret. Add $1 to --guard.
 "
+}
+
+# w_open_guarded NAME: collects each open refs line on the item of guard NAME, but NAME's own line
+# in the open refs file of its stage, which w_put moves.
+w_open_guarded() {
+  w_own=$(secrets_refs_file "$w_stage" 0)
+  while IFS=$secrets_tab read -r w_of w_oname w_olow; do
+    [ "$w_olow" = "$w_low" ] && [ "$w_of:$w_oname" != "$w_own:$1" ] || continue
+    w_ostop="$w_ostop$w_oname in $w_of also points at the guarded item $w_title. Remove that line, then run setup again.
+"
+  done <<EOF
+$w_olines
+EOF
 }
 
 # w_dest NAME: w_target, then sets w_exists (0 or 1) from the titles listed before any write.
@@ -357,19 +436,26 @@ w_token_copy() { # sets w_token from agent-tokens, and the Keychain item to it w
   [ "$w_kc" = "$w_token" ] || w_keychain_put
 }
 
-w_gall=$(secrets_guarded_refs "$w_root") || exit 1
-w_gtitles=''
-while IFS=$secrets_tab read -r _ w_gvault w_gtitle; do
-  [ "$w_gvault" != "$w_project" ] || w_gtitles="$w_gtitles$w_gtitle
-"
-done <<EOF
-$w_gall
-EOF
+w_guarded_titles
+w_olines=''
+[ "$w_guards" = '
+' ] || w_open_refs
+w_seen=''
+w_tstop=''
 w_stop=''
-w_each w_unguard w_guarded_file
+w_ostop=''
+w_each w_precheck w_guarded_file
+if [ -n "$w_tstop" ]; then
+  w_notes "$w_tstop"
+  w_fail 'same title twice'
+fi
 if [ -n "$w_stop" ]; then
   w_notes "$w_stop"
   w_fail 'name is guarded'
+fi
+if [ -n "$w_ostop" ]; then
+  w_notes "$w_ostop"
+  w_fail 'open line on a guarded item'
 fi
 
 printf 'secrets setup for project %s\n' "$w_project"

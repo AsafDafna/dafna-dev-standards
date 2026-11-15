@@ -329,6 +329,61 @@ secrets: B is a guarded secret. Add B to --guard." "$RESULT" "the result (screen
 secrets: K is a guarded secret. Add K to --guard." "$RESULT" "a stage title in another file"
 }
 
+# Sequence A of the review: an open name in another case, stored by add, then a guard run.
+test_window_guard_stops_on_open_case_twin() {
+  sw_repo
+  fake_item agent-tokens proj tok-1
+  fake_keychain op-sa-proj tok-1
+  fake_token tok-1 proj:w
+  mkdir -p "$FAKE_OP_DIR/vaults/proj"
+  printf v-open > "$TEST_DIR/in"
+  assert_status 0 secrets add api_key < "$TEST_DIR/in"
+  _refs=$(cat .secrets-refs)
+  printf 'API_KEY=val-secret-long\n' > two.env
+  : > "$FAKE_OP_DIR/argv.log"
+  window --import "$TEST_DIR/proj/two.env" --guard API_KEY
+  assert_eq "failed: open line on a guarded item
+secrets: api_key in .secrets-refs also points at the guarded item API_KEY. Remove that line, then run setup again." \
+    "$RESULT" "the result (screen: $SCREEN)"
+  assert_not_contains "$SCREEN" 'Press Enter'
+  assert_eq '' "$(op_log)" "op calls"
+  assert_eq "$_refs" "$(cat .secrets-refs)" "open refs"
+  [ ! -e .secrets-refs.guarded ] || fail "a guarded refs file"
+}
+
+# Sequence B: both case twins in one import file; also two open twins.
+test_window_same_title_twice_stops() {
+  sw_repo
+  printf 'api_key=val-open-long\nAPI_KEY=val-secret-long\nA_B=v-long-1\n' > .env
+  printf 'a_b=v-long-2\n' > more.env
+  window --import "$TEST_DIR/proj/.env" --import "$TEST_DIR/proj/more.env" --guard API_KEY
+  assert_eq "failed: same title twice
+secrets: api_key and API_KEY have the same item title API_KEY. Keep one.
+secrets: A_B and a_b have the same item title a_b. Keep one." "$RESULT" "the result (screen: $SCREEN)"
+  assert_eq '' "$(op_log)" "op calls"
+  [ ! -e .secrets-refs ] || fail "an open refs file"
+}
+
+# Sequence C: a second name for the guarded item, written by a person, in any open refs file.
+test_window_guard_stops_on_alias_line() {
+  sw_repo
+  printf '%s\n' 'ALIAS=op://proj/G/password' 'S=op://agent-shared/G/password' 'G=op://proj/G/password' > .secrets-refs
+  printf 'G=op://Proj/g/password\n' > .secrets-refs.e2e
+  printf 'X=op://proj/G/password\n' > .secrets-refs.e2e.guarded
+  _refs=$(cat .secrets-refs .secrets-refs.e2e)
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq "failed: open line on a guarded item
+secrets: ALIAS in .secrets-refs also points at the guarded item G. Remove that line, then run setup again.
+secrets: G in .secrets-refs.e2e also points at the guarded item G. Remove that line, then run setup again." \
+    "$RESULT" "the result (screen: $SCREEN)"
+  assert_eq '' "$(op_log)" "op calls"
+  assert_eq "$_refs" "$(cat .secrets-refs .secrets-refs.e2e)" "open refs"
+  printf 'G=op://proj/G/password\n' > .secrets-refs
+  rm .secrets-refs.e2e
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq ok "$(first_line "$RESULT")" "with only the guard name's own line (screen: $SCREEN)"
+}
+
 test_window_unguard_stops_through_setup() {
   sw_repo
   printf '%s\n' 'G=op://proj/G/password' > .secrets-refs.guarded
