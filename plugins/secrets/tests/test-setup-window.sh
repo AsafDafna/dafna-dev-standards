@@ -438,12 +438,12 @@ test_window_guard_only_stage() {
   assert_eq '' "$(cat .secrets-refs)" "open refs file"
   TERM_PROGRAM=xterm
   export TERM_PROGRAM
-  assert_status 0 secrets status
-  assert_contains "$OUT" 'secrets: G waits in proj-guarded'
+  assert_status 1 secrets status
+  assert_contains "$OUT" 'secrets: G MISSING (item G in vault proj)'
   mv "$FAKE_OP_DIR/vaults/proj-guarded/G.value" "$FAKE_OP_DIR/vaults/proj/G.value"
   assert_status 0 secrets run --guarded -- sh -c 'test "$G" = val-g-long'
   assert_status 0 secrets status
-  assert_contains "$OUT" 'secrets: G open to agents'
+  assert_contains "$OUT" 'secrets: G readable (guarded: Claude Code asks before use)'
 }
 
 test_window_screen_shows_files() {

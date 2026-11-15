@@ -72,10 +72,11 @@ test_status_terminal_app_skips_host_check() {
 test_status_names_only() {
   status_repo
   fake_item proj A SENTINEL-7f3a
-  fake_item proj H SENTINEL-7f3a high-value
-  printf 'G=op://proj-guarded/G/password\n' > .secrets-refs.guarded
+  fake_item proj G SENTINEL-7f3a high-value
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
   assert_status 0 secrets status
   assert_contains "$OUT" 'A readable'
+  assert_contains "$OUT" 'G readable'
   assert_not_contains "$OUT" SENTINEL
   assert_not_contains "$ERR" SENTINEL
   _log=$(cat "$FAKE_OP_DIR/argv.log")
@@ -91,11 +92,14 @@ item get'*) fail "op read a value: $_log" ;;
 test_status_missing_and_guarded() {
   status_repo
   printf 'B=op://proj/B/password\n' >> .secrets-refs
-  printf 'G=op://proj-guarded/G/password\n' > .secrets-refs.guarded
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
+  printf 'H=op://proj/H.e2e/password\n' > .secrets-refs.e2e.guarded
+  fake_item proj H.e2e v4 high-value
   assert_status 1 secrets status
   assert_contains "$OUT" 'secrets: A readable'
-  assert_contains "$OUT" 'secrets: B MISSING'
-  assert_contains "$OUT" 'secrets: G waits in proj-guarded'
+  assert_contains "$OUT" 'secrets: B MISSING (item B in vault proj)'
+  assert_contains "$OUT" 'secrets: G MISSING (item G in vault proj)'
+  assert_contains "$OUT" 'secrets: H readable (guarded: Claude Code asks before use)'
 }
 
 test_status_title_case() {
@@ -112,20 +116,18 @@ test_status_duplicate_title() {
   assert_contains "$OUT" 'more than one item is titled A in vault proj'
 }
 
-test_status_guarded_moved() {
+test_status_guarded_readable() {
   status_repo
-  printf 'G=op://proj-guarded/G/password\n' > .secrets-refs.guarded
-  fake_item proj G v3
-  assert_status 0 secrets status
-  assert_contains "$OUT" 'secrets: G open to agents'
-}
-
-test_status_high_value_open() {
-  status_repo
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
   fake_item proj G v3 high-value
+  fake_item proj T v5 high-value
   assert_status 0 secrets status
-  assert_contains "$OUT" 'high-value: G open to agents'
-  assert_not_contains "$OUT" 'high-value: A'
+  assert_contains "$OUT" 'secrets: G readable (guarded: Claude Code asks before use)'
+  assert_contains "$OUT" 'secrets: A readable
+'
+  assert_not_contains "$OUT" 'high-value'
+  assert_not_contains "$OUT" 'open to agents'
+  assert_not_contains "$OUT" 'waits in'
 }
 
 test_status_no_token() {
