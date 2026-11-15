@@ -369,12 +369,24 @@ test_window_guard_moves_open_refs_line() {
   assert_status 0 secrets run --guarded -- sh -c 'test "$A" = val-a-long && test "$G" = val-g-long'
 }
 
+# A stop between the two refs writes must not leave the guard name in the open refs file.
+test_window_guard_removes_open_line_first() {
+  sw_repo
+  window --import "$TEST_DIR/proj/.env"
+  assert_eq ok "$(first_line "$RESULT")" "first run (screen: $SCREEN)"
+  printf 'H=op://proj/H/password\n' > .secrets-refs.guarded
+  chmod 444 .secrets-refs.guarded
+  window --import "$TEST_DIR/proj/.env" --guard G
+  assert_eq "failed: cannot write $TEST_DIR/proj/.secrets-refs.guarded" "$(first_line "$RESULT")" "(screen: $SCREEN)"
+  assert_eq 'A=op://proj/A/password' "$(cat .secrets-refs)" "open refs"
+}
+
 test_window_guard_only_stage() {
   sw_repo
   printf 'G=val-g-long\n' > .env
   window --import "$TEST_DIR/proj/.env" --guard G
   assert_eq ok "$(first_line "$RESULT")" "result (screen: $SCREEN)"
-  assert_contains "$RESULT" 'secrets: wrote .secrets-refs.guarded, .secrets-refs'
+  assert_contains "$RESULT" 'secrets: wrote .secrets-refs, .secrets-refs.guarded'
   assert_eq '' "$(cat .secrets-refs)" "open refs file"
   TERM_PROGRAM=xterm
   export TERM_PROGRAM

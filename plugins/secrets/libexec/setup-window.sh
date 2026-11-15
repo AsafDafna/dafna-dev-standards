@@ -255,14 +255,16 @@ w_put() { # NAME VALUE: stores one entry and sets its refs line
   else
     w_stored_g="$w_stored_g${w_stored_g:+, }$w_title"
   fi
+  if [ "$w_guard" = 1 ]; then
+    # A line left in the open refs file would load the secret without --guarded, so it goes
+    # before the guarded line is written. The file is also created when missing: run --guarded
+    # and status need it, also when it holds no line.
+    w_refs_file=$(secrets_refs_file "$w_stage" 0)
+    secrets_refs_unset "$w_root/$w_refs_file" "$1"
+    w_wrote "$w_refs_file"
+  fi
   w_refs_file=$(secrets_refs_file "$w_stage" "$w_guard")
   secrets_refs_set "$w_root/$w_refs_file" "$1" "$w_project" "$w_title"
-  w_wrote "$w_refs_file"
-  [ "$w_guard" = 1 ] || return 0
-  # A line left in the open refs file would load the secret without --guarded. The file is also
-  # created when missing: run --guarded and status need it, also when it holds no line.
-  w_refs_file=$(secrets_refs_file "$w_stage" 0)
-  secrets_refs_unset "$w_root/$w_refs_file" "$1"
   w_wrote "$w_refs_file"
 }
 
