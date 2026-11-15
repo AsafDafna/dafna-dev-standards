@@ -1,6 +1,6 @@
 # secrets
 
-One command, `secrets`, for secrets from 1Password. People and agents use the same command. The repo holds names and `op://` addresses in `.secrets-refs`, never values. Each project has its own 1Password vault and its own service account, and an agent reads only that vault.
+One command, `secrets`, for secrets from 1Password. People and agents use the same command. The repo holds names and `op://` addresses in `.secrets-refs`, never values. Each project has one 1Password vault and its own service account, and an agent reads only that vault.
 
 macOS only. It needs `jq`.
 
@@ -32,21 +32,23 @@ Set `SECRETS_OP_ACCOUNT` to the 1Password account for secrets in the owner's she
 
 | Command | What it does |
 |---|---|
-| `secrets setup PROJECT [--import FILE[:STAGE]]... [--guard NAME,...] [--renew]` | Opens a Terminal window. The owner checks the screen and presses Enter, then approves one Touch ID prompt. It creates what is missing: the vaults, the service account, the token in `agent-tokens` and in the Keychain. With `--import` it copies each value into an item and writes the refs files. Names in `--guard` go to the vault `PROJECT-guarded`. `--renew` creates a new service account after the owner revoked the old token. |
+| `secrets setup PROJECT [--import FILE[:STAGE]]... [--guard NAME,...] [--renew]` | Opens a Terminal window. The owner checks the screen and presses Enter, then approves one Touch ID prompt. It creates what is missing: the vaults, the service account, the token in `agent-tokens` and in the Keychain. With `--import` it copies each value into an item and writes the refs files. Names in `--guard` are guarded: the item goes into the project vault with the tag `high-value`, and the refs line goes into the guarded refs file. `--renew` creates a new service account after the owner revoked the old token. |
 | `secrets run [--stage NAME] [--guarded] -- CMD` | Reads the refs file, takes the token from the Keychain, and starts CMD through `op run`. |
 | `secrets import [--names-only] FILE[:STAGE]...` | Copies the values of env files into the project vault and writes the refs lines. |
 | `secrets add NAME [--stage NAME]` | Reads one value from stdin or a hidden prompt, stores it, and adds the refs line. |
-| `secrets status` | Prints names only: the refs of this repo, which items the token can read, which items carry the `high-value` tag, and the machine setup. |
+| `secrets status` | Prints names only: the refs of this repo (open and guarded), which items the token can read, and the machine setup. |
 
 ### `setup`
 
 `setup` waits up to 15 minutes for the owner. Start it with `run_in_background`. The window shows each import file's full path and every name with its target vault. It is safe to run again: it creates only what is missing, and on a second Mac it installs the existing token into that Mac's Keychain.
 
-A guard name whose item is already in the project vault is skipped with a notice. Agents can write that vault, so an item there proves nothing about who put it there. Setup does not read or change it. If the owner did not move it there, the owner deletes it, or moves it to `PROJECT-guarded`, and runs setup again. A name that is not guarded whose item is in the guarded vault stops the setup.
+A guard name is created or replaced like any other name. The window marks its line with `[guarded: Claude Code asks before use]`. The owner's Enter confirms the guard list.
+
+Setup never removes a guard. When an import name is in a guarded refs file of the repo and is not in `--guard` of this run, setup stops before any write with `NAME is a guarded secret. Add NAME to --guard.` Only a person who edits the refs files removes a guard.
 
 ### `run`
 
-The exit code of the command passes through. Ctrl-C gives 130. A program that stops `secrets run` must signal the process group, as a terminal does for Ctrl-C. A signal to the `secrets` process alone waits until the command ends. The command never gets the service-account token. If a ref cannot be read, `run` stops before it starts the command and names each item. For a guarded item it adds: ask the owner to move it.
+The exit code of the command passes through. Ctrl-C gives 130. A program that stops `secrets run` must signal the process group, as a terminal does for Ctrl-C. A signal to the `secrets` process alone waits until the command ends. The command never gets the service-account token. If a ref cannot be read, `run` stops before it starts the command and names each item. A guarded item that is missing gets the same line as any other item.
 
 `op run` hides every match of a secret value in the output of the command. A short value, such as `info`, also matches ordinary words, so it hides them too.
 
@@ -58,15 +60,47 @@ The stage is `<x>` for `.env.<x>`, the default for `.env` and `.env.local`, and 
 
 The parser stops and names the line for any form that env loaders read differently: `$` or `\` in a value, backtick quotes, `#` without quotes in an unquoted value, a stray CR, and a multi-line value. The owner stores such a value with `secrets add NAME`, or creates the item in the 1Password app, and removes the line from the env file. The same name twice for one stage also stops the import.
 
+A command under `secrets run` sees no terminal on stdout and stderr. A program that checks for a terminal acts as if its output goes to a pipe.
+
+`secrets run` cannot read the Keychain from a plain SSH shell. Run it in a terminal on the Mac. Plain SSH is not supported yet.
+
+## Guarded secrets
+
+A guarded secret is a name in a guarded refs file (`.secrets-refs.guarded`, or `.secrets-refs.STAGE.guarded`). Its item is in the project vault, with the tag `high-value`.
+
+`secrets run` loads the open refs file only. `secrets run --guarded` also loads the guarded refs file of the stage.
+
+The plugin ships a `PreToolUse` hook for the Bash tool (`hooks/hooks.json`, `hooks/guard-ask.sh`). When a Bash command runs `secrets run` with `--guarded`, the hook returns the decision `ask`. Claude Code then asks the owner, also in auto mode and in a subagent. The prompt shows the reason and the choices Yes and No. The hook never allows or denies a command.
+
+A headless session (`claude -p`) has no person to ask, so Claude Code denies a `--guarded` command there.
+
+The hook reads the text of the Bash command. It matches the bare name, a path to `secrets`, an environment prefix, `--stage NAME` before or after the flag, `sh -c '...'`, and one part of a compound command. It can match more than it must: a `git commit -m` message or a heredoc that holds the text `secrets run --guarded` also asks, and is denied in a headless session.
+
+### What this does not protect
+
+The guard is a Claude Code rule. It is not a 1Password lock. The service account of the project can read a guarded item at any time. An agent that calls `op` directly with the Keychain token, or that writes the command in a form the hook does not match (a variable that holds the flag, a script file), reads the secret with no prompt. A `--guarded` call inside a script file or an npm script gets no prompt either, because the hook sees only the text of the Bash command. The skill forbids that form.
+
+The guard stops a mistake and an unnoticed use by an agent that follows the skill. It does not stop a hostile agent.
+
+### Allow rules for auto mode
+
+Auto mode needs two allow rules, one for `secrets import --names-only` and one for `secrets setup`. Add them to the Claude Code permissions (`allow`):
+
+```
+Bash(secrets import --names-only *)
+Bash(secrets setup *)
+```
+
+Add no rule for `secrets run --guarded`. The owner should see that prompt.
+
 ## Vaults and files
 
 | Part | Name |
 |---|---|
 | Project vault | `PROJECT` (read and write for the project's service account) |
-| Guarded vault | `PROJECT-guarded` (the owner only) |
 | Shared vault | `agent-shared` (read only for every service account) |
 | Token source | item `PROJECT` in the vault `agent-tokens` |
 | Token copy | Keychain item `op-sa-PROJECT` |
 | Refs files | `.secrets-refs`, `.secrets-refs.STAGE`, and the same with `.guarded` at the end |
 
-Approval is a move. The owner moves an item from `PROJECT-guarded` to `PROJECT` in the 1Password app, and the agent reads it within seconds.
+Approval is a Claude Code prompt, as described in "Guarded secrets". The owner changes the value of a guarded item in the 1Password app or through `secrets setup`.
