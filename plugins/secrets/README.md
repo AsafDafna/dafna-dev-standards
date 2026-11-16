@@ -37,6 +37,16 @@ Set `SECRETS_OP_ACCOUNT` to the 1Password account for secrets in the owner's she
 | `secrets import [--names-only] FILE[:STAGE]...` | Copies the values of env files into the project vault and writes the refs lines. |
 | `secrets add NAME [--stage NAME]` | Reads one value from stdin or a hidden prompt, stores it, and adds the refs line. |
 | `secrets status` | Prints names only: the refs of this repo (open and guarded), which items the token can read, and the machine setup. |
+| `secrets -C DIR SUBCOMMAND ...` | Runs the subcommand as if it started in DIR, as `git -C DIR` does. |
+
+### `-C DIR`
+
+`secrets` takes the repo from the current folder. The repo gives the refs files, the project vault and the Keychain token. `-C DIR` goes before the subcommand and works with each subcommand. The command moves to DIR first, so it uses the repo of DIR. Use it to work on another repo without `cd`.
+
+- `run` starts CMD in DIR.
+- A relative FILE of `import` or `setup --import` starts from DIR, as a path after `git -C` does.
+- A second `-C` starts from the first DIR.
+- A missing or empty DIR, or a path that is not a folder, stops the command before any 1Password or Keychain call.
 
 ### `setup`
 
@@ -74,7 +84,7 @@ The plugin ships a `PreToolUse` hook for the Bash tool and the Monitor tool (`ho
 
 A headless session (`claude -p`) has no person to ask, so Claude Code denies a `--guarded` command there.
 
-The hook reads the text of the Bash command. It matches the bare name, a path to `secrets`, an environment prefix, `--stage NAME` before or after the flag, `sh -c '...'`, and one part of a compound command. It can match more than it must: a `git commit -m` message or a heredoc that holds the text `secrets run --guarded` also asks, and is denied in a headless session.
+The hook reads the text of the Bash command. It matches the bare name, a path to `secrets`, an environment prefix, `-C DIR` before `run`, `--stage NAME` before or after the flag, `sh -c '...'`, and one part of a compound command. It can match more than it must: a `git commit -m` message or a heredoc that holds the text `secrets run --guarded` also asks, and is denied in a headless session.
 
 ### What this does not protect
 

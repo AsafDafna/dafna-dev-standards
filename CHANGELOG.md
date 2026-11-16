@@ -1,5 +1,17 @@
 # Changelog
 
+## secrets 0.2.0 — `-C DIR` for another repo
+
+- `secrets -C DIR SUBCOMMAND ...` runs any subcommand as if it started in DIR,
+  as `git -C` does. The repo of DIR gives the refs files, the vault and the
+  token. `run` starts CMD in DIR. A relative FILE of `import` or
+  `setup --import` starts from DIR.
+- A missing or empty DIR, or a path that is not a folder, stops the command
+  before any 1Password or Keychain call.
+- The guard hook asks for `secrets -C DIR run --guarded` too. A `--` after
+  `run` no longer ends its match, because a DIR can hold the words `run --`.
+- README and skill: the option and one line on cross-repo use.
+
 ## secrets 0.1.0 — new opt-in plugin
 
 - New plugin `secrets`: one command for secrets from 1Password, for people and

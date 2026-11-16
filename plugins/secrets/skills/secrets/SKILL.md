@@ -7,6 +7,8 @@ description: Use when a repo has a .secrets-refs file, a command needs an API ke
 
 The repo holds names and `op://` addresses (`.secrets-refs`), never values. The values live in 1Password. Run `secrets` from anywhere inside the repo or its worktree.
 
+For another repo, put `-C DIR` before the subcommand, as with `git -C`: `secrets -C /path/to/other-repo run -- CMD`. DIR picks the repo, its vault and its token. CMD and a relative FILE start in DIR.
+
 ## Rules
 
 1. Run every command that needs a secret through `secrets run`.
@@ -36,6 +38,7 @@ To guard an open secret later, the owner runs `secrets setup` with `--guard NAME
 | `secrets add NAME [--stage NAME]` | `./make-token.sh \| secrets add API_KEY` |
 | `secrets setup PROJECT [--import FILE[:STAGE]]... [--guard NAME,...] [--renew]` | `secrets setup myapp --import .env --guard STRIPE_KEY` |
 | `secrets status` | `secrets status` |
+| `secrets -C DIR SUBCOMMAND ...` | `secrets -C ../api run -- npm test` |
 
 - `run` passes the exit code of the command through. The command never gets the service-account token. `--stage` reads `.secrets-refs.<stage>`. Without `--guarded`, `run` reads only the open refs file. `--guarded` also reads the guarded refs file of that stage.
 - `import` stores each value of an env file in the project vault and writes the refs lines. The stage is `<x>` for `.env.<x>`, the default for `.env` and `.env.local`, and `:STAGE` wins. It takes at most 50 names per file. Larger files go through `setup --import`. `import` and `add` refuse a guarded name.
