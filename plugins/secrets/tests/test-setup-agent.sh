@@ -112,6 +112,19 @@ test_setup_import_path_allowlist() {
   assert_eq '' "$(open_log)" "open calls"
 }
 
+# A relative --import path starts from DIR, and setup works on the repo of DIR.
+test_setup_dir_option() {
+  sa_repo
+  cd "$TEST_DIR" || fail cd
+  printf 'A=val-a\n' > proj/.env
+  assert_status 0 secrets -C proj setup proj --import .env
+  assert_eq val-ax "$(stored proj A)"
+  assert_eq 'A=op://proj/A/password' "$(cat proj/.secrets-refs)"
+  _exec=$(sed -n 2p "$FAKE_OPEN_DIR/launched")
+  assert_contains "$_exec" "'$TEST_DIR/proj' '$TMPDIR/secrets-setup." "the repo root"
+  assert_contains "$_exec" "--import '$TEST_DIR/proj/.env'" "the import path"
+}
+
 test_setup_launcher_executable() {
   sa_repo
   assert_status 0 secrets setup proj

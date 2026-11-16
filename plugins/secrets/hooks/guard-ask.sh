@@ -25,7 +25,9 @@ cmd=$(printf '%s' "$raw" | jq -er '.tool_input.command | strings | split("\\\n")
 
 # Words split at blanks, operators, quotes and backslashes: a quoted path, a compound command and
 # the text of `sh -c '...'` all become plain words. After `secrets` and `run`, only the options up
-# to `--` count: a --guarded after it belongs to the started command.
+# to `--` count: a --guarded after it belongs to the started command. Words between `secrets` and
+# `run` keep the state, and `--` goes back to the `secrets` state, never to '': the DIR of
+# `secrets -C DIR` can split into the words `run --`, and the real `run --guarded` comes after it.
 IFS=" $(printf '\t')$nl;&|()<>\`\"'\\"
 set -f
 # shellcheck disable=SC2086 # the split is the point; globbing is off
@@ -34,7 +36,7 @@ state=''
 for word do
   case $state:$word in
     run:--guarded) ask ;;
-    run:--) state='' ;;
+    run:--) state=secrets ;;
     run:*) ;;
     # A volume that ignores case runs the tool for any spelling of its name.
     *:[Ss][Ee][Cc][Rr][Ee][Tt][Ss] | *:*/[Ss][Ee][Cc][Rr][Ee][Tt][Ss]) state=secrets ;;

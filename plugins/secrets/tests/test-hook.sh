@@ -70,6 +70,40 @@ test_hook_asks_for_more_forms() {
   asks 'secrets run --stage e2e && secrets run --guarded -- y'
 }
 
+test_hook_asks_with_a_folder_option() {
+  asks 'secrets -C /r/app run --guarded -- x'
+  asks 'secrets -C ../app run --stage e2e --guarded -- x'
+  asks 'secrets -C ../app run --guarded --stage e2e -- x'
+  asks '/opt/tools/bin/secrets -C /r/app run --guarded -- x'
+  asks "'/a b/secrets' -C /r/app run --guarded -- x"
+  asks 'FOO=1 secrets -C /r/app run --guarded -- x'
+  asks "sh -c 'secrets -C /r/app run --guarded -- x'"
+  asks 'true && secrets -C /r/app run --guarded -- x'
+  asks 'a; secrets -C /r/app run --guarded -- x'
+  asks 'secrets -C "/a b/app" run --guarded -- x'
+  asks "secrets -C '/a b/app' run --guarded -- x"
+  asks 'secrets -C /r -C app run --guarded -- x'
+  asks 'secrets -C secrets run --guarded -- x'
+  asks 'secrets -C -- run --guarded -- x'
+  asks 'secrets -C run run --guarded -- x'
+}
+
+# The DIR of -C can hold any text, and the hook splits it into words without its quotes.
+test_hook_asks_for_a_folder_that_reads_as_words() {
+  asks 'secrets -C "run --" run --guarded -- x'
+  asks "secrets -C 'a run -- b' run --guarded -- x"
+  asks 'secrets -C "x;run --" run --guarded -- x'
+  asks 'secrets -C "run -- tool" run --guarded -- x'
+  asks "secrets -C \"run${NL}--\" run --guarded -- x"
+  asks 'secrets -C "run --" -C "run --" run --guarded -- x'
+}
+
+test_hook_silent_with_a_folder_option() {
+  silent 'secrets -C "/a b/app" run -- tool --guarded'
+  silent 'secrets -C /r/--guarded status'
+  silent 'secrets -C /r/--guarded run -- x'
+}
+
 # A volume that ignores case starts the tool for any spelling of its name.
 test_hook_asks_for_the_name_in_any_case() {
   asks 'SECRETS run --guarded -- x'

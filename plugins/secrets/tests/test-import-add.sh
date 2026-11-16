@@ -187,6 +187,24 @@ test_import_replaces() {
     "$(cat .secrets-refs)" "refs line replaced in place"
 }
 
+# A relative FILE starts from DIR, as a path after git -C does.
+test_import_add_dir_option() {
+  ia_repo
+  cd "$TEST_DIR" || fail cd
+  printf 'A=val-a-long\n' > proj/.env.e2e
+  printf 'Z=val-z-long\n' > .env.e2e
+  assert_status 0 secrets -C proj import --names-only .env.e2e
+  assert_eq 'A  e2e' "$OUT"
+  assert_status 0 secrets -C proj import .env.e2e
+  assert_eq val-a-longx "$(stored proj A.e2e)"
+  assert_eq 'A=op://proj/A.e2e/password' "$(cat proj/.secrets-refs.e2e)"
+  [ ! -e .secrets-refs.e2e ] || fail "a refs file outside DIR"
+  printf v-n > in
+  assert_status 0 secrets -C proj add N < in
+  assert_eq v-nx "$(stored proj N)"
+  assert_eq "$(printf '%s\n' 'X=op://proj/X/password' 'N=op://proj/N/password')" "$(cat proj/.secrets-refs)"
+}
+
 test_import_add_replace_title_case() {
   ia_repo
   fake_item proj api_key val-old
