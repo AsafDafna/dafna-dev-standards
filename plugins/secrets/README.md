@@ -105,6 +105,8 @@ Bash(secrets setup *)
 
 Add no rule for `secrets run --guarded`. The owner should see that prompt.
 
+These two rules do not match the `-C DIR` forms, so auto mode asks for those. Do not add a rule such as `Bash(secrets -C * setup *)`: its first `*` can also match `x run -- CMD`, so the rule would allow other subcommands.
+
 ## Vaults and files
 
 | Part | Name |
