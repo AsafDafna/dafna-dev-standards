@@ -3,7 +3,7 @@
 # Shared dev-workflow rules (dafna-dev-standards/core)
 
 ## Workflow gates
-- Enter plan mode for any non-trivial task (3+ steps or architectural decisions).
+- Plan non-trivial tasks (3+ steps); multi-task plans for subagents are writing-plans files.
 - Execution-mode gate: after a plan is approved, STATE the execution mode out loud
   before writing code. 3+ files or any DB migration => dispatch subagent
   implementers; the main session orchestrates, reviews, and runs gates. Inline

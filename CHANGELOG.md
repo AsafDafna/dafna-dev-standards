@@ -1,5 +1,31 @@
 # Changelog
 
+## open-items 0.2.2 — short asks to the pane while background work runs
+
+- `add_item` description: while background agents, shell commands or
+  monitors run, add an item only for a short ask (about 3 sentences with its
+  options). A longer ask waits for the chat recap when the batch ends.
+- When no background work runs, Claude asks in the chat. The live-chat gate
+  itself is unchanged.
+
+## coo 1.0.6 — short questions mid-batch, herdr wait-output
+
+- orchestration.md, Batched reporting: a short question or decision goes to
+  the open-items pane at once; a longer one waits for the phase recap. An
+  answer to the user may go out during a batch. An
+  "out loud" line goes in the turn that starts the work, or in the tool call's
+  description during a batch.
+- orchestration.md and SKILL.md: completion waits use `herdr pane wait-output`
+  with an anchored marker regex. `herdr wait` does not exist. In a Herdr app
+  terminal, the `herdr` commands do not reach the app; use `hc` there.
+- SKILL.md: the message gate before a user-visible message follows the
+  batched-reporting rule.
+
+## core 1.7.1 — plan files for subagent work
+
+- RULES.md workflow gates: plan non-trivial tasks (3+ steps); a multi-task plan
+  for subagents is a writing-plans file, not plan mode.
+
 ## secrets 0.2.0 — `-C DIR` for another repo
 
 - `secrets -C DIR SUBCOMMAND ...` runs any subcommand as if it started in DIR,
