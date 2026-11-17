@@ -25,6 +25,13 @@ test_status_all_good() {
   assert_contains "$OUT" 'agent-shared readable'
 }
 
+test_status_dir_option() {
+  status_repo
+  cd "$TEST_DIR" || fail cd
+  assert_status 0 secrets -C proj status
+  assert_contains "$OUT" 'secrets: A readable'
+}
+
 test_status_op_version() {
   status_repo
   FAKE_OP_VERSION=2.41.9

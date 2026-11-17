@@ -52,6 +52,69 @@ test_run_guarded_adds_file() {
   assert_status 0 secrets run -- sh -c 'test -z "${G+x}" && test "$A" = v1'
 }
 
+# other_repo: a second repo "other" with refs B, the item B = vb and its own token.
+other_repo() {
+  new_repo "$TEST_DIR/other" || return 1
+  printf 'B=op://other/B/password\n' > "$TEST_DIR/other/.secrets-refs"
+  fake_item other B vb
+  fake_token tok-other other
+  fake_keychain op-sa-other tok-other
+}
+
+test_run_dir_option() {
+  run_repo
+  other_repo
+  assert_status 0 secrets -C "$TEST_DIR/other" run -- sh -c 'test "$B" = vb && test -z "${A+x}" && pwd -P'
+  assert_eq "$TEST_DIR/other" "$OUT" "the command starts in DIR"
+  assert_status 0 secrets -C ../other run -- sh -c 'test "$B" = vb'
+  assert_status 0 secrets run -- sh -c 'test "$A" = v1 && test -z "${B+x}"'
+  mkdir "$TEST_DIR/other/sub" || fail mkdir
+  cd "$TEST_DIR" || fail cd
+  assert_status 0 secrets -C other -C sub run -- sh -c 'test "$B" = vb && pwd -P'
+  assert_eq "$TEST_DIR/other/sub" "$OUT" "a second -C starts from the first"
+  mkdir proj/other || fail "decoy folder"
+  CDPATH=$TEST_DIR/proj
+  export CDPATH
+  assert_status 0 secrets -C other run -- sh -c 'test "$B" = vb && pwd -P'
+  assert_eq "$TEST_DIR/other" "$OUT" "CDPATH holds a folder of the same name"
+  unset CDPATH
+  mkdir ./-dash || fail "dash folder"
+  mv other ./-dash/ || fail "dash folder"
+  assert_status 0 secrets -C -dash/other run -- sh -c 'test "$B" = vb && pwd -P'
+  assert_eq "$TEST_DIR/-dash/other" "$OUT" "a folder that starts with a dash"
+}
+
+# The hook tests hold a DIR that splits into the words `run --`. The command takes such a folder.
+test_run_dir_option_guarded() {
+  run_repo
+  printf 'G=op://proj/G/password\n' > .secrets-refs.guarded
+  fake_item proj G v-g
+  cd "$TEST_DIR" || fail cd
+  mv proj 'run --' || fail "rename"
+  assert_status 0 secrets -C 'run --' run --guarded -- sh -c 'test "$G" = v-g && test "$A" = v1'
+}
+
+test_dir_option_bad_folder() {
+  run_repo
+  printf x > "$TEST_DIR/file"
+  mkdir "$TEST_DIR/locked" || fail "locked folder"
+  chmod 000 "$TEST_DIR/locked" || fail "locked folder"
+  assert_status 1 secrets -C
+  assert_eq 'secrets: -C needs a folder. Use: secrets -C DIR SUBCOMMAND ...' "$ERR" "no value"
+  for _sub in run status; do
+    assert_status 1 secrets -C '' "$_sub"
+    assert_eq 'secrets: -C needs a folder. Use: secrets -C DIR SUBCOMMAND ...' "$ERR" "$_sub: empty"
+    assert_status 1 secrets -C "$TEST_DIR/none" "$_sub"
+    assert_eq "secrets: -C: $TEST_DIR/none is not a folder" "$ERR" "$_sub: missing"
+    assert_status 1 secrets -C ../file "$_sub"
+    assert_eq 'secrets: -C: ../file is not a folder' "$ERR" "$_sub: a file"
+    assert_status 1 secrets -C "$TEST_DIR/locked" "$_sub"
+    assert_eq "secrets: -C: cannot open the folder $TEST_DIR/locked" "$ERR" "$_sub: no access"
+  done
+  [ ! -s "$FAKE_OP_DIR/argv.log" ] || fail "op was called"
+  [ ! -s "$FAKE_SEC_DIR/argv.log" ] || fail "security was called"
+}
+
 test_run_hard_stop_names_each() {
   run_repo
   printf 'B=op://proj/B/password\nC=op://proj/C/password\n' >> .secrets-refs
