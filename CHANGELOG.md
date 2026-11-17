@@ -16,7 +16,8 @@
   "out loud" line goes in the turn that starts the work, or in the tool call's
   description during a batch.
 - orchestration.md and SKILL.md: completion waits use `herdr pane wait-output`
-  with an anchored marker regex. `herdr wait` does not exist.
+  with an anchored marker regex. `herdr wait` does not exist. In a Herdr app
+  terminal, the `herdr` commands do not reach the app; use `hc` there.
 - SKILL.md: the message gate before a user-visible message follows the
   batched-reporting rule.
 
