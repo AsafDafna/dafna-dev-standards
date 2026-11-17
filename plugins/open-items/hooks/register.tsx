@@ -123,7 +123,7 @@ const LIVE_CHAT_MS = 300_000
 const LIVE_CHAT = 'live chat: ask in the chat'
 
 /** Ends `add_item`'s result when the live-chat gate cannot tell whether background work runs. */
-const LIVE_CHAT_NOTE = 'This looks like a live chat: if the user is here and replying, withdraw it with close_item and ask in the chat.'
+const LIVE_CHAT_NOTE = 'This looks like a live chat: if no background work runs and the user is here and replying, withdraw it with close_item and ask in the chat.'
 
 /** Resolutions pressed this close together go to Claude as one message. */
 const BATCH_MS = 800
@@ -180,8 +180,8 @@ const TOOLS: readonly ToolSpec[] = [
       "Put an item in the user's Open items pane. It stays until the user acts on it. An item does not block: you keep working while it waits. The response reaches you as a message, or through list_items.",
       '',
       'When to add an item:',
-      '- Add an item for every ask while background agents, shell commands or monitors run, or after the user went quiet. While background work runs, write no chat text about the item until the batch ends.',
-      '- In a live chat (the user replies to you in the chat, and no background work runs), ask in the chat only. add_item refuses there.',
+      '- While background agents, shell commands or monitors run, add an item for a short ask (about 3 sentences with its options). Hold a longer ask for the chat recap when the batch ends. Write no chat text about the item until the batch ends.',
+      "- When no background work runs, ask in the chat. add_item refuses in a live chat: the user's last two inputs were typed prompts, the last one came under five minutes ago, and no background work runs.",
       "- Add only what is the user's: a decision that is theirs, a question only they can answer, an action only they can do, or a finding they must see. Ask no unnecessary questions.",
       '- One item per ask. Never add the same ask again: change the item in place with reply_item. list_items shows what is open.',
       '- When only the user\'s consent is missing, add a decision ("Run it" / "Don\'t"), not an action.',

@@ -5254,7 +5254,7 @@ describe('threads', () => {
 
 describe('the live-chat gate', () => {
   const LIVE = 'live chat: ask in the chat'
-  const NOTE = 'This looks like a live chat: if the user is here and replying, withdraw it with close_item and ask in the chat.'
+  const NOTE = 'This looks like a live chat: if no background work runs and the user is here and replying, withdraw it with close_item and ask in the chat.'
   const ANDROID = { ...XCODE_TASK, title: 'Paste the Android test failures' } as const
 
   const resultOf = (call: unknown) => call as { result?: string; deny?: string }
