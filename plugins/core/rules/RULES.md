@@ -3,9 +3,10 @@
 # Shared dev-workflow rules (dafna-dev-standards/core)
 
 ## Workflow
-- Big or risky work gets the full process: a new feature, a database or RLS change, auth or permissions, payments, a bulk or irreversible action on production data, or work across repos. The full process is brainstorming -> spec (committed to git) -> spec-review -> plan (a writing-plans file) -> plan-review -> subagent implementers -> code review. The main session orchestrates, reviews and runs the gates.
-- Other work goes straight to code: make the change inline and run one code review before the PR. When you are not sure which kind a task is, treat it as the smaller kind and say so in one line.
-- Pick the model for each dispatch by the job: a lighter model for mechanical work, opus for real work, Fable only when opus fell short.
+- Big or risky work gets the full process: a new feature of more than a few files, a database or RLS change, auth or permissions, payments, a bulk or irreversible action on production data, or a change to a contract between repos. The full process is brainstorming -> spec (committed to git) -> spec-review -> plan (a writing-plans file) -> plan-review -> subagent implementers -> code review. The main session orchestrates, reviews and runs the quality gates.
+- Other work goes straight to code: make the change inline and run the quality gates below before the PR.
+- When you are not sure about the size of a task, treat it as the smaller kind and say so in one line. When you are not sure whether it touches production data, auth, RLS or payments, treat it as big.
+- Pass `model:` on every dispatch, chosen by the job: a lighter model for mechanical work, opus for real work, Fable only when opus fell short.
 - Plan mode is for execution planning, not for feature design.
 - Bugs: investigate, find the root cause, fix, verify. Do not patch on a guess.
 - Parallel sessions in one repo use git worktrees, not a shared checkout.

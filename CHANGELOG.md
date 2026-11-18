@@ -7,8 +7,10 @@
   implementers, code review) now applies to big or risky work only: a new
   feature, a database or RLS change, auth or permissions, payments, a bulk or
   irreversible action on production data, or work across repos. Other work
-  goes straight to code plus one code review. This replaces the "3+ steps"
-  and "3+ files" triggers. The step that states the execution mode out loud
+  goes straight to code plus the quality gates. When the size is unclear,
+  the task counts as small; when it may touch production data, auth, RLS or
+  payments, it counts as big. This replaces the "3+ steps" and "3+ files"
+  triggers. Every dispatch passes `model:`. The step that states the execution mode out loud
   is gone.
 - RULES.md Logs: lessons.md holds project gotchas and validated patterns.
   Search it for your topic; do not read it whole. "Corrections go to
