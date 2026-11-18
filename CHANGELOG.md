@@ -1,5 +1,51 @@
 # Changelog
 
+## core 1.9.0 — lean rules; search the lessons log, log sparingly
+
+- RULES.md: "Workflow gates" becomes "Workflow", in plain sentences. The
+  3-files-or-migration rule for subagent implementers stays; the step that
+  states the execution mode out loud is gone.
+- RULES.md Logs: lessons.md holds project gotchas and validated patterns.
+  Search it for your topic; do not read it whole. "Corrections go to
+  lessons.md" is gone: corrections about how the assistant works belong in
+  the user's own rules. The 2+ repos promotion line moves to the skill.
+- RULES.md: "Code comments" and "Secrets" lose "Never" wording, with no
+  change of meaning. 49 lines become 40.
+- The SubagentStart sentence names the new lines, and gives subagents the
+  "Search that file for your topic" sentence too.
+- lessons-log: no trigger on every correction or praise. Search before a
+  task instead of a whole-file read at session start. Log sparingly, one
+  entry per subject; update an existing entry before you add one, unless
+  the file's header says to add lines only at the end.
+
+## coo 1.0.8 — chat rules leave; briefs and reports in plain rules
+
+- Batched reporting is gone: the rule to end turns with no text while agents
+  run, the recap format and the "Decisions needed" block. The user's own
+  rules own how to report. The open-items pane routing is left to the
+  `add_item` tool description.
+- SKILL.md, Briefs and reports: brief each subagent with the objective, the
+  output format, the boundaries and the files to read; ask for a short
+  result plus a file path. A subagent report is input for the lead: check
+  the claims that matter, then write the outcome first. Ask the user's
+  questions plainly, one at a time.
+- The copies of the brief anatomy, the `name:` rule, the wait-output command
+  and human-in-the-loop now live in one place each. The question format
+  copy is gone; the irreversibility gate and supervised irreversible
+  operations stay.
+- Fixes: the hostile review runs before every PR (SKILL.md said "merge");
+  the implementer gates end before the PR (the checklist said "PR via gh");
+  pointers to "execution-mode gate", "Model per dispatch", the root
+  "Session Protocol" and the usage-limit rule are gone or renamed. "Say it
+  out loud" becomes "name it in the dispatch description".
+
+## open-items 0.2.3 — shorter tool descriptions
+
+- `add_item`: "Write no chat text about the item until the batch ends"
+  becomes "Do not repeat the item in the chat". The other lines are shorter,
+  with the same mechanics: 2,109 characters become 1,913.
+- `reply_item`, `close_item` and `list_items`: plainer, shorter wording.
+
 ## core 1.8.0 — model per dispatch; one Quality gates section
 
 - RULES.md workflow gates: new line "Model per dispatch". Pick the model that

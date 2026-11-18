@@ -1,81 +1,46 @@
 ---
 name: lessons-log
-description: Use when (a) the user corrects an approach, reverts your output, or says "stop doing X" / "no, not like that"; (b) the user praises a specific pattern or accepts a non-obvious choice ("yes, exactly", "perfect, keep doing that"); (c) something breaks unexpectedly, a test fails for a surprising reason, or a CI failure mode recurs; (d) you discover a non-obvious gotcha — a framework footgun, a config that means the opposite of what it looks like; (e) the user says "log this", "save the lesson", "record this", "/log-lesson", "remember this". Also use at session start if `.claude/lessons.md` exists in the current repo and the first task is non-trivial. Project-scoped: applies in every repo that has a lessons.md, committed to git.
+description: Use when (a) something breaks unexpectedly, a test fails for a surprising reason, or a CI failure mode recurs; (b) you discover a non-obvious project gotcha: a framework footgun, a config that means the opposite of what it looks like, a hidden default; (c) a non-obvious approach is confirmed to work and is worth repeating; (d) the user says "log this", "save the lesson", "record this", "/log-lesson", "remember this". Also use before a non-trivial task in a repo that has `.claude/lessons.md`, to search it for that task. Project-scoped: applies in every repo that has a lessons.md, committed to git.
 ---
 
-# `.claude/lessons.md` — corrections + wins log
+# `.claude/lessons.md`: the project's lessons log
 
-A running, committed log of corrections, gotchas, and validated wins for the project you're working in. The protocol is shared across all repos that adopt this pattern (seeded by /bootstrap-repo).
-
-## Why bother
-
-Most of the same mistakes get re-made by fresh Claude sessions because the prior conversation is gone. A committed lessons file fixes that — both future contributors and future Claude sessions see it. The cost of one wrong append is tiny; the cost of repeating a fix the user already corrected once is large (their time, plus the trust hit).
-
-The *why* matters for every entry. A bare correction ("don't use X") rots fast. A correction with context ("don't use X — last time it caused Y") survives translation to new situations.
+A committed log of project gotchas and validated patterns, so a fresh session does not find the same problem again. /bootstrap-repo seeds the file at the repo root.
 
 ## When to read
 
-Read `.claude/lessons.md` near session start if:
+Search the file before a task that touches code, schemas, infra or workflows. Do not read it whole at session start: a large file comes back cut.
 
-- The file exists in the project you're working in (look for `<cwd>/.claude/lessons.md` or the nearest enclosing repo root's version).
-- The user's first task touches code, schemas, infra, or workflows (anything that could trip on a prior incident). Skip for pure conversation or trivial reads.
+- Search it (`grep -n -i`) for the task's anchors: file paths, function, table and column names, CLI and CI job names, error text, and the kind of change (for example `RLS policy` or `db reset`). Read the matching entries with Read `offset`/`limit`.
+- A date pointer such as "`.claude/lessons.md`, 2026-07-16" means: search for that date. A line pointer such as `lessons.md:157` can drift: check that the entry matches, else search its words.
+- You do not need to summarize the matches to the user; let them shape your work.
 
-If you read it, you don't need to summarize back to the user — just hold the entries in working memory so they shape your suggestions.
+## What to log
 
-## When to append
+Log sparingly. An entry is a real project gotcha (a surprising failure and its cause, a footgun, a CI failure that came back) or a validated pattern (a non-obvious approach that was confirmed to work). Give the why: "do not use X, it caused Y" survives new situations, a bare "do not use X" does not.
 
-Five triggers. Apply them generously — over-logging is better than under-logging because thin entries are cheap to skip later, while missing entries get re-discovered as "new" problems.
-
-1. **User correction.** User reverts your output, edits it significantly, or says "no, do X instead." Even soft pushback counts ("hmm, I'd rather …", "actually let's …"). The `-` entry captures what to avoid + the why.
-
-2. **User validation.** User explicitly praises a pattern or accepts a non-obvious choice without redirecting. "yes, exactly that", "perfect, keep doing that", "that's the right call here." These deserve a `+` entry because the bias is to only log mistakes; without `+` entries, the file becomes a graveyard and you drift away from validated approaches.
-
-3. **Breakage.** Something failed unexpectedly — tests, CI, a runtime behavior that surprised you. Append the failure mode + the actual cause + the fix. Especially valuable when the fix isn't obvious from the error message.
-
-4. **Gotcha discovery.** You learned a framework footgun, a config that means the opposite of what it looks like, a hidden default, a quirk in a library version. Worth logging even if it didn't cause a problem this time — it will eventually.
-
-5. **CI failure recurrence.** A CI failure mode that has now hit twice. Log explicitly and consider promotion (see Pattern promotion below). Recurring CI breakage is the highest-signal log target.
+Do not log:
+- Trivia, typos, normal iteration on a draft, or a change of approach with no specific reason.
+- Praise that is not tied to a specific pattern.
+- Anything a CLAUDE.md or a shared rule already says.
+- Corrections about how you write or work in general. Those belong in the user's own rules, not in a project log.
 
 ## Format
-
-Default format (bullet style):
 
 ```
 - [YYYY-MM-DD] [+/-] Brief lesson. (context: what triggered it)
 ```
 
-- `+` = positive / what worked
-- `-` = negative / what to avoid
-- Lesson ≤ 1 sentence. Why matters more than what — explain the underlying reason if it's not obvious.
-- Context ≤ 1 short clause. Name the PR, file, or incident if it's discoverable later.
-
-If the project's existing `lessons.md` uses a different format (e.g., `## YYYY-MM-DD` headers + `### Title`), match the existing style. Read the file's first ~20 lines to detect format before appending.
+`+` is what worked, `-` is what to avoid. The lesson is one sentence; the context is one short clause that names the PR, file or incident. If the file uses another format, match it.
 
 ## Append flow
 
-1. Detect the project's `.claude/lessons.md` location. Walk up from cwd if needed — the file lives at the repo root's `.claude/lessons.md`.
-2. Read the file's header / first existing entry to confirm the format.
-3. Draft the entry. Use today's date in `YYYY-MM-DD`.
-4. **Show the entry to the user before writing.** One line: "About to log: `<entry>` to `<path>` — OK?" Wait for confirmation unless the user explicitly said "log it" / "/log-lesson" / similar (in which case the confirmation is implicit).
-5. Append using the Edit tool (find the last entry in the file, add the new one after it) or Bash with proper quoting.
-
-If the project doesn't have a `.claude/lessons.md` yet, ask the user before creating one — adopting the pattern is a project-level decision, not a per-session one.
+1. Find the file at the repo root: `<root>/.claude/lessons.md`. If it does not exist, ask the user before you create one; adopting the log is a project decision.
+2. Read the first ~20 lines for the format, the order of entries and any rules in the header. Then search the file for the lesson's anchors.
+3. One entry per subject. If an entry already covers the subject, update that entry instead of adding one. If the header says to add lines only at the end, follow the header.
+4. Show the entry to the user before you write it: "About to log: `<entry>` to `<path>`. OK?" Skip this when the user asked you to log it.
+5. Add the entry where the file's order puts it. Append with Bash (`cat >> <path> <<'EOF'`), or use the Edit tool after a Read of that part of the file: the Edit tool refuses a file you have not read.
 
 ## Pattern promotion
 
-The lessons file is a staging ground, not the final resting place. When you append, scan the rest of the file:
-
-- If 3+ existing entries point at the same underlying pattern (e.g., three different incidents that all boil down to "Supabase RLS WITH CHECK was missing"), the pattern has earned a rule.
-- Surface this to the user: "Three entries now reference RLS WITH CHECK omissions. Want to promote this to a rule in CLAUDE.md and note in the lessons entries which section it consolidates into?"
-- Don't promote silently. The user decides whether to promote, where the rule lands, and how to phrase it.
-
-Promotion prevents lessons.md from becoming a graveyard. Without it, the file just accumulates without ever shaping the day-to-day rules.
-
-## What NOT to log
-
-- Trivia, single-keystroke typos, normal iteration on a draft.
-- Conversational pivots ("let's try a different approach" without a specific reason).
-- Praise that wasn't tied to a specific pattern ("nice work" is not a lesson).
-- Anything you already wrote into CLAUDE.md as a rule. That promotion already happened.
-
-A lessons file with 20 high-signal entries is far more useful than one with 200 mixed ones.
+When 3 or more entries point at the same underlying pattern, it has earned a rule. Use the search from step 2, with the pattern's own words too. Ask the user whether to promote it to a rule in CLAUDE.md, and where; do not promote silently. A lesson that recurs in 2 or more repos can become a shared rule through a PR to dafna-dev-standards.
