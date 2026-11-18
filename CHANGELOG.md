@@ -1,5 +1,29 @@
 # Changelog
 
+## core 1.8.0 — model per dispatch; one Quality gates section
+
+- RULES.md workflow gates: new line "Model per dispatch". Pick the model that
+  fits the job, and do not just inherit yours. Lighter models for mechanical
+  work, opus for real work, Fable only when opus fell short.
+- RULES.md: "CI-minute economy" and "Pre-merge gates" merge into one "Quality
+  gates" section. Every rule is kept.
+- RULES.md: "Code comments" is trimmed to keep the file under the 60-line cap.
+- The SubagentStart sentence names "Quality gates" in place of the two old
+  sections, and gives subagents the "Model per dispatch" line too.
+
+## coo 1.0.7 — model choice moves to core; no review skip; small findings near the change
+
+- orchestration.md, Model tier per dispatch: the four-tier map is gone. The
+  bullet points to the core line "Model per dispatch". `model:` stays explicit
+  on every dispatch.
+- orchestration.md, Adversarial review: fix a finding on the branch when the
+  fix is small and close to the PR's change, even outside its first scope. A
+  larger or more distant fix, or one that needs a decision, a migration or
+  another owner, gets a tracker row.
+- orchestration.md, Adversarial review: no skip. Every PR gets the simplify
+  pass and the hostile review; the two skips for small or config diffs are
+  gone.
+
 ## open-items 0.2.2 — short asks to the pane while background work runs
 
 - `add_item` description: while background agents, shell commands or
