@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: Use when writing, changing, reviewing, or sweeping tests — the authoring gate every new or changed test must pass, plus the audit workflow for low-value, implementation-coupled, or duplicative tests and the test-only production seams they keep alive. Also use when the user says "test audit", "audit the tests", "prune tests", "is this test worth it", or asks for a test-pruning campaign on one area.
+description: Use when writing, changing, reviewing or sweeping tests: the authoring gate for every new or changed test, and audits of low-value, implementation-coupled or duplicate tests and their test-only seams. Also on "test audit", "prune tests", "is this test worth it", or a test-pruning campaign.
 ---
 
 # Test Audit
@@ -171,7 +171,8 @@ high-confidence batch.
 
 ## Handoff
 
-Report:
+Put this report in the PR body, or in a file for a campaign that has no PR yet.
+The chat reply gives the outcome, what needs the user, and where the report is.
 
 - root cause and the low-value categories removed;
 - production simplifications;

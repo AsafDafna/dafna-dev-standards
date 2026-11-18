@@ -1,6 +1,6 @@
 ---
 name: coo
-description: Use when a request spans 2+ parallel workstreams, multiple repos, or a supervised long-arc (migration / go-live / bulk irreversible operation), or when the user says coordinate / drive / orchestrate / act as COO / spin up agents / run these in parallel. Scope is the current working directory and the git repos under it. Do not use for single-repo single-task work.
+description: Use when a request spans 2+ parallel workstreams, several repos, or a supervised long-arc (migration, go-live, bulk irreversible operation), or the user says coordinate, drive, orchestrate, act as COO or run these in parallel. Scope: the current folder's repos. Not for single-repo single-task work.
 ---
 
 # COO: scope-relative orchestrator

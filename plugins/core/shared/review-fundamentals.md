@@ -10,14 +10,16 @@ Tough but in service of quality. Push hard on weaknesses. Don't soften. Don't be
 
 ### Phase 1 — Report
 
-Read the doc. Output findings. **No edits.** User decides whether to proceed to Phase 2.
+Read the doc. Write the findings. No edits. The user decides whether to proceed to Phase 2.
+
+Write the full findings, in the format below, to a file outside the repo (for example the session scratchpad), and do not commit it. In the chat, give the critical and high findings in that format, a count of the rest by severity, and the file path.
 
 ### Phase 2 — Brainstorm-and-Lock
 
 Walk findings highest-severity-first; tough-questions last. For each finding:
 
-1. Ask one question. Recommend an answer.
-2. **Do not enumerate multiple-choice options unless alternatives genuinely have merit.** If the answer is obvious, just ask and propose.
+1. If the fix is clear and needs no choice from the user (a low or nit finding, a placeholder, a broken reference), apply it via the `Edit` tool and name it in one line.
+2. Otherwise ask one question and recommend an answer. Do not enumerate multiple-choice options unless the alternatives have real merit; if the answer is obvious, ask and propose.
 3. On the user's answer, apply the resulting edit to the doc via the `Edit` tool immediately.
 4. Move to the next finding.
 
@@ -37,9 +39,16 @@ Fix anything found via `Edit` directly (these are mechanical consistency repairs
 
 Close with a one-line report: either *"Consistency pass clean — N findings applied, no new issues."* or *"Consistency pass fixed M follow-on issues from the edits."* Then stop.
 
+## Rounds
+
+A round is one Phase 1 report and the Phase 2 and 3 edits that follow it.
+
+- After two rounds, do not start a third on your own. Give the open findings as a count by severity, and ask the user whether to run another round.
+- If the doc has grown by more than 25% since the first round, stop and ask the user before the next round.
+
 ## Output Format (Phase 1)
 
-Hard rule. Each finding is exactly one line of content, separated from the next finding by a single blank line:
+Each finding is exactly one line of content, separated from the next finding by a single blank line:
 
 ```
 [severity · category] §location — issue. Action.
@@ -55,7 +64,7 @@ Hard rule. Each finding is exactly one line of content, separated from the next 
 - `issue` is one sentence stating what's wrong
 - `Action` is one sentence stating what to do about it
 
-The blank line between findings is **required**, not optional. Substantive findings often wrap across multiple visual lines in the terminal; without a delimiter, wrapped lines visually merge with the next finding and produce a wall of text. The blank line is the unambiguous boundary.
+Keep the blank line between findings. Substantive findings often wrap across several lines in the terminal; without a delimiter, wrapped lines merge with the next finding.
 
 Findings are listed flat, severity-first. Close with a blank line and a one-line tally:
 
@@ -63,15 +72,12 @@ Findings are listed flat, severity-first. Close with a blank line and a one-line
 3 high · 5 medium · 2 tough-questions
 ```
 
-**Forbidden in Phase 1 output:**
+Not in Phase 1 output:
 
 - Prose paragraphs explaining findings (a finding is one line of content, not a paragraph)
 - Headers grouping findings by category
 - Restating context from the doc
-- Verbose elaboration
 - Multiple blank lines between findings (one blank line is the delimiter, not two)
-
-Short, clear, concise — always.
 
 ## Severity Scale
 
@@ -84,5 +90,5 @@ Short, clear, concise — always.
 ## What These Skills Do NOT Do
 
 - Do not write new specs or plans (use `superpowers:brainstorming` and `superpowers:writing-plans`).
-- Do not auto-apply Phase 1 findings as edits without Phase 2 user confirmation.
-- Do not write a sidecar review file — Phase 1 output is chat-only; Phase 2 edits go directly to the spec/plan markdown, and git history captures the before/after.
+- Do not apply Phase 1 findings as edits before Phase 2.
+- Do not commit the findings file. Phase 2 edits go directly to the spec or plan markdown, and git history captures the before and after.

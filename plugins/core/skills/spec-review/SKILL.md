@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Use when the user says "/spec-review", "review this spec", "review my spec", "critique my spec", "find holes in this spec", "tough questions on this spec", "audit this design", "what's wrong with this spec", or asks for an independent read on a design doc before committing to it. Also fits right after a brainstorming session produces a spec. Works on any design doc.
+description: Use when the user says "/spec-review", "review this spec", "critique my spec", "find holes in this spec", "audit this design", or asks for an independent read on a design doc before committing to it, such as right after a brainstorming session produces a spec.
 ---
 
 # /spec-review — Tough Review of a Design Spec
@@ -12,7 +12,7 @@ Reviews a spec for holes, bugs, improvements, and asks tough questions. Two-phas
 ## Input
 
 1. **Arg present** → use it as the file path.
-2. **No arg** → look for the most recent file matching `*-design.md` under `docs/superpowers/specs/` (relative to the current working directory). If found, confirm with the user: *"Reviewing `<path>` — proceed?"*
+2. **No arg** → look for the most recent file matching `*-design.md` under `docs/superpowers/specs/` (relative to the current working directory). If found, name it in one line and review it.
 3. **Neither** → error: "Pass a spec path, or write the spec to `docs/superpowers/specs/<date>-<topic>-design.md` first."
 
 ## Phase 1 — Report
@@ -57,13 +57,13 @@ Read the spec end-to-end before flagging anything. Then walk the five check fami
 
 ### Phase 1 Output
 
-Findings flat, severity-first per `review-fundamentals.md`. One line of content per finding, **separated by a single blank line** (required — see review-fundamentals.md). Close with a blank line and a one-line tally.
+Findings flat, severity-first, one line of content each, separated by a single blank line, then a one-line tally. The full list goes to a file; the chat gets the critical and high findings, a count of the rest and the file path (see `review-fundamentals.md`).
 
 After the tally, prompt: *"Proceed to lock decisions? (y/n)"*
 
 ## Phase 2 — Brainstorm-and-Lock
 
-Per `review-fundamentals.md`: walk findings highest-severity-first; tough-questions last. For each, ask one question (no forced multiple-choice — see review-fundamentals.md), apply the user's locked decision to the spec via `Edit` immediately, then move on.
+Per `review-fundamentals.md`: walk findings highest-severity-first; tough-questions last. For each, apply a clear fix directly or ask one question (no forced multiple-choice — see review-fundamentals.md), apply the user's locked decision to the spec via `Edit` immediately, then move on.
 
 When all findings are walked, summarize what changed in one line, then proceed to Phase 3.
 

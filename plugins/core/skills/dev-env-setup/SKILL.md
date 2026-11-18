@@ -1,6 +1,6 @@
 ---
 name: dev-env-setup
-description: Use when setting up a development machine or terminal environment — a new laptop, a fresh OS install, "set up my dev environment", "install the terminal stack", Ghostty or herdr installation, or WSL setup on Windows. Covers macOS and Windows (WSL2); native-Windows (non-WSL) Claude Code is unsupported.
+description: Use when setting up a development machine or terminal environment: a new laptop, a fresh OS install, "set up my dev environment", "install the terminal stack", Ghostty or herdr installation, or WSL on Windows. Covers macOS and Windows (WSL2); native Windows (non-WSL) is unsupported.
 ---
 
 # Dev environment setup — Ghostty + herdr

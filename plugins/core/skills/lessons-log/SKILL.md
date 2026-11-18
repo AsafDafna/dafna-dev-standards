@@ -1,6 +1,6 @@
 ---
 name: lessons-log
-description: Use when (a) something breaks unexpectedly, a test fails for a surprising reason, or a CI failure mode recurs; (b) you discover a non-obvious project gotcha: a framework footgun, a config that means the opposite of what it looks like, a hidden default; (c) a non-obvious approach is confirmed to work and is worth repeating; (d) the user says "log this", "save the lesson", "record this", "/log-lesson", "remember this". Also use before a non-trivial task in a repo that has `.claude/lessons.md`, to search it for that task. Project-scoped: applies in every repo that has a lessons.md, committed to git.
+description: Use when the user says "log this", "record this", "remember this" or /log-lesson; after a surprising break or a recurring CI failure; when you find a non-obvious project gotcha; or when a non-obvious approach proves worth repeating. Before a non-trivial task, search the repo's .claude/lessons.md.
 ---
 
 # `.claude/lessons.md`: the project's lessons log

@@ -1,6 +1,6 @@
 ---
 name: secrets
-description: Use when a repo has a .secrets-refs file, a command needs an API key or token, a new secret must be stored, or a project or Mac needs secrets set up. Load this skill BEFORE you run any command or script that prints, creates or needs a token, key or password: such output must go straight into `secrets add` and must never reach the screen or the chat. Covers secrets run, import, add, setup and status, and what to do when one fails.
+description: Use when a repo has a .secrets-refs file, a command needs an API key or token, a new secret must be stored, or secrets need setup. Load it before you run a command that prints, creates or needs a token, key or password: such output goes straight into `secrets add`, never to the screen or the chat.
 ---
 
 # secrets: 1Password secrets for agents

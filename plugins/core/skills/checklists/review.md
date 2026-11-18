@@ -28,19 +28,15 @@
 
 ## Finding Format
 
-**[SEVERITY] Issue Title**
-- Location: `file:line`
-- Issue: Description
-- Why it matters: Impact explanation
-- Suggestion: How to fix
+One line per finding: `[severity] file:line — issue and why it matters. Fix.`
 
 Severity levels:
-- **CRITICAL** - Must fix before merge
-- **MAJOR** - Should fix, significant impact
-- **MINOR** - Nice to fix, low impact
-- **SUGGESTION** - Optional improvement
+- **critical** - must fix before merge
+- **major** - should fix, significant impact
+- **minor** - nice to fix, low impact
+- **suggestion** - optional improvement
 
-## Summary Template
-- Ready to merge? Yes / No / With fixes
-- Main concerns
-- Positive observations
+## Summary
+- Verdict: ready to merge, or not ready.
+- The critical and major findings.
+- A count of the minor findings and suggestions.

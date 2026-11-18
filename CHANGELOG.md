@@ -1,5 +1,42 @@
 # Changelog
 
+## core 1.10.0 — review rounds stop at two; skill text matches the lean rules
+
+- spec-review and plan-review (review-fundamentals.md): after two rounds, stop
+  and ask the user before a third, with the open findings as a count; stop and
+  ask too when the doc grew by more than 25% since the first round. The full
+  findings go to a file outside the repo; the chat gets the critical and high
+  findings, a count of the rest and the path. Phase 2 applies a clear low or
+  nit fix directly and asks only where the user decides. The confirm question
+  for the found doc is gone: the skill names the file and reviews it.
+- checklists: the reply names only skipped, n/a or blocked items. The plan
+  checklist's spec step is for big or risky work only. Review and security
+  findings are one line each; the review summary loses "positive
+  observations"; the handoff template no longer restates completed work.
+- test-audit: the handoff report goes into the PR body or a file; the chat
+  reply stays short.
+- migrate: check the repo's own rules before a push, because many repos push
+  migrations only through CI; use the repo's type-generation script when it
+  has one. "IMPORTANT" and "Never auto-" lines are plain sentences.
+- bootstrap-repo: the step that printed an enable block for the unpublished
+  supabase/nextjs plugins is gone. The collision lists of bootstrap-repo and
+  dedup-local-skills now include `secrets`.
+- Descriptions of checklists, dev-env-setup, diagram-rules, lessons-log,
+  migrate, plan-review, spec-review and test-audit are 300 characters or less,
+  so a `skillListingMaxDescChars: 300` cap no longer cuts their triggers.
+
+## coo 1.0.9 — two review rounds, then ask
+
+- orchestration.md, adversarial review: after two review rounds, do not start
+  a third on your own; give the open findings as a count and ask.
+- The description is 300 characters or less and keeps "Not for single-repo
+  single-task work".
+
+## secrets 0.2.1 — shorter description
+
+- The description is 300 characters or less and keeps the rule to load the
+  skill before a command that prints, creates or needs a secret.
+
 ## core 1.9.0 — lean rules; search the lessons log, log sparingly
 
 - RULES.md: "Workflow gates" becomes "Workflow", in plain sentences. The
