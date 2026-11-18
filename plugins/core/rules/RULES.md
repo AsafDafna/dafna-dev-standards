@@ -3,10 +3,10 @@
 # Shared dev-workflow rules (dafna-dev-standards/core)
 
 ## Workflow
-- Plan a task of 3 or more steps. A plan that subagents will execute is a writing-plans file.
-- A change that touches 3 or more files, or any DB migration, goes to subagent implementers. The main session orchestrates, reviews and runs the gates. Smaller changes are done inline.
+- Big or risky work gets the full process: a new feature, a database or RLS change, auth or permissions, payments, a bulk or irreversible action on production data, or work across repos. The full process is brainstorming -> spec (committed to git) -> spec-review -> plan (a writing-plans file) -> plan-review -> subagent implementers -> code review. The main session orchestrates, reviews and runs the gates.
+- Other work goes straight to code: make the change inline and run one code review before the PR. When you are not sure which kind a task is, treat it as the smaller kind and say so in one line.
 - Pick the model for each dispatch by the job: a lighter model for mechanical work, opus for real work, Fable only when opus fell short.
-- Feature design goes brainstorming -> spec (committed to git) -> spec-review. Plan mode is for execution planning, not for feature design. A plan gets a plan-review.
+- Plan mode is for execution planning, not for feature design.
 - Bugs: investigate, find the root cause, fix, verify. Do not patch on a guess.
 - Parallel sessions in one repo use git worktrees, not a shared checkout.
 

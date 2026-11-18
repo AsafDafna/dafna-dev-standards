@@ -3,8 +3,13 @@
 ## core 1.9.0 — lean rules; search the lessons log, log sparingly
 
 - RULES.md: "Workflow gates" becomes "Workflow", in plain sentences. The
-  3-files-or-migration rule for subagent implementers stays; the step that
-  states the execution mode out loud is gone.
+  full process (brainstorming, spec, spec-review, plan, plan-review, subagent
+  implementers, code review) now applies to big or risky work only: a new
+  feature, a database or RLS change, auth or permissions, payments, a bulk or
+  irreversible action on production data, or work across repos. Other work
+  goes straight to code plus one code review. This replaces the "3+ steps"
+  and "3+ files" triggers. The step that states the execution mode out loud
+  is gone.
 - RULES.md Logs: lessons.md holds project gotchas and validated patterns.
   Search it for your topic; do not read it whole. "Corrections go to
   lessons.md" is gone: corrections about how the assistant works belong in
