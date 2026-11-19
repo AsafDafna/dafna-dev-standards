@@ -4,7 +4,7 @@ description: Interactively remove ~/.claude/skills copies that duplicate install
 
 For each directory under ~/.claude/skills/ whose name matches a skill shipped by an
 installed dafna-dev-standards plugin (lessons-log, spec-review, plan-review,
-checklists, dev-env-setup, migrate, diagram-rules, test-audit, coo): diff every file in the local skill directory
+checklists, dev-env-setup, migrate, diagram-rules, test-audit, coo, secrets): diff every file in the local skill directory
 against the plugin copy's directory as a whole (e.g. `diff -r
 ~/.claude/skills/<skill-name> <plugin-root>/skills/<skill-name>`) — not just
 SKILL.md — since multi-file skills (checklists, dev-env-setup) can have divergent
@@ -18,7 +18,7 @@ Locate the plugin copy's directory as follows:
   rules' ~/.claude/plugins --include=RULES.md 2>/dev/null | head -1` → the plugin
   root is that file's grandparent directory (…/rules/RULES.md); its skills live
   under <plugin-root>/skills/.
-- For other plugins of this marketplace (e.g. coo): search ~/.claude/plugins for
+- For other plugins of this marketplace (coo, secrets): search ~/.claude/plugins for
   a directory containing skills/<skill-name>/SKILL.md whose path also contains
   the plugin name, e.g. `find ~/.claude/plugins -path "*coo*/skills/<skill-name>/SKILL.md"`.
 

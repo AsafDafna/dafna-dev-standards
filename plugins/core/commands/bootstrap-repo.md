@@ -19,19 +19,15 @@ Steps, in order; show a summary table at the end:
    DECISIONS.md → docs/DECISIONS.md; lessons.md → .claude/lessons.md;
    CODEOWNERS.skeleton → .github/CODEOWNERS with <owner> replaced by the GitHub
    user from `gh api user -q .login` (ask if gh is unavailable).
-3. Skill-collision check (REPORT-ONLY) against the FIXED list of skills this
+3. Skill-collision check, report only, against the fixed list of skills this
    marketplace ships — lessons-log, spec-review, plan-review, checklists,
-   dev-env-setup, migrate, diagram-rules, test-audit, coo (coo ships via the separate `coo` plugin of this
-   marketplace, not core) — regardless of which plugins are currently installed:
-   list matching directory names under ~/.claude/skills/. Print a warning table —
-   plugin skills are namespaced, so local copies DUPLICATE rather than shadow
-   (both would trigger). Do NOT delete anything; point to /dedup-local-skills.
+   dev-env-setup, migrate, diagram-rules, test-audit (core), coo (the `coo`
+   plugin) and secrets (the `secrets` plugin) — regardless of which plugins are
+   currently installed: list matching directory names under ~/.claude/skills/.
+   Print a warning table: plugin skills are namespaced, so a local copy
+   duplicates the plugin skill rather than shadowing it (both would trigger).
+   Delete nothing; point to /dedup-local-skills.
 4. If .github/workflows/ contains CI, suggest (print, don't apply) a paths-ignore
    block for docs-only changes: paths-ignore: ["**.md", "docs/**"]. Warn: never
    add paths-ignore to a workflow that is a required status check — the PR would
    wait forever on a check that never reports.
-5. If the repo will use stack plugins (supabase/nextjs — v2, not yet published):
-   print this exact .claude/settings.json enable block for later use (include
-   only the plugin(s) the repo will actually use):
-   {"enabledPlugins": {"supabase@dafna-dev-standards": true, "nextjs@dafna-dev-standards": true}}
-   Writing it is v2 bootstrap behavior.

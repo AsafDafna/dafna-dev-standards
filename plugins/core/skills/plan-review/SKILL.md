@@ -1,6 +1,6 @@
 ---
 name: plan-review
-description: Use when the user says "/plan-review", "review this plan", "review my plan", "critique my plan", "find holes in this plan", "tough questions on this plan", "audit this plan", "what's wrong with this plan", or asks for an independent read on an implementation plan before executing it. Also fits right after the writing-plans skill produces a plan. Works on any implementation plan.
+description: Use when the user says "/plan-review", "review this plan", "critique my plan", "find holes in this plan", "audit this plan", or asks for an independent read on an implementation plan before executing it, such as right after the writing-plans skill produces a plan.
 ---
 
 # /plan-review — Tough Review of an Implementation Plan
@@ -14,7 +14,7 @@ Reviews a plan for sequencing, decomposition, verification, risk, spec alignment
 ## Input
 
 1. **Arg present** → use it as the file path.
-2. **No arg** → look for the most recent file matching `*-plan.md` (or `YYYY-MM-DD-*.md`) under `docs/superpowers/plans/` (relative to the current working directory). If found, confirm with the user: *"Reviewing `<path>` — proceed?"*
+2. **No arg** → look for the most recent file matching `*-plan.md` (or `YYYY-MM-DD-*.md`) under `docs/superpowers/plans/` (relative to the current working directory). If found, name it in one line and review it.
 3. **Neither** → error: "Pass a plan path, or write the plan to `docs/superpowers/plans/<date>-<feature>.md` first."
 
 If a corresponding spec file exists (same base name with `-design.md` instead of `-plan.md`, or otherwise discoverable in `docs/superpowers/specs/`), read it too — `spec-alignment` checks require it.
@@ -69,13 +69,13 @@ Read the plan end-to-end (and the spec if found) before flagging anything. Then 
 
 ### Phase 1 Output
 
-Findings flat, severity-first per `review-fundamentals.md`. One line of content per finding, **separated by a single blank line** (required — see review-fundamentals.md). Close with a blank line and a one-line tally.
+Findings flat, severity-first, one line of content each, separated by a single blank line, then a one-line tally. The full list goes to a file; the chat gets the critical and high findings, a count of the rest and the file path (see `review-fundamentals.md`).
 
 After the tally, prompt: *"Proceed to lock decisions? (y/n)"*
 
 ## Phase 2 — Brainstorm-and-Lock
 
-Per `review-fundamentals.md`: walk findings highest-severity-first; tough-questions last. For each, ask one question (no forced multiple-choice — see review-fundamentals.md), apply the user's locked decision to the plan via `Edit` immediately, then move on.
+Per `review-fundamentals.md`: walk findings highest-severity-first; tough-questions last. For each, apply a clear fix directly or ask one question (no forced multiple-choice — see review-fundamentals.md), apply the user's locked decision to the plan via `Edit` immediately, then move on.
 
 When all findings are walked, summarize what changed in one line, then proceed to Phase 3.
 

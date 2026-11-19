@@ -1,5 +1,95 @@
 # Changelog
 
+## core 1.10.0 — review rounds stop at two; skill text matches the lean rules
+
+- spec-review and plan-review (review-fundamentals.md): after two rounds, stop
+  and ask the user before a third, with the open findings as a count; stop and
+  ask too when the doc grew by more than 25% since the first round. The full
+  findings go to a file outside the repo; the chat gets the critical and high
+  findings, a count of the rest and the path. Phase 2 applies a clear low or
+  nit fix directly and asks only where the user decides. The confirm question
+  for the found doc is gone: the skill names the file and reviews it.
+- checklists: the reply names only skipped, n/a or blocked items. The plan
+  checklist's spec step is for big or risky work only. Review and security
+  findings are one line each; the review summary loses "positive
+  observations"; the handoff template no longer restates completed work.
+- test-audit: the handoff report goes into the PR body or a file; the chat
+  reply stays short.
+- migrate: check the repo's own rules before a push, because many repos push
+  migrations only through CI; use the repo's type-generation script when it
+  has one. "IMPORTANT" and "Never auto-" lines are plain sentences.
+- bootstrap-repo: the step that printed an enable block for the unpublished
+  supabase/nextjs plugins is gone. The collision lists of bootstrap-repo and
+  dedup-local-skills now include `secrets`.
+- Descriptions of checklists, dev-env-setup, diagram-rules, lessons-log,
+  migrate, plan-review, spec-review and test-audit are 300 characters or less,
+  so a `skillListingMaxDescChars: 300` cap no longer cuts their triggers.
+
+## coo 1.0.9 — two review rounds, then ask
+
+- orchestration.md, adversarial review: after two review rounds, do not start
+  a third on your own; give the open findings as a count and ask.
+- The description is 300 characters or less and keeps "Not for single-repo
+  single-task work".
+
+## secrets 0.2.1 — shorter description
+
+- The description is 300 characters or less and keeps the rule to load the
+  skill before a command that prints, creates or needs a secret.
+
+## core 1.9.0 — lean rules; search the lessons log, log sparingly
+
+- RULES.md: "Workflow gates" becomes "Workflow", in plain sentences. The
+  full process (brainstorming, spec, spec-review, plan, plan-review, subagent
+  implementers, code review) now applies to big or risky work only: a new
+  feature, a database or RLS change, auth or permissions, payments, a bulk or
+  irreversible action on production data, or work across repos. Other work
+  goes straight to code plus the quality gates. When the size is unclear,
+  the task counts as small; when it may touch production data, auth, RLS or
+  payments, it counts as big. This replaces the "3+ steps" and "3+ files"
+  triggers. Every dispatch passes `model:`. The step that states the execution mode out loud
+  is gone.
+- RULES.md Logs: lessons.md holds project gotchas and validated patterns.
+  Search it for your topic; do not read it whole. "Corrections go to
+  lessons.md" is gone: corrections about how the assistant works belong in
+  the user's own rules. The 2+ repos promotion line moves to the skill.
+- RULES.md: "Code comments" and "Secrets" lose "Never" wording, with no
+  change of meaning. 49 lines become 40.
+- The SubagentStart sentence names the new lines, and gives subagents the
+  "Search that file for your topic" sentence too.
+- lessons-log: no trigger on every correction or praise. Search before a
+  task instead of a whole-file read at session start. Log sparingly, one
+  entry per subject; update an existing entry before you add one, unless
+  the file's header says to add lines only at the end.
+
+## coo 1.0.8 — chat rules leave; briefs and reports in plain rules
+
+- Batched reporting is gone: the rule to end turns with no text while agents
+  run, the recap format and the "Decisions needed" block. The user's own
+  rules own how to report. The open-items pane routing is left to the
+  `add_item` tool description.
+- SKILL.md, Briefs and reports: brief each subagent with the objective, the
+  output format, the boundaries and the files to read; ask for a short
+  result plus a file path. A subagent report is input for the lead: check
+  the claims that matter, then write the outcome first. Ask the user's
+  questions plainly, one at a time.
+- The copies of the brief anatomy, the `name:` rule, the wait-output command
+  and human-in-the-loop now live in one place each. The question format
+  copy is gone; the irreversibility gate and supervised irreversible
+  operations stay.
+- Fixes: the hostile review runs before every PR (SKILL.md said "merge");
+  the implementer gates end before the PR (the checklist said "PR via gh");
+  pointers to "execution-mode gate", "Model per dispatch", the root
+  "Session Protocol" and the usage-limit rule are gone or renamed. "Say it
+  out loud" becomes "name it in the dispatch description".
+
+## open-items 0.2.3 — shorter tool descriptions
+
+- `add_item`: "Write no chat text about the item until the batch ends"
+  becomes "Do not repeat the item in the chat". The other lines are shorter,
+  with the same mechanics: 2,109 characters become 1,913.
+- `reply_item`, `close_item` and `list_items`: plainer, shorter wording.
+
 ## core 1.8.0 — model per dispatch; one Quality gates section
 
 - RULES.md workflow gates: new line "Model per dispatch". Pick the model that

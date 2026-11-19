@@ -1,7 +1,6 @@
 # Session Handoff Checklist
 
 ## 1. Session Summary
-- What tasks were completed?
 - What decisions were made and why?
 - What's currently in progress?
 - What blockers or issues exist?
@@ -19,10 +18,9 @@
 
 ## 5. Handoff Summary Template
 
-```
-### Completed This Session
-- [bullet points]
+Completed work is in the commits; do not restate it.
 
+```
 ### Current State
 [brief description]
 

@@ -35,14 +35,9 @@
 
 ## Finding Format
 
-**[SEVERITY] Vulnerability Title**
-- Type: OWASP category
-- Location: `file:line` or component
-- Risk: What could happen if exploited
-- Remediation: How to fix
-- Priority: Immediate / High / Medium / Low
+One line per finding: `[priority] file:line (OWASP category) — what could happen if exploited. Fix.`
+Priority is immediate, high, medium or low.
 
 ## Summary
-- Critical issues count
-- Overall security posture
-- Recommended next steps
+- The count of immediate and high findings, and each one.
+- The recommended next step.

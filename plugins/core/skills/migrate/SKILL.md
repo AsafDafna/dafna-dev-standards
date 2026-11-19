@@ -1,6 +1,6 @@
 ---
 name: migrate
-description: Use when creating, pushing, validating, troubleshooting, or repairing Supabase database migrations. Triggers on mentions of migrations, schema changes, database changes, RLS policies, row-level security, Supabase CLI operations (db push, db reset, gen types), migration drift, diverged migrations, declarative schemas (supabase/schemas/), creating tables, altering columns, adding indexes, or any SQL DDL work targeting a Supabase project. Also triggers on "supabase migrate", "db push", "migration repair", "schema diff", or type generation after schema changes.
+description: Use when creating, pushing, validating, troubleshooting or repairing Supabase migrations: schema or RLS changes, SQL DDL (tables, columns, indexes), declarative schemas, db push, db reset, migration drift or repair, schema diff, or type generation after a schema change.
 ---
 
 # Supabase Migration Skill
@@ -96,7 +96,9 @@ Report all findings to the user. Do not proceed to push until issues are resolve
 
 ## Step 4: Push the Migration
 
-**IMPORTANT: Never auto-push without showing the user what will change. Always present the migration SQL and ask for confirmation before running any push command.**
+Check the repo's own rules first. Many repos push migrations only through CI (a PR preview, then the merge); there, stop after the local `db reset` and do not push by hand. If the repo has its own type-generation script, use it in Step 5.
+
+Do not push before you have shown the user the migration SQL and the user has confirmed.
 
 ### Local-first mode
 1. Run `npx supabase db reset` to verify all migrations replay cleanly from scratch.
@@ -111,7 +113,7 @@ Report all findings to the user. Do not proceed to push until issues are resolve
 If push fails with **drift** or **divergence** errors:
 - Explain the situation clearly: what the remote state is, what the local migrations expect, and why they diverged.
 - Offer `npx supabase migration repair --status <applied|reverted> <timestamp>` with the correct parameters.
-- **Never auto-repair without explicit user confirmation.** Repairing marks migrations as applied/reverted in the remote tracking table without actually running them, which can leave the database in an inconsistent state if used incorrectly.
+- Do not repair without the user's explicit confirmation. Repairing marks migrations as applied/reverted in the remote tracking table without actually running them, which can leave the database in an inconsistent state if used incorrectly.
 
 ## Step 5: Post-Push Steps
 
@@ -149,8 +151,8 @@ Keep these in mind throughout the workflow:
 
 ## Rules
 
-1. **Never auto-push** without showing the user the migration SQL and getting confirmation.
-2. **Never auto-repair** diverged migrations without explicit user confirmation.
+1. **No push** before the user has seen the migration SQL and confirmed, and none by hand in a repo that pushes through CI.
+2. **No repair** of diverged migrations without the user's explicit confirmation.
 3. **Always create migration files with the CLI** (`supabase migration new`, or in declarative mode the `sync` step in Step 2), never by hand-writing the filename or its stamp (exception: the Step 2 restamp repair, using the same UTC clock).
 4. **Always validate SQL** before pushing, even for simple migrations.
 5. **Always use `2>/dev/null`** when running `supabase gen types`.

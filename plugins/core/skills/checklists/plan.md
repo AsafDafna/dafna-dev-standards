@@ -21,8 +21,9 @@ Technical decisions (tools, libraries, patterns) can be made independently.
 - Identify what can be parallelized
 - Note testing requirements
 
-## Step 4: Feature Spec
-Create specification at `docs/superpowers/specs/[feature-name]-design.md` with:
+## Step 4: Feature Spec (big or risky work only)
+Only for work that the core rules count as big or risky. Create the
+specification at `docs/superpowers/specs/[feature-name]-design.md` with:
 - Overview
 - Requirements (functional & non-functional)
 - Data model

@@ -1,6 +1,6 @@
 ---
 name: diagram-rules
-description: Use when hand-authoring or reviewing an SVG or HTML diagram of structure or mechanism, such as architecture, flowchart or process flow, sequence, state machine, ER/data model, swimlane, or any boxes-and-arrows schematic, including inside an artifact; also when such a diagram carries Hebrew or other right-to-left labels. Companion to artifact-diagramming, adding connector rules, a complexity budget, theme-safe color, RTL handling, and a pre-output checklist. Not for Mermaid, ASCII, or data plots: charts, graphs, dashboards, and any quantitative data visualization belong to the dataviz skill.
+description: Use when hand-authoring or reviewing an SVG or HTML diagram of structure or mechanism (architecture, flowchart, sequence, state machine, ER model, swimlane, boxes and arrows), also in an artifact or with Hebrew or other RTL labels. Not for Mermaid, ASCII, charts or data plots (dataviz).
 ---
 
 # Diagram rules
