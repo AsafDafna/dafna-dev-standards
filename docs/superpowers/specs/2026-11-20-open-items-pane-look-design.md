@@ -1,5 +1,7 @@
 # open-items 0.3: an item screen that is easy to read
 
+Status: approved by Asaf on 2026-11-21.
+
 ## Intent
 
 Asaf finds the Open items pane uncomfortable to use. An item with more than a few short lines is hard to read and looks messy, so the pane does not help him. This change makes one item easy to read in the pane, so that he can read and answer an item of more than a few lines where it waits.
