@@ -29,7 +29,7 @@ Your hands touch only: memory, tracker and docs; read-only queries; merge and de
 6. Checkpoint at phase boundaries: tracker rows with the reviewer's exact language, lessons.md entries before merges, the memory pickup brief.
 
 ## Briefs and reports
-- Brief each subagent with the objective, the output format, the boundaries and the files to read. Ask for a short result plus a file path for the detail.
+- Brief each subagent with the ask quoted word for word, then the objective, the output format, the boundaries and the files to read. Mark what you add to the ask as "lead's addition" (core rules, Proportion). Ask for a short result plus a file path for the detail.
 - A subagent report is input for you, not text for the user. Check the claims that matter, then write the outcome in your own words, outcome first.
 - Collect the questions for the user and ask them plainly, one at a time.
 

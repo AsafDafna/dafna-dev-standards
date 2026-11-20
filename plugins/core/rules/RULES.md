@@ -11,6 +11,14 @@
 - Bugs: investigate, find the root cause, fix, verify. Do not patch on a guess.
 - Parallel sessions in one repo use git worktrees, not a shared checkout.
 
+## Proportion
+- The ask is the user's words: the request, their decisions and the repo's rules. A brief, spec, plan or review is not the ask.
+- Build what the ask names, nothing more. Anything else that seems needed goes in the report as a question with its size.
+- A brief quotes the ask word for word and marks the lead's additions as proposals.
+- Fix a review finding with the smallest change that closes it. Add a new module, table, job or flag only when nothing smaller works, and say why in one line. Always fix a real failure: a failing test, a failed run, bad real data.
+- Never add to a part that an earlier review fix added: shorten it, remove it or leave it. Keep a part that fixes a real failure.
+- Give sizes as before → after, for example "spec 19 → 24 KB", also for options you offer.
+
 ## Git
 - Work on feature branches (feature/, fix/, docs/) with conventional commit messages. Do not commit directly to main.
 
