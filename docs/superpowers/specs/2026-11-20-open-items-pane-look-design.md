@@ -2,7 +2,7 @@
 
 ## Intent
 
-Asaf finds the Open items pane uncomfortable to use. An item with more than a few short lines is hard to read and looks messy, so the pane does not help him. This change makes one item easy to read in the pane, so that he can read and answer a long ask where it waits.
+Asaf finds the Open items pane uncomfortable to use. An item with more than a few short lines is hard to read and looks messy, so the pane does not help him. This change makes one item easy to read in the pane, so that he can read and answer an item of more than a few lines where it waits.
 
 ### Evidence
 
@@ -11,13 +11,13 @@ Asaf finds the Open items pane uncomfortable to use. An item with more than a fe
 - Saved items with text are 400 to 600 characters long on a typical day, often with steps and commands in one block.
 - Beside the chat (the fullscreen layout that both seats use), the pane already uses the full height. Above the prompt (the main-screen layout), it caps its height at 18 rows.
 - At Asaf's window width (148 columns in the Herdr app), the pane already opens at 45% of the window, the widest that Claude Code allows. The engine's default width is the smallest of 45% of the window, 90 columns, and the window minus 70 columns (read from the Claude Code program, not from a documented contract).
-- A live check in a test pane: the `Markdown` element keeps single line breaks, and text such as `snake_case_name` and `2 * 3 * 4` stays as typed. A plain line right after a numbered list is indented under the last list item.
+- A live check in a test pane: the `Markdown` element keeps single line breaks, and text such as `snake_case_name` and `2 * 3 * 4` stays as typed. A plain line right after a numbered list is indented under the last list item, so older items, which were not written as Markdown, can shift.
 - Earlier research (2026-11-07) ranked four other limits: no view across sessions, slow review of many items, a hidden pane below 144 columns, and no phone path. Asaf said none of these is the main problem now.
 
 ## Goals
 
 1. A long item reads like a chat reply: formatted text, with space between its parts.
-2. The question that Asaf must answer is the first thing he reads after the title.
+2. The ask, in one sentence, is the first thing he reads after the title.
 3. Each option of a decision is a box with its button and one line on what it means. The detail does not repeat the options.
 4. The pane stays as wide as today, and Asaf can change its width.
 5. Claude writes items in this shape on both seats.
@@ -49,7 +49,7 @@ Claude runs this count at the first wrap-up that is at least two weeks after the
 - Fix the Claude Code pane itself (approach 1 below), not a Herdr window or a browser page.
 - Use the Cards style. Asaf chose it after he used a live test pane with both richer styles.
 - The pane is not so wide that the chat gets narrow, and its width is adjustable.
-- The size rule for an item during background work counts only the detail. The question and the option notes are extra, and the limit goes up.
+- The size rule for an item during background work counts only the detail. The ask line and the option notes are extra, and the limit goes up.
 
 ## Approaches
 
@@ -66,9 +66,10 @@ The plan copies the test pane's drawing code before rollout step 3 removes it.
 
 ## Claude's calls
 
-- **New fields.** A `question` field holds the question, so the pane does not guess it from the detail. An `option_notes` list holds one line per option.
-- **Required for decisions.** A new decision must have a `question` and a note for each option. `add_item` refuses a decision without them and says why, so Claude sends the call again. For the other kinds, `question` is optional.
-- **Markdown.** Claude's text (the detail and Claude's replies) goes to the `Markdown` element as written, with no rewrite. Asaf's own replies stay plain text, because he does not type Markdown.
+- **New fields.** An `ask` field holds the ask in one sentence, so the pane does not guess it from the detail. The name is not `question`, because QUESTION is already a kind. An `option_notes` list holds one line per option.
+- **Required for decisions.** A new decision must have an `ask` and a note for each option. `add_item` refuses a decision without them and says why, so Claude sends the call again. For the other kinds, `ask` is optional.
+- **Markdown.** On an item made by 0.3, Claude's text (the detail and Claude's replies) goes to the `Markdown` element. Line breaks and characters are not rewritten; only the link rule below changes text. Asaf's own replies stay plain text, because he does not type Markdown.
+- **Older items.** An item saved before 0.3 keeps today's plain text inside the new frame, so it shows as it does today. 0.3 marks each item it makes, so the pane can tell the two apart.
 - **Links.** In Claude's Markdown, only `https:` links stay links. The pane draws `http:` and `file:` links as plain text, as the `link` field allows only `https:` today.
 - **Focus.** The option box with the keyboard focus, or under the mouse, gets the darker background.
 - **Keys.** The keys stay as they are today: digits for options, `l` Later, `d` Done or Seen, `b` Back. The mockups showed other keys only as an example.
@@ -83,9 +84,9 @@ The plan copies the test pane's drawing code before rollout step 3 removes it.
 From top to bottom:
 
 1. **Header box.** A box with a rounded border holds a kind label (DECISION, QUESTION, ACTION or INFO), the item number `#N`, the age, the "waiting for Claude" mark when it applies, and the title in bold on its own line.
-2. **Question.** A bar and the question in bold, in the kind's color. With no `question`, the line is left out.
-3. **Detail.** The detail as Markdown: lists, bold, inline code and code blocks look as they do in a chat reply. It has no "Claude · age" line, because the header shows the age.
-4. **Thread.** Each later message has its dim head ("You" or "Claude", and the age). Claude's text is Markdown. Asaf's text is plain text.
+2. **Ask line.** A bar and the `ask` text in bold, in the kind's color. With no `ask`, the line is left out.
+3. **Detail.** On a 0.3 item, the detail as Markdown: lists, bold, inline code and code blocks look as they do in a chat reply. On an older item, plain text as today. It has no "Claude · age" line, because the header shows the age.
+4. **Thread.** Each later message has its dim head ("You" or "Claude", and the age). On a 0.3 item, Claude's text is Markdown. Asaf's text, and all text on an older item, is plain text.
 5. **Link and done-when.** They keep their places. The done-when line is plain text at normal brightness.
 6. **Options** (decisions only). One box with a rounded border for each option. The box holds the option's button (`1: label`) and its note below. The recommended option has a green border and "★ recommended" after its label. The box with the focus or under the mouse gets a darker background.
 7. **Buttons and reply field.** Done, Seen, Later, Long answer… and the reply field work as today. The held-answer notice keeps its place.
@@ -101,22 +102,22 @@ The pane keeps the engine's default width. A width that Asaf sets wins and is ke
 
 | Field | Description shown to Claude | Rules |
 |---|---|---|
-| `question` | One sentence: for a decision or a question, what the user answers; for an action, what the user must do; for info, what the user must know. Shown first. | Required for a decision. One line, under 150 characters. Longer text is refused, as an option over 60 characters is refused today. |
+| `ask` | One sentence: for a decision or a QUESTION item, what the user answers; for an action, what the user must do; for info, what the user must know. Shown first. | Required for a decision. One line, under 150 characters. Longer text is refused, as an option over 60 characters is refused today. |
 | `option_notes` | For a decision: one line per option, in the order of `options`, on what the option means for the user. | Required for a decision, refused on the other kinds. One note for each option, counted after the same cleanup as `options`. Each note is one line under 120 characters, not empty. Longer text is refused. |
 
-`reply_item` accepts the same two fields. When it changes `options`, it needs new `option_notes` too. `option_notes` alone is checked against the item's current options. A `question` can change but not be removed. The `reply_item` description lists `question` and `option_notes` among the things it can change.
+`reply_item` accepts the same two fields. When it changes `options`, it needs new `option_notes` too. `option_notes` alone is checked against the item's current options. An `ask` can change but not be removed. The `reply_item` description lists `ask` and `option_notes` among the things it can change.
 
 The `detail` description becomes: what the user needs to know and why, in about 5 sentences or a short list. Markdown shows formatted. The options are not repeated here.
 
-The size line in "When to add an item" becomes: "While background agents, shell commands or monitors run, add an item for a short ask: a detail of about 5 sentences or a short list. The question and the option notes do not count. A longer ask waits for the chat recap."
+The size line in "When to add an item" becomes: "While background agents, shell commands or monitors run, add an item for a short ask: a detail of about 5 sentences or a short list. The `ask` line and the option notes do not count. A longer ask waits for the chat recap."
 
-"How to write an item" changes "An imperative title; the rest goes in the detail" to: "An imperative title, the question in `question`, a note for each option, and the rest in a short detail." Steering stays in the tool descriptions only, as in 0.2.1, so it reaches both seats.
+"How to write an item" changes "An imperative title; the rest goes in the detail" to: "An imperative title, the ask in `ask`, a note for each option, and the rest in a short detail." Steering stays in the tool descriptions only, as in 0.2.1, so it reaches both seats.
 
-What Claude reads back from `list_items`, `take_items` and a leftover Take shows the question and each option with its note. After a compaction or a hand-off, Claude can still read them.
+What Claude reads back from `list_items`, `take_items` and a leftover Take shows the `ask` and each option with its note. After a compaction or a hand-off, Claude can still read them.
 
 ### Saved items
 
-A saved item gets two optional fields, `question` and `optionNotes`. The check that reads saved items accepts both as optional typed fields, and closed items drop them as they drop options today. An item saved before 0.3 has neither field and shows without the question line and without notes. A hand-off copies both fields to the new session.
+A saved item gets three optional fields: `ask`, `optionNotes`, and the mark that 0.3 made it. The check that reads saved items accepts all three as optional typed fields, and closed items drop `ask` and `optionNotes` as they drop options today. An item saved before 0.3 has none of them and shows as plain text, without the ask line and without notes. A hand-off copies all three fields to the new session.
 
 ## Constraints
 
@@ -129,15 +130,15 @@ A saved item gets two optional fields, `question` and `optionNotes`. The check t
 
 ## Rollout
 
-1. Release open-items 0.3.0 and update it on both seats at the same time. A session still on 0.2.3 shows a 0.3 item without its question and notes. This cost is accepted.
-2. Live check in a fresh session on each seat: a decision with a question and notes, a long action with a code block, a question item, and an item saved before 0.3 that holds `*`, `_`, `<...>` and a line that starts with `1.`. Check the pane beside the chat and above the prompt. The phone is not checked, because the pane does not fit its screen.
+1. Release open-items 0.3.0 and update it on both seats at the same time. A session still on 0.2.3 shows a 0.3 item without its ask line and notes. This cost is accepted.
+2. Live check in a fresh session on each seat: a decision with an ask and notes, a long action with a code block, a QUESTION item, and an item saved before 0.3 that holds `*`, `_`, `<...>`, a line that starts with `1.` and a line that starts with `# `. The older item must look as it does today. Check the pane beside the chat and above the prompt. The phone is not checked, because the pane does not fit its screen.
 3. Remove the throwaway test pane and stop the mockup server.
 
 ## Left to the builder
 
 - The row count above the prompt: each box adds two border rows, and Markdown can add rows. An estimate that is too small is acceptable, because the body scrolls.
 - The color of each kind, on a dark and a light theme.
-- The tests: the new fields and their refusals, `list_items` output with the question and notes, the old-item case, the hand-off copy, the link rule, and the focus background.
+- The tests: the new fields and their refusals, `list_items` output with the ask and notes, the older-item case, the hand-off copy, the link rule, and the focus background.
 
 ## Skipped
 
