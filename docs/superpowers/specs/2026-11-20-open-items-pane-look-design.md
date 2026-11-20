@@ -37,7 +37,7 @@ Asaf finds the Open items pane uncomfortable to use. An item with more than a fe
 ## Success criterion
 
 1. For two weeks after the release, Asaf does not ask to move an item to the chat because it is hard to read.
-2. Of the decision items written after the release, at least 9 of 10 have a question and a note for each option. The store holds the count.
+2. Of the decision items written after the release, at least 9 of 10 have a question and a note for each option. The count comes from the `add_item` calls in the session transcripts of both seats. Nothing new is built for the count.
 
 ## Decided by Asaf (2026-11-15 and 2026-11-20)
 
@@ -58,7 +58,8 @@ Three looks were tried for approach 1: plain formatted text, Cards, and Clean (o
 
 - A new optional `question` field holds the question, so the pane does not guess it from the detail.
 - A new optional `option_notes` list holds one line per option, in the same order as `options`.
-- The detail and every reply in the thread are drawn as Markdown at normal brightness. Only metadata (age, the head of a reply, the hint) stays dim.
+- Claude's text (the detail and Claude's replies) is drawn as Markdown at normal brightness. Asaf's own replies stay plain text, because he does not type Markdown. Only metadata (age, the head of a reply, the hint) stays dim.
+- Single line breaks stay. If the Markdown element joins single lines into one paragraph, the pane keeps each line break before it draws the text. This keeps items saved before 0.3 as they look today.
 - The keys stay as they are today: digits for options, `l` Later, `d` Done or Seen, `b` Back. The mockups showed other keys only as an example.
 - Above the prompt, the 18-row cap stays, because that layout shares the screen with the chat. The body scrolls.
 - The pane asks to open at about 40% of the window width beside the chat.
@@ -72,7 +73,7 @@ From top to bottom:
 1. **Header box.** A box with a rounded border holds a kind label with a colored background (DECISION, QUESTION, ACTION or INFO), the age, and the title in bold on its own line.
 2. **Question.** A bar and the question in bold, in the kind's color. With no `question`, the line is left out.
 3. **Detail.** The detail, drawn as Markdown: lists, bold, inline code and code blocks look as they do in a chat reply.
-4. **Thread.** Each later message, with its head ("You", "Claude", the age) dim and the text as Markdown.
+4. **Thread.** Each later message, with its head ("You", "Claude", the age) dim. Claude's text is Markdown, and Asaf's text is plain text, both at normal brightness.
 5. **Options** (decisions only). One box with a rounded border for each option. The box holds the option's button (`1: label`) and, when given, its note below. The recommended option has a green border and "★ recommended" after its label. The box under the pointer gets a darker background.
 6. **Buttons and reply field.** Done, Seen, Later, Long answer… and the reply field work as today.
 7. **Foot.** The hint, Back and Hide, as today.
@@ -114,7 +115,7 @@ A saved item gets two optional fields, `question` and `optionNotes`. An item sav
 ## Rollout
 
 1. Release open-items 0.3.0 and update it on both seats.
-2. Live check in a fresh session on each seat: a decision with a question and notes, a long action with a code block, and a question item. Check the pane beside the chat and above the prompt.
+2. Live check in a fresh session on each seat: a decision with a question and notes, a long action with a code block, a question item, and an item saved before 0.3 with single line breaks. Check the pane beside the chat and above the prompt.
 3. Remove the throwaway test pane and stop the mockup server.
 
 ## Left to the builder
