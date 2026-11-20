@@ -25,7 +25,7 @@ Asaf finds the Open items pane uncomfortable to use. An item with more than a fe
 - The list screen keeps its look.
 - The phone, the Herdr app and a browser page are out of scope.
 - A view across sessions and a review mode for many items are out of scope.
-- The rules on when to add an item stay as they are.
+- The rules on when to add an item stay as they are, except the size line below.
 
 ## Anti-goals: a failure even if it works
 
@@ -45,6 +45,7 @@ Asaf finds the Open items pane uncomfortable to use. An item with more than a fe
 - Fix the Claude Code pane itself (approach 1 below), not a Herdr window or a browser page.
 - Use the Cards style. Asaf chose it after he used a live test pane with both richer styles.
 - The pane is a bit wider than today, but not so wide that the chat gets narrow, and its width is adjustable.
+- The size rule for an item during background work counts only the detail. The question and the option notes are extra, and the limit goes up.
 
 ## Approaches
 
@@ -63,6 +64,7 @@ Three looks were tried for approach 1: plain formatted text, Cards, and Clean (o
 - The keys stay as they are today: digits for options, `l` Later, `d` Done or Seen, `b` Back. The mockups showed other keys only as an example.
 - Above the prompt, the 18-row cap stays, because that layout shares the screen with the chat. The body scrolls.
 - The pane asks to open at about 40% of the window width beside the chat.
+- The raised size limit is a detail of about 5 sentences or a short list (it was about 3 sentences with the options).
 
 ## The design
 
@@ -96,6 +98,8 @@ When the pane opens beside the chat, it asks for about 40% of the window. The en
 `reply_item` accepts the same two fields. When `reply_item` changes `options` without new `option_notes`, the old notes are dropped. When `option_notes` and `options` differ in length, the tool refuses and says why, so Claude can send the call again.
 
 The `detail` description changes to: what the user needs to know and why, in two or three short sentences or a short list. Markdown shows formatted. The options are not repeated here.
+
+The size line in "When to add an item" becomes: "While background agents, shell commands or monitors run, add an item for a short ask: a detail of about 5 sentences or a short list. The question and the option notes do not count. A longer ask waits for the chat recap."
 
 "How to write an item" in `add_item` gets one rule: "Put the question in `question`, keep the detail short, and give each option a note." Steering stays in the tool descriptions only, as in 0.2.1, so it reaches both seats.
 
