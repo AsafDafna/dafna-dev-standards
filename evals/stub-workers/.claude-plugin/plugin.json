@@ -1,0 +1,5 @@
+{
+  "name": "stub-workers",
+  "description": "Eval helper: records each Agent call in .eval/agent-calls.jsonl and turns it into a haiku task with a fixed reply",
+  "version": "0.1.0"
+}
