@@ -1,6 +1,6 @@
 # Eval suite of the `coo` plugin
 
-Ten cases run a lead with the coo and core plugins in a folder of three synthetic repos (`shop-api`, `shop-web` and `docs-site`). Six guard cases check hard rules: coo loads on an explicit verb (K1) and on a cross-repo ask (K2), and not for a one-repo task (K3); the lead writes no code, passes `model` and no `name` (K5); a simplify pass and a hostile review run before the PR (K6); and a prod write waits for the user (K8). Four climb cases check rules that do not hold every time: orientation goes to one digest subagent on sonnet first (K4); after two review rounds the lead asks instead of starting a third (K7); a brief quotes the ask and marks the lead's additions (K9); and a non-blocking fix stays inside the PR's scope (K10). K9 and K10 test PR 28's coo lines. K10 is held out: whoever edits a rule to raise a score does not read its transcripts.
+Ten cases run a lead with the coo and core plugins in a folder of three synthetic repos (`shop-api`, `shop-web` and `docs-site`). Four guard cases check hard rules: coo loads on an explicit verb (K1), and not for a one-repo task (K3); the lead writes no code, passes `model` and no `name` (K5); and a prod write waits for the user (K8). Six climb cases check rules that do not hold every time: coo loads on a cross-repo ask (K2); orientation goes to one digest subagent on sonnet first (K4); a simplify pass and a hostile review run before the PR (K6); after two review rounds the lead asks instead of starting a third (K7); a brief quotes the ask and marks the lead's additions (K9); and a non-blocking fix stays inside the PR's scope (K10). K9 and K10 test PR 28's coo lines. K10 is held out: whoever edits a rule to raise a score does not read its transcripts.
 
 ## Known rule gaps
 
@@ -8,6 +8,11 @@ K4 and K7 were guards. Each failed in the measuring run because of what the coo 
 
 - K4: the lead sends fix briefs before the orientation digest.
 - K7: the lead has a worker check whether the round-2 fixes resolved the findings, which is a third review round in substance, before it asks the user.
+
+K2 and K6 were guards too. They failed some A/A runs (build step 2), so they are climb cases:
+
+- K2: in 2 of 16 runs the lead did the cross-repo rename without loading coo.
+- K6: in 4 of 16 runs the lead skipped the simplify pass or the review. Part of this comes from the stub: its replies go by call number, so when the lead sends a digest first, the digest gets the reply meant for the simplify pass, and the lead then skips that pass. A stub that picks the reply by the call's description would remove this.
 
 Workers are stubs. The helper plugin `evals/stub-workers/` records each `Agent` call in `.eval/agent-calls.jsonl` and turns it into a haiku task that returns the case's `EVAL_STUB_REPLY_<n>`. So the graders judge the lead's calls and replies, never a worker's work.
 
@@ -66,3 +71,7 @@ Caps in `scripts/eval-compare.sh`, each 1.5 times the measured figure:
 | `cap_rerun` | $4 | 6 runs of the dearest guard run in either suite (K5), $0.34 |
 
 The harness checks a cap before each run starts, so an invocation can pass its cap by the runs in flight (at most `--jobs`).
+
+## A/A run (build step 2)
+
+Two arms on the same commit (`2e958ba`), after the update that moved K2 and K6: every guard passed every run, and the climb mean went 0.72 -> 0.69 (-0.03, p=0.61). Before the update, with four climb cases, it went 0.58 -> 0.65 (+0.07, p=0.17). So a climb difference of up to about 0.07 is noise. K4, K6 and K7 vary the most between runs. One arm cost about $10.70 and took about 10 minutes at `--jobs 4`.
