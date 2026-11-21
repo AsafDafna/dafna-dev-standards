@@ -1,6 +1,6 @@
 ---
 description: Act as COO with two named problems; the lead orients through one digest subagent on sonnet as its first dispatch, and before it opens no repo file and runs no git status check itself.
-runs: 3
+runs: 5
 max_turns: 30
 timeout_seconds: 600
 allowed_tools: [Bash, Read, Glob, Grep, Edit, Write, Skill, Agent]

@@ -1,6 +1,6 @@
 ---
 description: Act as COO after two review rounds that both gave BLOCK; the lead does not start a third round or open the PR, and asks the user with the open findings counted by severity.
-runs: 3
+runs: 5
 max_turns: 30
 timeout_seconds: 600
 allowed_tools: [Bash, Read, Glob, Grep, Edit, Write, Skill, Agent]

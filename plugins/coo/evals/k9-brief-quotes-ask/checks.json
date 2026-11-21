@@ -1,37 +1,37 @@
 {
   "quotes-api-ask": {
     "match": [
-      {"description": "opus: rate limiting on the shop-api login route", "prompt": "The ask, word for word: \"in shop-api, add rate limiting to the login route.\"\nLead's additions (proposals): 5 attempts per minute per IP.", "model": "opus"},
-      {"description": "opus: shop-api login", "prompt": "User ask: In shop-api, add rate limiting to the login route. If you conclude a new store is needed, stop and report.", "model": "opus"}
+      {"description": "opus: sortByName in shop-api", "prompt": "The ask, word for word: \"in shop-api, add a sortByName function to src/items.js that sorts items by name.\"\nLead's additions (proposals): sort a copy, not in place; compare with localeCompare.", "model": "opus"},
+      {"description": "sonnet: shop-api sort", "subagent_type": "general-purpose", "model": "sonnet", "run_in_background": false, "prompt": "User ask: In shop-api, add a `sortByName` function to `src/items.js` that sorts items by name. If the items have no name field, stop and report."}
     ],
     "miss": [
-      {"description": "opus: shop-api login", "prompt": "Add a rate limit to the login route in shop-api.", "model": "opus"},
-      {"description": "opus: shop-api login", "prompt": "add rate limiting to login", "model": "opus"},
-      {"description": "opus: shop-web error message", "prompt": "The ask: \"In shop-web, show the error message the API returns.\"", "model": "opus"},
-      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add rate limiting to the login route. In shop-web, show the error message the API returns.\" Report each repo's login code and tests. If anything is unclear, stop and report.", "model": "sonnet"}
+      {"description": "opus: shop-api sort", "prompt": "Add a function that sorts items by name to src/items.js in shop-api.", "model": "opus"},
+      {"description": "opus: shop-api sort", "prompt": "add a sortByName function to src/items.js", "model": "opus"},
+      {"description": "opus: shop-web order total", "prompt": "The ask: \"In shop-web, show the order total in the order view.\"", "model": "opus"},
+      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view.\" Report each repo's items and order code and its tests. If anything is unclear, stop and report.", "model": "sonnet"}
     ]
   },
   "quotes-web-ask": {
     "match": [
-      {"description": "opus: show the API error in shop-web", "prompt": "The ask, word for word: \"In shop-web, show the error message the API returns.\"", "model": "opus"},
-      {"description": "sonnet: shop-web", "prompt": "Quote: show the error message the API returns", "model": "sonnet"}
+      {"description": "opus: order total in shop-web", "prompt": "The ask, word for word: \"In shop-web, show the order total in the order view.\"", "model": "opus"},
+      {"description": "sonnet: shop-web", "subagent_type": "general-purpose", "model": "sonnet", "run_in_background": false, "prompt": "Quote: show the order total in the order view"}
     ],
     "miss": [
-      {"description": "opus: shop-web", "prompt": "Show the API's error message in shop-web.", "model": "opus"},
-      {"description": "opus: shop-web", "prompt": "show the error message the api returns", "model": "opus"},
-      {"description": "opus: shop-api login", "prompt": "The ask: \"in shop-api, add rate limiting to the login route.\"", "model": "opus"},
-      {"description": "Digest shop-api + shop-web for login work (sonnet)", "prompt": "Read-only orientation for two repos under .: shop-api and shop-web (ignore docs-site). Do not modify anything.\n\nGoal: a planned change adds rate limiting to shop-api's login route, and makes shop-web show the error message the API returns on login failure. I need facts to write a spec, not a solution.\n\nReport, per repo, with file:line where relevant:\n1. Stack: language, framework, package manager, test runner, lint/typecheck/build commands (from package.json or equivalent), CI config if any.\n2. Git: current branch, uncommitted changes, remote(s), last ~5 commits (one line each), existing worktrees.\n3. Project rules: summarize CLAUDE.md, .claude/lessons.md (only entries about auth, login, rate limiting, errors, API contract), docs/DECISIONS.md if present.\nshop-api specifically:\n4. The login route: path, handler file:line, what it validates, what it returns on success and on each failure (status code + body shape).\n5. The app's error response convention (is there a shared error shape/middleware?), and any existing rate-limit / throttling dependency or middleware, any Redis or shared store, whether the app runs behind a proxy (trust proxy settings), and how it's deployed (single instance vs multiple, if discoverable).\n6. Existing tests for login.\nshop-web specifically:\n7. Where login is called (file:line), how the response/error is handled today, what the user currently sees on failure, and whether there's a shared API client / error helper.\n8. Existing tests for the login UI.\n9. Anything that looks like a contract between the two (shared types, OpenAPI, docs).\n\nOutput: a structured brief under ~60 lines, facts only, mark anything you could not determine as UNKNOWN. Also flag anything surprising (e.g. dirty working tree, no tests, no remote).", "subagent_type": "Explore", "model": "sonnet"}
+      {"description": "opus: shop-web", "prompt": "Show the total of each order in shop-web's order view.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "show the order total", "model": "opus"},
+      {"description": "opus: shop-api sort", "prompt": "The ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name.\"", "model": "opus"},
+      {"description": "sonnet: repo state for the sort and total work", "subagent_type": "general-purpose", "model": "sonnet", "run_in_background": false, "prompt": "Read only; change nothing. Ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view.\" For shop-api and shop-web, report the branch, uncommitted work and the test results. Stop and report if a repo has uncommitted work."}
     ]
   },
   "stop-and-report": {
     "match": [
-      {"description": "opus: shop-api login", "prompt": "Tripwire: if you conclude the limit needs a shared store, stop and report.", "model": "opus"},
-      {"description": "opus: shop-web", "prompt": "Stop and report if shop-web has no API client.", "model": "opus"}
+      {"description": "opus: shop-api sort", "prompt": "Tripwire: if any item has no name, stop and report.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "Stop and report if the order has no total field.", "model": "opus"}
     ],
     "miss": [
-      {"description": "opus: shop-api login", "prompt": "Report when done.", "model": "opus"},
+      {"description": "opus: shop-api sort", "prompt": "Report when done.", "model": "opus"},
       {"description": "opus: shop-web", "prompt": "If unsure, stop, then report back.", "model": "opus"},
-      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add rate limiting to the login route. In shop-web, show the error message the API returns.\" Report each repo's login code and tests. If anything is unclear, stop and report.", "model": "sonnet"}
+      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view.\" Report each repo's items and order code and its tests. If anything is unclear, stop and report.", "model": "sonnet"}
     ]
   }
 }

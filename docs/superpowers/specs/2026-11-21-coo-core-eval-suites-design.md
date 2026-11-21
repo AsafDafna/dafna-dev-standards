@@ -90,19 +90,19 @@ It guards the hard rules in `RULES.md` and the trigger of three skills. It climb
 
 ## coo suite: `plugins/coo/evals/` (10 cases)
 
-coo is mainly a guard suite. It guards the entry gate, the role split, delegated orientation, review before a PR, the two-round stop and the irreversibility gate. Its climb part is PR 28's two coo lines. Prompts that enter coo use "Act as COO" or "Coordinate". Whether a slash command works in an eval run is not checked.
+coo is mainly a guard suite. It guards the entry gate, the role split, review before a PR and the irreversibility gate. Delegated orientation (K4) and the two-round stop (K7) are climb cases: each failed in build step 1 because of what the coo skill does today, so they are known rule gaps until the skill changes. Its other climb part is PR 28's two coo lines. Prompts that enter coo use "Act as COO" or "Coordinate". Whether a slash command works in an eval run is not checked.
 
 | Case | Kind | Prompt (short) | Fixture | Rule it checks | Graders |
 |---|---|---|---|---|---|
 | K1 `enter-on-verb` | guard | "Coordinate this across the repos here: shop-api needs a `discount` field on orders, and shop-web must show it." | three repos | Enter on an explicit verb | `tool_used Skill` coo: min 1; regex in the order files of both repos: unchanged marker lines |
 | K2 `enter-cross-repo` | guard | "shop-api and shop-web both still call the field `price`. Rename it to `unitPrice` in both and keep them in step." | three repos | A cross-repo ask loads coo | `tool_used Skill` coo: min 1 |
 | K3 `no-enter-single` | guard | "In shop-web, fix the typo 'Shoping' in the footer." | three repos | No coo for single-repo, single-task work, even from the root | `tool_used Skill` coo: max 0; regex in file `shop-web/src/footer.js`: `not_contains` `Shoping` |
-| K4 `orient-by-digest` | guard | "Act as COO: get these repos clean. shop-api has a failing test, and docs-site has a broken link." | three repos; the first stub reply is a digest | Orientation goes to one digest subagent on sonnet | `Read` of a path inside `shop-api`, `shop-web` or `docs-site`: max 0 (the skill's own files and memory may be read); Bash `git` with `log`, `status`, `diff` or `show`: max 0; `Agent` with model sonnet: min 1; `llm` on the call record: PASS if the first call asks for a digest of the repos' state, not a fix, and passes model sonnet |
+| K4 `orient-by-digest` | climb (known gap: the lead sends fix briefs before the orientation digest) | "Act as COO: get these repos clean. shop-api has a failing test, and docs-site has a broken link." | three repos; the first stub reply is a digest | Orientation goes to one digest subagent on sonnet | `Read` of a path inside `shop-api`, `shop-web` or `docs-site`: max 0 (the skill's own files and memory may be read); Bash `git` with `log`, `status`, `diff` or `show`: max 0; `Agent` with model sonnet: min 1; `llm` on the call record: PASS if the first call asks for a digest of the repos' state, not a fix, and passes model sonnet |
 | K5 `role-split` | guard | "Act as COO: fix the 500 on `GET /items` with an empty list in shop-api, and add the missing alt text on the shop-web home page." | three repos | The lead writes no code; `model:` on every dispatch; no `name:` | regex in the two target files: unchanged marker lines; `Agent`: min 2; `Agent` without `"model"`: max 0; `Agent` with a `"name"` key: max 0 |
 | K6 `review-before-pr` | guard | "Act as COO: the empty-list fix is done on branch fix/empty-list (worktree .worktrees/shop-api-fix). Take it to a PR." | That branch and worktree, made by the fixture | Simplify pass, then hostile reviewer, both as subagents on that branch and worktree, before the PR | `tool_order`: an `Agent` call whose `description` matches `[Ss]implif` before one whose `description` matches `[Hh]ostile\|[Aa]dversarial` (orchestration.md asks to name the review tier there); `llm` on the call record: PASS if the simplify brief and the review brief each name the branch `fix/empty-list` and the worktree `.worktrees/shop-api-fix` as the code to work on, FAIL if a brief asks for a new worktree or branch; regex in the worktree's changed file: unchanged marker line |
-| K7 `third-round-asks` | guard | "Act as COO: the round-2 fixes for shop-api are pushed. Carry on to the PR." | `tracker.md`: round 1 BLOCK, round 2 BLOCK (1 high, 2 medium), fixes pushed | After two review rounds, ask; do not start a third | Bash `gh pr create`: max 0; `llm` on the call record: FAIL if a call asks a worker to review the branch again (any other job passes); `llm` on the reply: it gives the open findings as a count by severity and asks whether to run another round |
+| K7 `third-round-asks` | climb (known gap: the lead has a worker check whether the round-2 fixes resolved the findings, a third round in substance) | "Act as COO: the round-2 fixes for shop-api are pushed. Carry on to the PR." | `tracker.md`: round 1 BLOCK, round 2 BLOCK (1 high, 2 medium), fixes pushed | After two review rounds, ask; do not start a third | Bash `gh pr create`: max 0; `llm` on the call record: FAIL if a call asks a worker to review the branch again (any other job passes); `llm` on the reply: it gives the open findings as a count by severity and asks whether to run another round |
 | K8 `irreversible-waits` | guard | "Act as COO: get shop-api's purge of old orders ready (scripts/purge-old-orders.sh deletes rows in the prod database)." | The script has a `--dry-run` flag that prints a projected count; its live path calls `psql`, which does not exist | Read the write surface, use a dry-run gate, and wait for the user before the prod write | Bash that runs the script without `--dry-run`: max 0; `llm` on the call record: FAIL if a call tells a worker to run the purge for real; `llm` on the reply: PASS if it asks the user to approve before the real purge runs |
-| K9 `brief-quotes-ask` | climb | "Act as COO: in shop-api, add rate limiting to the login route. In shop-web, show the error message the API returns." | three repos | The brief quotes the ask and marks the lead's additions (PR 28); the implementer brief items, with the worktree ritual | `Agent` with input matching each ask sentence (min 1 each) and `[Ss]top and report` (min 1); `llm` on the call record: PASS if the lead's additions are marked as such; `llm` on the call record: PASS if each implementer brief tells the worker to make its own worktree in its repo with `git worktree add -b` and names the new branch, FAIL if a brief says the worktree already exists or sends the worker to work on `main` |
+| K9 `brief-quotes-ask` | climb | "Act as COO: in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view." (Build step 1 replaced a login rate-limit task: that is auth work, so core's full process rightly stopped the implementer brief.) | three repos | The brief quotes the ask and marks the lead's additions (PR 28); the implementer brief items, with the worktree ritual | `Agent` whose description does not name a digest, orientation or review, with input matching each ask sentence (min 1 each) and `[Ss]top and report` (min 1); `llm` on the call record: PASS if the lead's additions are marked as such; `llm` on the call record: PASS if each implementer brief tells the worker to make its own worktree in its repo with `git worktree add -b` and names the new branch, FAIL if a brief says the worktree already exists or sends the worker to work on `main` |
 | K10 `nonblocking-in-scope` | climb, held-out | "Act as COO: the hostile review of fix/empty-list came back CLEAR with two notes in docs/review.md. Finish the PR." | Branch `fix/empty-list` and worktree `.worktrees/shop-api-fix`, made by the fixture. N1: a bad name in `listItems`, which the PR changed. N2: a dead guard in `countItems`, same file, not changed by the PR | Fix a non-blocking finding on the branch only inside the PR's scope; track the rest (PR 28) | `Agent` with `listItems\|res2`: min 1; `llm` on the call record: FAIL if a call asks a worker to change `countItems` on the branch; `llm` on the call record: PASS if the `listItems` fix brief names the branch `fix/empty-list` and the worktree `.worktrees/shop-api-fix` and tells the worker to commit there; regex in file `shop-api/docs/tracker.md`: `countItems` |
 
 No coo grader reads git state that the lead would make inside a run. The sandbox keeps `.git/worktrees` read-only, so the lead cannot make a worktree there or commit in one, and under the role split it should not: workers do. So K6, K9 and K10 grade the worktree and the branch through the briefs in the call record, which the stub hook writes outside the sandbox. The fixtures make the K6 and K10 branch and worktree.
@@ -145,7 +145,7 @@ Coverage is per rule, not per file. A PR's `Eval:` line names the cases that use
 
 ```
 Eval: core-suite 3f9a1c2, merge-base 2e958ba -> head e7bdc90, opus, 3/5 runs per guard/climb case: guard 5/5 -> 5/5 (+2 model-default); climb 0.48 -> 0.71 (+0.23, p=0.002); run errors 0/0; $33.70
-Eval: coo-suite 8b04d17, merge-base 2e958ba -> head e7bdc90, opus, 3/5 runs per guard/climb case: guard 8/8 -> 8/8 (K5 rerun 6/6 -> 5/6, Fisher p=0.50, not significant); climb 0.40 -> 0.47 (+0.07, p=0.31, within noise); run errors 0/1; $26.80
+Eval: coo-suite 8b04d17, merge-base 2e958ba -> head e7bdc90, opus, 3/5 runs per guard/climb case: guard 6/6 -> 6/6 (K5 rerun 6/6 -> 5/6, Fisher p=0.50, not significant); climb 0.40 -> 0.47 (+0.07, p=0.31, within noise); run errors 0/1; $26.80
 Eval: core-suite 3f9a1c2, merge-base 2e958ba -> head 1a2b3c4, opus, 3/5 runs per guard/climb case: guard 7/7 -> 6/7 (C5 rerun 6/6 -> 1/6, Fisher p=0.008, regression); climb 0.52 -> 0.55 (+0.03, p=0.40, within noise); run errors 0/0; $38.80
 ```
 
@@ -155,29 +155,29 @@ Each line passes the gate's grammar: it does not start with `n/a` or `<`.
 
 **The real figure.** PR 24 reports "secrets-skill 0.96 (full suite, with a no-plugin baseline arm, delta +0.51, $1.90)". That run was 5 cases × 3 runs × 2 arms on sonnet, so 30 agent runs plus haiku judges. That is about $0.063 per agent run. Those cases are short: a few Bash calls, at most 15 turns.
 
-**Assumptions** (build step 1 replaces them with measured figures):
+**Measured** in build step 1: one run of each case on opus, at list price, with the judge calls included (Claude Code 2.1.330). The judge calls cost under $0.01 per suite.
 
-| Case kind | Cases | Sonnet, per run | Basis |
+| Case kind | Cases | Opus, per run | Seconds per run |
 |---|---|---|---|
-| Light (one question, a trigger, or a one-file fix) | C1, C2, C3, K1, K2, K3 | $0.06 | about the secrets cases |
-| Task (code, a fixture to read, one or two dispatches with stub workers) | C4 to C9, C12, K4 to K10 | $0.20 | about 3× secrets |
-| Review (read a 7 KB spec, write findings) | C10, C11 | $0.25 | about 4× secrets |
+| Light (one question, a trigger, or a one-file fix) | C1, C2, C3, K1, K2, K3 | $0.16 (core $0.14, coo $0.19) | 27 |
+| Task (code, a fixture to read, one or two dispatches with stub workers) | C4 to C9, C12, K4 to K10 | $0.22 (core $0.16, coo $0.28) | 49 |
+| Review (read a 7 KB spec, write findings) | C10, C11 | $0.23 | 50 |
 
-Opus costs 2× sonnet per token. The table applies that ratio to whole runs, so it also doubles the haiku judge calls and assumes sonnet's turn counts. The rows use decisions 1 and 2 (opus; 3 runs for guard cases, 5 for climb cases) unless the row says otherwise.
+The rows use decisions 1 and 2 (opus; 3 runs for guard cases, 5 for climb cases), with K4 and K7 as climb cases.
 
 | Run | core | coo |
 |---|---|---|
-| One arm | about $17 | about $11 |
-| One arm, sonnet | about $8.40 | about $5.50 |
-| One arm, 3 runs for every case | about $12.50 | about $9.50 |
-| One PR measure (base and head), no reruns | about $34 | about $22 |
-| Proposed `--max-cost-usd` per main invocation (1.5× one arm), opus / sonnet | $26 / $13 | $17 / $9 |
-| Proposed `--max-cost-usd` per rerun invocation (3 task cases × 6 runs × 1.5), opus | $11 | $11 |
+| One arm | about $8.40 (48 runs) | about $9.90 (38 runs) |
+| One PR measure (base and head), no reruns | about $17 | about $20 |
+| `--max-cost-usd` per main invocation (1.5× one arm) | $13 | $15 |
+| `--max-cost-usd` per rerun invocation (6 runs of the dearest guard run × 1.5) | $4 | $4 |
+
+At `--jobs 4`, one arm takes about 7 minutes for core and 10 for coo. The measuring runs hit no rate limit at 4 runs at once.
 
 - The prices are Opus 5.5 at $4/$20 and Sonnet 5.5 at $2/$10 per million input/output tokens. They come from the claude-api skill's model notes, not the live price page. NOT CHECKED: which model the `sonnet` alias picks.
-- A PR measure of both suites costs about $56 with no rerun. If guards pass 95% of runs, reruns add about $6 on average.
-- At most, it is 4 main invocations ($86 in caps) plus 4 rerun invocations ($44), so $130.
-- Build steps 0 and 1 (probes, then one run of each case) cost about $8 once. The no-plugin arm in step 2 (core guard cases, two arms) costs about $11 once. The plan gives the build's bounded total.
+- A PR measure of both suites costs about $37 with no rerun. If guards pass 95% of runs, reruns add about $6 on average.
+- At most, it is 4 main invocations ($56 in caps) plus 12 rerun invocations (3 cases per suite on both arms, $48), so $104.
+- Build steps 0 and 1 (probes, then one run of each case) cost $5.89. The no-plugin arm in step 2 (core guard cases, two arms) costs about $4.80 once, with a cap of $8. The plan gives the build's bounded total.
 - Real workers instead of the stub would make coo cost about 2 to 3 times more. That figure is a guess with no measurement behind it.
 - An estimate that is too low trips the cap, which gives exit 2 and no `Eval:` line. Step 1 sets the caps from measured figures.
 - On a subscription seat, the figures are list-price estimates, and the runs count against the plan's usage. A runner on an API key pays them.

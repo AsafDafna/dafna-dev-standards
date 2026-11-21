@@ -6,7 +6,7 @@
 set -u
 
 cap_main_core=13
-cap_main_coo=14
+cap_main_coo=15
 cap_rerun=4
 cap_noplugin=8
 

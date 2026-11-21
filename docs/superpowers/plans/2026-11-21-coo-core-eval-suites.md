@@ -207,7 +207,7 @@ scripts/eval-compare.sh <core|coo> --aa <commit> [--suite-ref <ref>] [--update <
 scripts/eval-compare.sh core --no-plugin <commit> [--suite-ref <ref>] [--jobs <n>]
 ```
 - **Steps.** These are the spec's run-script steps 1 to 6. The script calls `${CLAUDE_BIN:-claude}`. `--suite-ref` defaults to `origin/main`, and `--jobs` passes `-j` (default 1).
-- **Caps.** Constants at the top: `cap_main_core=26`, `cap_main_coo=17`, `cap_rerun=4` and `cap_noplugin=17`. Task 14 resets them.
+- **Caps.** Constants at the top: `cap_main_core=13`, `cap_main_coo=15`, `cap_rerun=4` and `cap_noplugin=8`, from Task 14's measured figures.
 - **Every call** is `${CLAUDE_BIN:-claude} --settings <results>/run-settings.json plugin eval <tree> --eval-dir plugins/<suite>/evals --scaffold --allow-tools Bash Edit Write --trust-plugin --no-publish --threshold 0 --model opus --ablation none --max-cost-usd <cap> --json --report --output-dir`. The target is the tree's root, never `<tree>/plugins/<suite>` (Global Constraints, `plugins`). The script writes the run settings file once (Global Constraints), with `<results>` as the run dir.
 - **No-plugin mode.** It copies only the `guard` cases. It passes `--ablation with-without --disallow-tools Agent` at `cap_noplugin`, and prints the `no-plugin` list. It refuses `coo`.
 - **Env.** In its own environment, unset `CLAUDE_EFFORT` and every `ANTHROPIC_*` and `CLAUDE_CODE_*` variable except the six that the run settings rule keeps. The run settings file blanks the same names where the user settings set them, so no call relies on `env -u` alone. Write the names (never the values), from both places, to `meta.txt`.
@@ -277,13 +277,13 @@ A fix after the A/A run would change case hashes and cost A/A reruns, so the rev
 
 ### Task 16: A/A run and no-plugin arm, build step 2 (opus). NEEDS THE LEAD'S GO
 
-Caps (spec figures; Task 14 may replace them):
-- **First A/A run:** arms $26 × 2 (core) and $17 × 2 (coo), up to 3 Fisher reruns per suite on both arms at $4, and the no-plugin arm at $17. Expected about $77; at most $151.
-- **The one update:** at most 4 cases per suite, on 2 arms, at $4. Expected about $10; at most $64.
+Caps (Task 14's measured figures: one arm costs about $8.40 for core and $9.90 for coo, and the no-plugin arm about $4.80):
+- **First A/A run:** arms $13 × 2 (core) and $15 × 2 (coo), up to 3 Fisher reruns per suite on both arms at $4, and the no-plugin arm at $8. Expected about $44; at most $112. About 35 minutes at `--jobs 4`.
+- **The one update:** at most 4 cases per suite, on 2 arms, at $4. Expected about $5; at most $64.
 
-- [ ] `S=$(git -C <wt> rev-parse HEAD)`. Run `<wt>/scripts/eval-compare.sh core --aa 2e958ba --suite-ref "$S"`, the same for `coo`, then `<wt>/scripts/eval-compare.sh core --no-plugin 2e958ba --suite-ref "$S"`. The script targets each tree's root and passes the run settings file on every call. So every arm, the no-plugin arm too, gets the same blanked variables and, on macOS, the sandbox git, because they come from the call and not from a plugin.
+- [ ] `S=$(git -C <wt> rev-parse HEAD)`. Run `<wt>/scripts/eval-compare.sh core --aa 2e958ba --suite-ref "$S" --jobs 4`, the same for `coo`, then `<wt>/scripts/eval-compare.sh core --no-plugin 2e958ba --suite-ref "$S" --jobs 4`. The script targets each tree's root and passes the run settings file on every call. So every arm, the no-plugin arm too, gets the same blanked variables and, on macOS, the sandbox git, because they come from the call and not from a plugin.
 - [ ] Tag the guards in the `no-plugin` list `model-default`. Put each suite's A/A climb difference in its README as the noise floor.
-- [ ] Fix each guard that failed an A/A run or got a Fisher flag, or move it to climb (`classes.tsv` and `runs: 5`). Commit. Then run `--aa 2e958ba --suite-ref <new head> --update <A/A dir> --cases "<changed>"` once per suite.
+- [ ] Fix each guard that failed an A/A run or got a Fisher flag, or move it to climb (`classes.tsv` and `runs: 5`). Commit. Then run `--aa 2e958ba --suite-ref <new head> --update <A/A dir> --cases "<changed>" --jobs 4` once per suite.
 - [ ] Stop for the lead's decision, with no further paid run, on a permutation flag, exit 4 from the update, more than 4 changed cases in a suite, a change to `scaffold.sh` or the stub helper, or any non-zero exit.
 - [ ] Done when both `--aa` runs printed an `A/A` line and exited 0, or the lead has the stop reason.
 
@@ -294,7 +294,7 @@ Caps (spec figures; Task 14 may replace them):
 
 ### Task 18: measure PR 28, build step 4 (opus). NEEDS THE LEAD'S GO for the cost and THE OWNER'S YES for the PR 28 body
 
-Caps: head $26 for core and $17 for coo, plus up to 3 Fisher reruns per suite on both arms at $4. Expected about $38; at most $91. Add $43 if the merge-base moved and the base arm must run fresh.
+Caps: head $13 for core and $15 for coo, plus up to 3 Fisher reruns per suite on both arms at $4. Expected about $21; at most $76. Add $28 if the merge-base moved and the base arm must run fresh.
 
 - [ ] Find the commits:
   ```sh
@@ -303,12 +303,12 @@ Caps: head $26 for core and $17 for coo, plus up to 3 Fisher reruns per suite on
   S=$(git -C <wt> rev-parse HEAD)
   ```
   Pass `--reuse-base <A/A dir>` only when `$B` is `2e958ba…`. The reuse gate checks the case hashes, so commits that change only `classes.tsv` or a README do not void it. It also checks the git version, so after an Xcode update the base arm runs fresh. The script passes the run settings file on every call, the reruns too, so neither arm relies on `env -u` alone.
-- [ ] Check G passes. Run `<wt>/scripts/eval-compare.sh core "$B" "$H" --suite-ref "$S" [--reuse-base …] --covers "C3 C9 C10 C11 C12 and every guard"`. Then run the same for `coo`, with `--covers "K9 K10 and every guard"`. Each prints one `Eval:` line and exits 0.
+- [ ] Check G passes. Run `<wt>/scripts/eval-compare.sh core "$B" "$H" --suite-ref "$S" [--reuse-base …] --covers "C3 C9 C10 C11 C12 and every guard" --jobs 4`. Then run the same for `coo`, with `--covers "K9 K10 and every guard"`. Each prints one `Eval:` line and exits 0.
 - [ ] Give both lines to the lead. Run the leak pattern on the body file. After the owner's yes, run `gh pr edit 28 --body-file <file>`.
 
 ## Order, parallel groups and cost
 
 - **Order.** Group A in parallel: Tasks 1 to 5. Task 6 after Tasks 1 to 3 and 5, then Task 7. Group C in parallel after Task 7: Tasks 8 to 13 (Task 8 also needs Task 4). Then one at a time: Tasks 14 to 18.
 - **Models.** Sonnet for Tasks 1, 2 and 13. The lead does Tasks 15 and 17. Opus does the rest.
-- **Paid cost of the whole build** (list price, spec per-run figures): Task 7 about $1 (at most $4); Task 14 about $7 ($20); Task 16 about $87 ($215); Task 18 about $38 ($134). **Total: about $135 expected; $373 at most by the caps.** The clean path, with no reruns and no update, is about $105.
+- **Paid cost of the whole build** (list price; Tasks 7 and 14 as spent, the rest from Task 14's measured figures): Task 7 $1.35 (at most $4); Task 14 $4.54 ($20); Task 16 about $49 ($176); Task 18 about $21 ($104). **Total: about $76 expected; $304 at most by the caps.** The clean path, with no reruns and no update, is about $66.
 - **Overrun.** The harness checks a cap before each run starts, so an invocation can pass its cap by the runs already in flight (at most `--jobs` runs). The build allows no other paid run: each stop rule above ends with the lead's decision.
