@@ -21,6 +21,10 @@ Any change to a rule (in RULES.md or a skill) requires, before merge:
 2. A fresh-session smoke test — start a new session and confirm the
    `[dafna-core rules vX.Y.Z]` marker described in README.md still appears
    (currently v1.0.0 — must match the first line of plugins/core/rules/RULES.md).
+3. A change to a line that a core or coo eval case uses carries that suite's
+   `Eval:` line from `scripts/eval-compare.sh`, with the cases from the spec's
+   Coverage table in `--covers`, after `scripts/check-graders.mjs` passes. A
+   change that no case uses waives the line and names the gap.
 
 ## Versioning
 
