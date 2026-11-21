@@ -49,7 +49,7 @@
 - Replaces `optionsIn` with `choicesIn(rawOptions: unknown, rawNotes: unknown): { options?: string[]; notes?: string[] } | { error: string }`:
   - `rawNotes` not an array: `notes` is undefined.
   - `rawOptions` not an array and `rawNotes` an array (the notes-only `reply_item`): `notes` is `rawNotes` with each entry as `oneLine(entry)`, or `''` for a non-string.
-  - Both arrays of different lengths: the count error below.
+  - Both arrays of different lengths: the count error below. Notes are counted as Claude sent them, one for each option it sent, before empty options drop.
   - Both arrays of the same length: pair option i with note i, then drop each pair whose option is not a non-empty string after `oneLine`.
   - `rawOptions` an array: `options` holds the options kept, as today.
 
@@ -114,7 +114,7 @@ Exact error strings (the tests assert them):
 - Modify: `<plugin>/tests/register.test.tsx`
 
 Exact copy, from the spec:
-- In `add_item` "When to add an item", the first line becomes: ``- While background agents, shell commands or monitors run, add an item for a short ask: a detail of about 5 sentences or a short list. The ask line and the option notes do not count. A longer ask waits for the chat recap. Do not repeat the item in the chat.``
+- In `add_item` "When to add an item", the first line becomes: ``- While background agents, shell commands or monitors run, add an item for a short ask: a detail of about 5 sentences or a short list. The `ask` line and the option notes do not count. A longer ask waits for the chat recap. Do not repeat the item in the chat.``
 - In "How to write an item", the title line becomes: ``- An imperative title, the ask in `ask`, a note for each option, and the rest in a short detail.``
 - `detail` description: `What the user needs to know and why, in about 5 sentences or a short list. Markdown shows formatted. Do not repeat the options here. Up to 4000 characters.`
 - New property `ask`: `{ type: 'string', description: 'One sentence, under 150 characters, shown first: for a decision or a question, what the user answers; for an action, what the user must do; for info, what the user must know. Required for a decision.' }`
@@ -170,7 +170,7 @@ A bare `http://…` or `file://…` address stays as written: it shows its whole
   - `actionsOf` of a decision labels the recommended option with its plain text.
 - [ ] **Step 2: Run and see them fail.**
 - [ ] **Step 3: Implement** the helpers above.
-- [ ] **Step 4: Update the assertions this task changes,** and no others: the item-screen row counts near `register.test.tsx` lines 1181 to 1208 take the new `rowsFor` values; the four checks of a `(recommended)` label near lines 1874, 4531, 4822 and 5154 expect the plain label.
+- [ ] **Step 4: Update the assertions this task changes,** and no others: the item-screen row counts near `register.test.tsx` lines 1181 to 1208 take the new `rowsFor` values; the four checks of a `(recommended)` label near lines 1874, 4531, 4822 and 5154 expect the plain label; the thread test near line 1768 expects `/You · 2m.*Claude · 1m/s`, because the detail has no head.
 - [ ] **Step 5: Run and see them pass.**
 - [ ] **Step 6: Commit** the three files: `feat(open-items): helpers and row estimate for the Cards item screen`
 
@@ -184,7 +184,7 @@ A bare `http://…` or `file://…` address stays as written: it shows its whole
 - Consumes: `safeLinksOf` (Task 5); `Entry`, `KIND_LABEL`, `KIND_COLOR`, `FOCUS_BACKGROUND`, `actionsOf` (Task 6).
 
 Drawing, inside the `item-${task.id}` Box. The header replaces today's `☐ ` title row, and the `paddingLeft={2}` indent goes: every part starts at the body's left edge. Parts are separated by one empty row (`marginTop={1}`), as in the test pane.
-1. `header`: a Box with `borderStyle="round"`, `borderColor="subtle"`, `paddingX={1}`. Its first line is the kind label, `<Text backgroundColor={KIND_COLOR[kind]} color="inverseText" bold>` with a space on each side (not `inverse`, which marks the focus ring), then `#N`, the age and the waiting mark as `ageOf` gives them, dim. Its second line is `printable(title)`, bold, wrapped.
+1. `header`: a Box with `borderStyle="round"`, `borderColor="subtle"`, `paddingX={1}`. Its first line is the kind label, `<Text backgroundColor={KIND_COLOR[kind]} color="inverseText" bold>` with a space on each side (not `inverse`, which marks the focus ring), then `#N`, the age and the waiting mark as `ageOf` gives them, dim. Its second line is `nameOf(task)`, bold, wrapped.
 2. `ask`: when `askLine` is present, a row of `▌ ` and `printable(askLine, MAX_ASK)`, bold, in `KIND_COLOR[kind]`.
 3. `thread`: each entry; a `markdown` entry is the engine's `Markdown` element with `safeLinksOf(text)`; a `plain` entry is `Text`; an `event` entry is dim `Text`; a `head` stays dim above its text.
 4. `link` and the done-when line, as today; the done-when text is not dim.
@@ -201,7 +201,7 @@ In the `ui.focus` hook, when the ring moves onto or off a key that starts with `
   - After `ui.focus` onto `option-2`, `choice-2` has the focus background and `choice-1` does not. After the ring moves to the reply field, or the pane is drawn with `isFocused: false`, no choice box has it.
 - [ ] **Step 2: Run and see them fail.**
 - [ ] **Step 3: Implement** the drawing and the focus redraw. Use the test pane named under "Visual reference" as the model for the boxes.
-- [ ] **Step 4: Update the assertions this task changes,** and no others: the thread test near line 1768 expects `/You · 2m.*Claude · 1m/s` (the detail has no head); tests that read option labels from `options` read them from `choice-N`.
+- [ ] **Step 4: Update the assertions this task changes,** and no others: tests that read option labels from `options` read them from `choice-N`.
 - [ ] **Step 5: Run the tests and validate.** Expected: all PASS, and validation passes.
 - [ ] **Step 6: Commit** both files: `feat(open-items): the item screen in the Cards look`
 
@@ -210,7 +210,7 @@ In the `ui.focus` hook, when the ring moves onto or off a key that starts with `
 **Files:**
 - Modify: `<plugin>/tests/live/test_pane.py`, `<plugin>/tests/live/screen.py` if a helper changes
 
-- [ ] **Step 1: Update the existing cases that Task 7 changes:** `assert_title` finds the title in the header box (the row after the one with the kind label) instead of a `☐ ` row, and no longer expects a `Claude · ` head under it; the thread-order list loses the detail's head (`'Claude · 3m'` at its start); the long-thread check starts with the header's title row instead of `#1 Pick the runner for the nightly build 1h Claude · 1h`; `'1: Yes (recommended)'` becomes `'1: Yes'` with `★ recommended` on the same row; `assert_fits` accepts one empty row between parts on a 0.3 item.
+- [ ] **Step 1: Update the existing cases that Task 7 changes:** `assert_title` finds the title in the header box (the row after the one with the kind label) instead of a `☐ ` row, and no longer expects a `Claude · ` head under it; the thread-order list loses the detail's head (`'Claude · 3m'` at its start); the long-thread check starts with the header's title row instead of `#1 Pick the runner for the nightly build 1h Claude · 1h`; `'1: Yes (recommended)'` becomes `'1: Yes'` with `★ recommended` on the same row; `assert_fits` accepts one empty row between parts on every item screen, because older items get the same frame.
 - [ ] **Step 2: Add cases** that follow the file's own seeding pattern:
   - (a) A 0.3 decision with ask, three noted options and a recommended one. At 150 columns (docked), the whole item shows in one window. At 100 columns (above the prompt, 18 rows), press Home: the window shows the header and the ask line; press End: it shows the last option box and the foot. Both windows have no cut-off row.
   - (b) A 0.3 action whose detail has a fenced code block and a `[docs](http://a.b)` link: the code lines show as written, and the link shows as `docs (http://a.b)`.

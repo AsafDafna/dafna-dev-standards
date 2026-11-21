@@ -105,7 +105,7 @@ The pane keeps the engine's default width. A width that Asaf sets wins and is ke
 | Field | Description shown to Claude | Rules |
 |---|---|---|
 | `ask` | One sentence: for a decision or a QUESTION item, what the user answers; for an action, what the user must do; for info, what the user must know. Shown first. | Required for a decision. One line, under 150 characters. Longer text is refused, as an option over 60 characters is refused today. |
-| `option_notes` | For a decision: one line per option, in the order of `options`, on what the option means for the user. | Required for a decision, refused on the other kinds. One note for each option, counted after the same cleanup as `options`. Each note is one line under 120 characters, not empty. Longer text is refused. |
+| `option_notes` | For a decision: one line per option, in the order of `options`, on what the option means for the user. | Required for a decision, refused on the other kinds. One note for each option that Claude sends, in the same order; when an empty option drops, its note drops with it. Each note is one line under 120 characters, not empty. Longer text is refused. |
 
 `reply_item` accepts the same two fields. When it changes `options`, it needs new `option_notes` too. `option_notes` alone is checked against the item's current options. An `ask` can change but not be removed. The `reply_item` description lists `ask` and `option_notes` among the things it can change.
 
