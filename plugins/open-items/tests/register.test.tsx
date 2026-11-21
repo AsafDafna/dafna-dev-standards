@@ -4033,6 +4033,28 @@ describe('hand-off', () => {
     expect((world.store[OWN] as Saved).taken).toEqual([{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 6 }, { was: 8, now: 8 }] }])
   })
 
+  test('take_items keeps the ask and the option notes, and shows them', async ($, on) => {
+    const handed = savedItem(5, {
+      kind: 'decision',
+      title: 'Who else should hold a key?',
+      options: ['Both keys now', 'Later'],
+      askLine: 'Who else should hold a key?',
+      optionNotes: ['Choose the second person now.', 'Keep one holder for now.'],
+      isMarkdown: true,
+      state: 'handing-off',
+    })
+    const { world } = seat(on, { [OLD]: keyed([handed], { handoff: { code: CODE, atMs: NOW - 60_000 } }) })
+    await start($)
+
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code: CODE }))
+
+    expect(itemOf(world, 5)).toEqual(
+      expect.objectContaining({ askLine: 'Who else should hold a key?', optionNotes: ['Choose the second person now.', 'Keep one holder for now.'], isMarkdown: true }),
+    )
+    expect(taken.result).toContain('Ask: Who else should hold a key?')
+    expect(taken.result).toContain('- Both keys now: Choose the second person now.')
+  })
+
   test('take_items with a wrong code takes nothing', async ($, on) => {
     const { world } = seat(on, { [OLD]: HANDED })
     await start($)
@@ -5227,6 +5249,26 @@ describe('threads', () => {
     expect(listed).toContain('Which one?')
     expect(listed).toContain('v2.3.0')
     expect(whole).toContain('Which branch is the release cut from?')
+  })
+
+  test('list_items shows the ask, and each option with its note', async ($, on) => {
+    seat(on)
+    await start($)
+    await $.tool.call({
+      tool: ADD,
+      title: 'Who else should hold a key?',
+      ask: 'Who else should hold a key?',
+      detail: 'One person holds both keys today.',
+      kind: 'decision',
+      options: ['Both keys now', 'Later'],
+      option_notes: ['Choose the second person now.', 'Keep one holder for now.'],
+      recommended: 'Both keys now',
+    })
+
+    const listed = resultOf(await $.tool.call({ tool: LIST })).result ?? ''
+
+    expect(listed).toContain('  Ask: Who else should hold a key?\n  Options:\n  - Both keys now: Choose the second person now.\n  - Later: Keep one holder for now.\n  Recommended: Both keys now')
+    expect(listed).not.toContain(' | ')
   })
 
   test('close_item resolved is refused until the thread holds a message from the user', async ($, on) => {

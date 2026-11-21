@@ -642,7 +642,9 @@ function listedOf(task: Task, nowMs: number, isWhole: boolean): string {
   const lines = [
     task.isWaitingForClaude ? 'The user replied and waits for you: answer in the item with reply_item, or close it with close_item.' : '',
     task.hasNewReply ? 'The user has not opened your last reply yet.' : '',
-    task.options ? `Options: ${task.options.join(' | ')}` : '',
+    task.askLine ? `Ask: ${task.askLine}` : '',
+    task.options && task.optionNotes ? ['Options:', ...task.options.map((option, at) => `- ${option}: ${task.optionNotes?.[at]}`)].join('\n') : '',
+    task.options && !task.optionNotes ? `Options: ${task.options.join(' | ')}` : '',
     task.recommended ? `Recommended: ${task.recommended}` : '',
     task.doneWhen ? `Done when: ${task.doneWhen}` : '',
     task.link ? `Link: ${task.link}` : '',
