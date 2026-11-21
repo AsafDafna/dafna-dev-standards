@@ -492,73 +492,65 @@ function footRowsOf(view: PaneView, width: number, buttons: readonly string[]): 
   return rowsOf(hintOf(view), Math.max(1, width - buttons.reduce((cells, label) => cells + BUTTON_GAP + cellsOf(label), 0)))
 }
 
-const HTTPS = /^<?https:/i
-const LINK = /\[([^\]]*)\]\(\s*([^)]*?)\s*\)/g
-const AUTOLINK = /<([a-z][a-z0-9+.-]*:[^\s<>]*)>/gi
-const DEFINITION = /^( {0,3})\[([^\]]+)\]:\s*(\S.*)$/
+/**
+ * A `](` that does not open a plain `https:` target. The engine draws a
+ * path as a hidden `file:` link and reads `http\://` as `http://`, so
+ * judging the scheme it will see would be a guess: only `https:` is kept.
+ */
+const LIVE_LINK = /\](?=\((?!\s*<?https:))/gi
+const LIVE_AUTOLINK = /<(?=(?:http|file):)/gi
+const AUTOLINK = /<((?:http|file):[^\s<>]*)>?/gi
+const DEFINITION = /^( {0,3})\[((?:\\.|[^\\[\]\n])+)\]:(?=\s*<?(?:http|file):)/gim
+const CODE_BEFORE = /[\p{L}\p{N}_\])]/u
+const MAX_PASSES = 8
 
-function unlinkedText(text: string): string {
-  return text
-    .replace(LINK, (whole, label: string, inner: string) =>
-      !HTTPS.test(inner) ? `${label} (${inner.replace(/^<([^>]*)>/, '$1')})` : whole,
-    )
-    .replace(AUTOLINK, (whole, target: string) => (/^https:/i.test(target) ? whole : target))
+function isEscaped(text: string, at: number): boolean {
+  let slashes = 0
+  while (text[at - 1 - slashes] === '\\') slashes++
+  return slashes % 2 === 1
 }
 
-function unlinkedLine(line: string): string {
-  const definition = DEFINITION.exec(line)
-  if (definition && !HTTPS.test(definition[3]!)) line = `${definition[1]}${definition[2]}: ${definition[3]}`
-  let out = ''
-  let plainFrom = 0
-  let i = 0
-  while (i < line.length) {
-    if (line[i] !== '`') {
-      i++
+/**
+ * `[text](target)` as `text (target)`. Where the `[` follows a word or a
+ * closing bracket, as code indexes (`handlers[name](event)`), or no `[`
+ * pairs, `] (target)`: it breaks the link and leaves the code readable.
+ */
+function withoutLinkBrackets(text: string): string {
+  const closes = new Set(Array.from(text.matchAll(LIVE_LINK), match => match.index))
+  if (closes.size === 0) return text
+  const edits = new Map<number, string>()
+  const opens: number[] = []
+  for (let at = 0; at < text.length; at++) {
+    if ((text[at] !== '[' && text[at] !== ']') || isEscaped(text, at)) continue
+    if (text[at] === '[') {
+      opens.push(at)
       continue
     }
-    let run = i
-    while (line[run] === '`') run++
-    const ticks = line.slice(i, run)
-    let close = -1
-    for (let at = line.indexOf(ticks, run); at !== -1; at = line.indexOf(ticks, at + 1)) {
-      let end = at + ticks.length
-      while (line[end] === '`') end++
-      if (end - at === ticks.length && line[at - 1] !== '`') {
-        close = end
-        break
-      }
-      at = end - 1
+    const open = opens.pop()
+    if (open !== undefined && closes.has(at) && !CODE_BEFORE.test(text[open - 1] ?? '')) {
+      edits.set(open, '')
+      edits.set(at, ' ')
     }
-    if (close === -1) {
-      i = run
-      continue
-    }
-    out += unlinkedText(line.slice(plainFrom, i)) + line.slice(i, close)
-    plainFrom = i = close
   }
-  return out + unlinkedText(line.slice(plainFrom))
+  for (const close of closes) if (!edits.has(close)) edits.set(close, '] ')
+  return text
+    .split('')
+    .map((char, at) => edits.get(at) ?? char)
+    .join('')
 }
 
 /**
  * Claude's Markdown with every link that is not `https:` drawn as plain
- * text: the pane must not show a clickable `file:` or `http:` target under
- * words that hide it. Fenced blocks and inline code stay as written.
+ * text. It never guesses where code is, since a wrong guess left links
+ * live, so a link in code is rewritten too. A rewrite can join brackets
+ * into a new link, hence the passes.
  */
 export function safeLinksOf(markdown: string): string {
-  let fence: string | undefined
-  return markdown
-    .split('\n')
-    .map((line) => {
-      const start = line.trimStart().slice(0, 3)
-      if (fence) {
-        if (start === fence) fence = undefined
-        return line
-      }
-      if (start === '```' || start === '~~~') {
-        fence = start
-        return line
-      }
-      return unlinkedLine(line)
-    })
-    .join('\n')
+  let text = markdown
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    const next = withoutLinkBrackets(text).replace(AUTOLINK, '$1').replace(DEFINITION, '$1$2:')
+    if (next === text) return text
+    text = next
+  }
+  return text.replace(DEFINITION, '$1$2:').replace(LIVE_LINK, '] ').replace(LIVE_AUTOLINK, '< ')
 }
