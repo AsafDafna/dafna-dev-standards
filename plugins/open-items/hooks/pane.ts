@@ -202,7 +202,7 @@ export const KIND_COLOR: Record<TaskKind, ThemeKey> = { decision: 'warning', que
 /** The background of the option box with the focus or under the mouse: the theme has no key for one. */
 export const FOCUS_BACKGROUND: ThemeKey = 'subtle'
 
-/** Drawn after the recommended option's button, in its box. */
+/** Drawn after the recommended option's button in its box, or whole on the row below when it does not fit there. */
 export const RECOMMENDED_MARK = '  ★ recommended'
 
 /** Drawn before the ask line, in the kind's color: the ask wraps beside it. */
@@ -514,10 +514,12 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const actions = actionsOf(task)
   const choices = actions.filter(action => action.key.startsWith('option-'))
   const boxes = choices.reduce((rows, action, i) => {
-    const mark = task.options?.[i] === task.recommended ? RECOMMENDED_MARK : ''
+    const label = `${action.hotkey}: ${action.label}`
+    // The mark wraps whole: below the label unless it fits after the label's one row.
+    const markRows = task.options?.[i] !== task.recommended || cellsOf(label) + cellsOf(RECOMMENDED_MARK) <= boxed ? 0 : 1
     const note = task.optionNotes?.[i]
 
-    return rows + BOX_ROWS + rowsOf(`${action.hotkey}: ${action.label}${mark}`, boxed) + (note === undefined ? 0 : rowsOf(printable(note, MAX_OPTION_NOTE), boxed))
+    return rows + BOX_ROWS + rowsOf(label, boxed) + markRows + (note === undefined ? 0 : rowsOf(printable(note, MAX_OPTION_NOTE), boxed))
   }, 0)
   const buttons = [
     ...actions.filter(action => !choices.includes(action)).map(action => `${action.hotkey}: ${action.label}`),

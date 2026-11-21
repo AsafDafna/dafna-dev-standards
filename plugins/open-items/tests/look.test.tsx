@@ -219,6 +219,18 @@ describe('the item screen helpers', () => {
     expect(rowsFor(itemView(fills), 40, 99) - rowsFor(itemView(item({ askLine: undefined })), 40, 99)).toBe(3)
   })
 
+  test('the recommended mark takes a row of its own, whole, when it does not fit after the label', () => {
+    const long = 'ClickHouse cluster that the data team runs for analytics'
+    const decision = item({ kind: 'decision', options: [long, 'SQLite on the box'], optionNotes: ['Fast for scans.', 'One writer at a time.'] })
+    const extra = (columns: number) => rowsFor(itemView({ ...decision, recommended: long }), columns, 99) - rowsFor(itemView(decision), columns, 99)
+
+    expect(extra(100)).toBe(0)
+    // The label fits its row; the mark does not fit after it.
+    expect(extra(66)).toBe(1)
+    // The label wraps to three rows, and the mark goes below the last one, though it would fit beside it.
+    expect(extra(32)).toBe(1)
+  })
+
   test("the header's first line wraps in its box once the waiting mark makes it too wide", () => {
     const waiting = item({ isWaitingForClaude: true })
 

@@ -1308,9 +1308,13 @@ export const register: Register = on => {
                       hover={{ backgroundColor: FOCUS_BACKGROUND }}
                       backgroundColor={e.props.isFocused && live.ring === action.key ? FOCUS_BACKGROUND : undefined}
                     >
-                      <Box flexDirection="row">
+                      <Box flexDirection="row" flexWrap="wrap">
                         {button(action)}
-                        {isRecommended ? <Text color="success">{RECOMMENDED_MARK}</Text> : null}
+                        {isRecommended ? (
+                          <Box flexShrink={0}>
+                            <Text color="success">{RECOMMENDED_MARK}</Text>
+                          </Box>
+                        ) : null}
                       </Box>
                       {note === undefined ? null : <Text wrap="wrap">{printable(note, MAX_OPTION_NOTE)}</Text>}
                     </Box>
