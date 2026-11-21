@@ -218,7 +218,7 @@ It does not tell:
 
 ## Decisions
 
-The owner decided these on 2026-11-21. Each one is the option the review recommended.
+The owner decided these on 2026-11-21. Each one is the option this spec recommended.
 
 1. **Model:** opus runs the cases, because it is the model that reads these rules in real sessions.
 2. **Runs per case:** 3 for guard cases and 5 for climb cases.
