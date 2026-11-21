@@ -5,10 +5,10 @@
 # 130 and 143 an interrupt.
 set -u
 
-cap_main_core=26
-cap_main_coo=17
+cap_main_core=13
+cap_main_coo=14
 cap_rerun=4
-cap_noplugin=17
+cap_noplugin=8
 
 # The run settings file blanks the same names that this script unsets in its own environment.
 keep_env='ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX'

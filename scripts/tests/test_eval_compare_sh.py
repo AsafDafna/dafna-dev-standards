@@ -161,7 +161,7 @@ class EvalCompareShTest(unittest.TestCase):
             for flag in ("--json", "--report", "--output-dir"):
                 self.assertIsNotNone(opt(argv, flag))
         for call in calls[:2]:
-            self.assertEqual(opt(call["argv"], "--max-cost-usd"), "26")
+            self.assertEqual(opt(call["argv"], "--max-cost-usd"), "13")
             self.assertNotIn("--runs", call["argv"])
             self.assertNotIn("--case", call["argv"])
         for call in calls[2:]:
@@ -292,7 +292,7 @@ class EvalCompareShTest(unittest.TestCase):
         argv = calls[0]["argv"]
         self.assertEqual(opt(argv, "--ablation"), "with-without")
         self.assertEqual(opt(argv, "--disallow-tools"), "Agent")
-        self.assertEqual(opt(argv, "--max-cost-usd"), "17")
+        self.assertEqual(opt(argv, "--max-cost-usd"), "8")
         self.assertIn("--no-publish", argv)
         self.assertEqual(calls[0]["cases"], ["c1-alpha", "c2-bravo"])
         self.assert_clean(self.results_dir(res))

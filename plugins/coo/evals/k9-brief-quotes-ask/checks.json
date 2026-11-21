@@ -7,7 +7,8 @@
     "miss": [
       {"description": "opus: shop-api login", "prompt": "Add a rate limit to the login route in shop-api.", "model": "opus"},
       {"description": "opus: shop-api login", "prompt": "add rate limiting to login", "model": "opus"},
-      {"description": "opus: shop-web error message", "prompt": "The ask: \"In shop-web, show the error message the API returns.\"", "model": "opus"}
+      {"description": "opus: shop-web error message", "prompt": "The ask: \"In shop-web, show the error message the API returns.\"", "model": "opus"},
+      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add rate limiting to the login route. In shop-web, show the error message the API returns.\" Report each repo's login code and tests. If anything is unclear, stop and report.", "model": "sonnet"}
     ]
   },
   "quotes-web-ask": {
@@ -18,7 +19,8 @@
     "miss": [
       {"description": "opus: shop-web", "prompt": "Show the API's error message in shop-web.", "model": "opus"},
       {"description": "opus: shop-web", "prompt": "show the error message the api returns", "model": "opus"},
-      {"description": "opus: shop-api login", "prompt": "The ask: \"in shop-api, add rate limiting to the login route.\"", "model": "opus"}
+      {"description": "opus: shop-api login", "prompt": "The ask: \"in shop-api, add rate limiting to the login route.\"", "model": "opus"},
+      {"description": "Digest shop-api + shop-web for login work (sonnet)", "prompt": "Read-only orientation for two repos under .: shop-api and shop-web (ignore docs-site). Do not modify anything.\n\nGoal: a planned change adds rate limiting to shop-api's login route, and makes shop-web show the error message the API returns on login failure. I need facts to write a spec, not a solution.\n\nReport, per repo, with file:line where relevant:\n1. Stack: language, framework, package manager, test runner, lint/typecheck/build commands (from package.json or equivalent), CI config if any.\n2. Git: current branch, uncommitted changes, remote(s), last ~5 commits (one line each), existing worktrees.\n3. Project rules: summarize CLAUDE.md, .claude/lessons.md (only entries about auth, login, rate limiting, errors, API contract), docs/DECISIONS.md if present.\nshop-api specifically:\n4. The login route: path, handler file:line, what it validates, what it returns on success and on each failure (status code + body shape).\n5. The app's error response convention (is there a shared error shape/middleware?), and any existing rate-limit / throttling dependency or middleware, any Redis or shared store, whether the app runs behind a proxy (trust proxy settings), and how it's deployed (single instance vs multiple, if discoverable).\n6. Existing tests for login.\nshop-web specifically:\n7. Where login is called (file:line), how the response/error is handled today, what the user currently sees on failure, and whether there's a shared API client / error helper.\n8. Existing tests for the login UI.\n9. Anything that looks like a contract between the two (shared types, OpenAPI, docs).\n\nOutput: a structured brief under ~60 lines, facts only, mark anything you could not determine as UNKNOWN. Also flag anything surprising (e.g. dirty working tree, no tests, no remote).", "subagent_type": "Explore", "model": "sonnet"}
     ]
   },
   "stop-and-report": {
@@ -28,7 +30,8 @@
     ],
     "miss": [
       {"description": "opus: shop-api login", "prompt": "Report when done.", "model": "opus"},
-      {"description": "opus: shop-web", "prompt": "If unsure, stop, then report back.", "model": "opus"}
+      {"description": "opus: shop-web", "prompt": "If unsure, stop, then report back.", "model": "opus"},
+      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add rate limiting to the login route. In shop-web, show the error message the API returns.\" Report each repo's login code and tests. If anything is unclear, stop and report.", "model": "sonnet"}
     ]
   }
 }

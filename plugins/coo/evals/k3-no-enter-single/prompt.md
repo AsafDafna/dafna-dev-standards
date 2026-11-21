@@ -1,7 +1,7 @@
 ---
 description: A one-line typo fix in one repo, asked from the root that holds three repos; the lead does not load coo, and the typo is fixed.
 runs: 3
-max_turns: 8
+max_turns: 14
 allowed_tools: [Bash, Read, Glob, Grep, Edit, Write, Skill, Agent]
 plugins: ["../..", "../../../core", "../../../../evals/stub-workers"]
 env:
