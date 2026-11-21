@@ -24,6 +24,8 @@ Asaf accepted the agent option's status cost, because the status changes only wh
 
 ## Agent option: checks
 
+The probe helper was registered with `tools: ["Read", "Grep", "Glob"]`, Sonnet at effort low, `omitClaudeMd` and `maxTurns: 15`. The spec's helper differs (Opus at medium effort, CLAUDE.md kept), so cost and time here are not the spec's.
+
 | Check | Result |
 |---|---|
 | The tool list alone (`tools: ["Read", "Grep", "Glob"]`) refuses other tools | Passed. `$.agent.call` as the helper: `Write`, `Bash`, `Agent` and an MCP tool each answered `that agent has no tool named "X"`. `Read` worked. No file was made. |
@@ -42,6 +44,7 @@ Agent helper times and tokens (Sonnet, effort low): 2.4 to 7.5 s for a short que
 2. `agent.offer` returning `{ isOffered: false }` also refuses `$.agent.call` as that agent. A resume offer carries `agentId` and passes.
 3. The mod's own `$.agent.spawn` does not raise its own `agent.spawn` hook.
 4. Main's agent panel lists each helper while it runs.
+5. The helper's model named `SubagentHandback` and `advisor` beside its three tools. Whether it can call them was not checked.
 
 ## Hidden session option (not chosen)
 
