@@ -74,6 +74,7 @@ Nir's routing table (decision 2 of his draft) is replaced by Asaf's decisions 5 
 5. **The helper always answers**, also when the question is about the main session's work and the main session is idle. It tries to find the best answer: it searches the main conversation before it answers, and says what it could not find.
 6. **The helper can send the main session a question** when only the main session can answer. The question waits until the main session's current turn ends, not until all its background work ends.
 7. **A note waits for the user.** A note that may change the main session's work reaches the main session with the user's next typed prompt, never on its own. A question from the helper still goes when the main session's turn ends, and nothing blocks the main session in that turn: it is told to look and report only. (Asaf chose this after the review found that a block in that turn would also stop the main session's own work when its background agents report in the same turn.)
+8. **Each speaker in a thread is easy to tell apart**, in every kind of item, not only side questions. Asaf found that a short reply such as "ok" gets lost between long messages: 0.3.0 draws each head as one dim line, right under the message before it. So a blank row separates the messages, and the name in each head is bold in its own theme color: "You" in `ide` (blue), "Claude" in `claude` (orange), "Helper" in `planMode` (teal). The age stays dim and the message text keeps the normal text color. None of the three is a kind color.
 
 ## Claude's calls
 
@@ -107,6 +108,7 @@ Each row changes a decision of Asaf's. Asaf approved them on 2026-11-21.
 | v0.2 composer bridge: `↳ Answer to #N:` answers any open item but info | It leaves side questions out (above). |
 | README: "Nothing else from the conversation ... goes into a prompt"; "The mod uses no network and starts no process. It answers only calls to its own six tools" | A helper's prompt carries a summary of the conversation, and the mod starts helpers. The README says so. |
 | 0.3.0 `add_item` kinds | A fifth kind, `side`, that only the user creates. `add_item` refuses it. |
+| 0.3.0 Cards thread: each head is one dim line, with no gap between messages | A blank row between messages, and each name bold in its own color (Asaf 8). |
 
 ## The design
 
@@ -169,7 +171,7 @@ The helper's prompt holds:
 
 The list screen gets a SIDE QUESTIONS section after the others, and the field for a new side question is always drawn, also when the pane holds nothing else. Each list line shows one mark: "⋯ helper working", "⋯ waiting for the session" (a question for it waits), "? helper asks you", "● answered" (unread), or "⏸ held". The header counts leave side questions out.
 
-The item screen is 0.3.0's Cards screen. The header box shows SIDE QUESTION and the number. The detail is the user's question as plain text. Each thread message has its head ("You", "Helper" or "Claude") and its age. Helper and Claude text is Markdown under 0.3.0's link rule. The buttons are Done and the follow-up field. No Later, and no options.
+The item screen is 0.3.0's Cards screen. The header box shows SIDE QUESTION and the number. The detail is the user's question as plain text. Each thread message has its head ("You", "Helper" or "Claude") and its age, drawn as Asaf 8 says. Helper and Claude text is Markdown under 0.3.0's link rule. The buttons are Done and the follow-up field. No Later, and no options.
 
 A toast confirms a new side question and its number ("Side question #12 sent"). On the phone it is the only sign that `/side` worked. The pane does not fit the phone, so the user reads the answer later in the pane.
 
