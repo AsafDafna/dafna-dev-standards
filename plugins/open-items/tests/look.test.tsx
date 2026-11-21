@@ -213,6 +213,19 @@ describe('the item screen helpers', () => {
     expect(rowsFor(itemView(PAGING), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(9)
   })
 
+  test('the ask line wraps beside its bar, two cells short of the row, and takes an empty row after it', () => {
+    const fills = item({ askLine: `${'word '.repeat(7)}word` })
+
+    expect(rowsFor(itemView(fills), 40, 99) - rowsFor(itemView(item({ askLine: undefined })), 40, 99)).toBe(3)
+  })
+
+  test("the header's first line wraps in its box once the waiting mark makes it too wide", () => {
+    const waiting = item({ isWaitingForClaude: true })
+
+    expect(rowsFor(itemView(waiting), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(0)
+    expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(1)
+  })
+
   test('on a 0.3 item, Claude writes Markdown and the detail has no head; the user writes plain text, and a press is an event', () => {
     const task = item({
       thread: [

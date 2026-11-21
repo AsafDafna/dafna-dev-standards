@@ -4,7 +4,9 @@ import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, Render
 import type { Header, Held, Offer, Saved, Screen, Taken, Task } from '../types'
 import {
   DONE,
+  MAX_ASK,
   MAX_NOTE,
+  MAX_OPTION_NOTE,
   MAX_TITLE,
   SEEN,
   addedOf,
@@ -50,16 +52,20 @@ import {
 } from './tasks'
 import type { Move } from './tasks'
 import {
+  ASK_BAR,
   BACK,
   BUTTON_GAP,
+  FOCUS_BACKGROUND,
   HELD_BUTTONS,
   HIDE,
+  KIND_COLOR,
   LINK_LABEL,
   LONG_ANSWER,
   MAX_SHOWN_TITLE,
   MOVED_LABEL,
   MOVING_LABEL,
   OFFER_BUTTONS,
+  RECOMMENDED_MARK,
   REPLY_LABEL,
   REPLY_PLACEHOLDER,
   ROW_INDENT,
@@ -68,7 +74,6 @@ import {
   TAKE_BACK,
   UNCLAIMED_NOTE,
   actionsOf,
-  ageOf,
   arrivedOf,
   arrowTargetOf,
   doneWhenOf,
@@ -76,6 +81,7 @@ import {
   focusOrderOf,
   groupsOf,
   hasReplyField,
+  headerLineOf,
   heldNoticeOf,
   heldOf,
   hiddenOf,
@@ -84,6 +90,7 @@ import {
   linkOf,
   marksOf,
   movingOf,
+  nameOf,
   numberCellsOf,
   offerOf,
   openTaskOf,
@@ -93,7 +100,6 @@ import {
   rowBackTo,
   rowTitleOf,
   rowsFor,
-  titleOf,
 } from './pane'
 import type { Entry, PaneView } from './pane'
 import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed, withTaken } from './saved'
@@ -1091,12 +1097,19 @@ export const register: Register = on => {
 
   // The ring on the reply field lets the terminal wrap what is typed there:
   // the pane asks for the rows that takes, and for one row once it leaves.
+  // The option box with the ring is lit from `live.ring`, which no render
+  // input carries: a move onto or off one draws the pane again.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    const was = live.ring
     const moved = await next(e)
 
     if (moved.deny === undefined) {
       live.ring = e.element
       void refit($)
+    }
+
+    if ([was, e.element].some(key => key?.startsWith('option-'))) {
+      $.ui.invalidate('ui.render')
     }
 
     return moved
@@ -1137,7 +1150,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const emptied = live.emptied.get(e.surface)
     const elements = $.ui.resolve(e)
-    const { Box, Text, Button, Link } = elements
+    const { Box, Text, Button, Link, Markdown } = elements
     // The mobile app draws no field yet: replies wait for a surface that does. The engine fills an element
     // a surface lacks with one that draws nothing, so the surface says, not the table.
     const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
@@ -1206,11 +1219,18 @@ export const register: Register = on => {
       const thread = entriesOf(task, view.nowMs)
       const [detail, ...newest] = thread.entries
       const actions = actionsOf(task)
+      const choices = actions.filter(action => action.key.startsWith('option-'))
+      const buttons = actions.filter(action => !choices.includes(action))
       const isField = hasReplyField(task, view)
       const drawn = focusOrderOf(shown)
+      const color = KIND_COLOR[task.kind]
+      const headerLine = headerLineOf(task, view)
+      const button = (action: (typeof actions)[number]) => (
+        <Button key={action.key} plain hotkey={action.hotkey} label={action.label} onPress={() => pressOn($, task.id, action.move, drawn)} />
+      )
 
       // A Text keeps no key: each entry's Box holds it.
-      const entry = ({ i, head, text }: Entry) => [
+      const entry = ({ i, head, text, look }: Entry) => [
         ...(head === undefined
           ? []
           : [
@@ -1221,9 +1241,13 @@ export const register: Register = on => {
               </Box>,
             ]),
         <Box key={`msg-${i}`} flexDirection="column">
-          <Text dimColor={head === undefined} wrap="wrap">
-            {text}
-          </Text>
+          {look === 'markdown' ? (
+            <Markdown text={text} />
+          ) : (
+            <Text dimColor={look === 'event'} wrap="wrap">
+              {text}
+            </Text>
+          )}
         </Box>,
       ]
 
@@ -1231,70 +1255,90 @@ export const register: Register = on => {
         <Box flexDirection="column">
           {unsaved}
           <Box key={`item-${task.id}`} flexDirection="column" flexShrink={0}>
-            <Box flexDirection="row">
-              {/* The glyph keeps its cells beside a title that wraps. */}
-              <Box flexShrink={0}>
-                <Text color="yellow">{'☐ '}</Text>
-              </Box>
-              {/* One text, so a long title wraps under itself and the age follows it. */}
-              <Text wrap="wrap">
-                <Text bold>{titleOf(task)}</Text>
-                <Text dimColor>{ageOf(task, view)}</Text>
+            <Box key="header" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+              <Text>
+                <Text backgroundColor={color} color="inverseText" bold>
+                  {headerLine.label}
+                </Text>
+                <Text dimColor>{headerLine.rest}</Text>
+              </Text>
+              <Text bold wrap="wrap">
+                {nameOf(task)}
               </Text>
             </Box>
-            <Box flexDirection="column" paddingLeft={2}>
-              <Box key="thread" flexDirection="column">
-                {detail === undefined ? null : entry(detail)}
-                {thread.hidden === 0 ? null : (
-                  <Box key="earlier" flexDirection="column">
-                    <Text dimColor wrap="wrap">
-                      {hiddenOf(thread.hidden)}
-                    </Text>
-                  </Box>
-                )}
-                {newest.flatMap(entry)}
-              </Box>
-              {link === undefined ? null : (
-                <Box key="link" flexDirection="row">
-                  <Box flexShrink={0}>
-                    <Text dimColor>{LINK_LABEL}</Text>
-                  </Box>
-                  <Link href={link} />
+            {task.askLine === undefined ? null : (
+              <Box key="ask" flexDirection="row" marginTop={1}>
+                <Box flexShrink={0}>
+                  <Text color={color}>{ASK_BAR}</Text>
                 </Box>
-              )}
-              {doneWhen === undefined ? null : (
-                <Text dimColor wrap="wrap">
-                  {doneWhen}
+                <Text color={color} bold wrap="wrap">
+                  {printable(task.askLine, MAX_ASK)}
                 </Text>
-              )}
-              {actions.length === 0 && !isField ? null : (
-                <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-                  {actions.map(action => (
-                    <Button
-                      key={action.key}
-                      plain
-                      hotkey={action.hotkey}
-                      label={action.label}
-                      onPress={() => pressOn($, task.id, action.move, drawn)}
-                    />
-                  ))}
-                  {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
-                </Box>
-              )}
-              {heldText === undefined ? null : (
-                <Box key="held" flexDirection="column">
-                  <Text color="yellow" wrap="wrap">
-                    {heldNoticeOf(task)}
+              </Box>
+            )}
+            <Box key="thread" flexDirection="column" marginTop={1}>
+              {detail === undefined ? null : entry(detail)}
+              {thread.hidden === 0 ? null : (
+                <Box key="earlier" flexDirection="column">
+                  <Text dimColor wrap="wrap">
+                    {hiddenOf(thread.hidden)}
                   </Text>
-                  <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-                    <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
-                    <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
-                  </Box>
                 </Box>
               )}
+              {newest.flatMap(entry)}
             </Box>
-            {/* The terminal sizes a field by the pane's body, whatever box holds it:
-                it goes out of the item's indent, across the body's whole width. */}
+            {link === undefined ? null : (
+              <Box key="link" flexDirection="row">
+                <Box flexShrink={0}>
+                  <Text dimColor>{LINK_LABEL}</Text>
+                </Box>
+                <Link href={link} />
+              </Box>
+            )}
+            {doneWhen === undefined ? null : <Text wrap="wrap">{doneWhen}</Text>}
+            {choices.length === 0 ? null : (
+              <Box flexDirection="column" marginTop={1}>
+                {choices.map((action, i) => {
+                  const isRecommended = task.options?.[i] === task.recommended
+                  const note = task.optionNotes?.[i]
+
+                  return (
+                    <Box
+                      key={`choice-${i + 1}`}
+                      flexDirection="column"
+                      borderStyle="round"
+                      borderColor={isRecommended ? 'success' : 'subtle'}
+                      paddingX={1}
+                      hover={{ backgroundColor: FOCUS_BACKGROUND }}
+                      backgroundColor={e.props.isFocused && live.ring === action.key ? FOCUS_BACKGROUND : undefined}
+                    >
+                      <Box flexDirection="row">
+                        {button(action)}
+                        {isRecommended ? <Text color="success">{RECOMMENDED_MARK}</Text> : null}
+                      </Box>
+                      {note === undefined ? null : <Text wrap="wrap">{printable(note, MAX_OPTION_NOTE)}</Text>}
+                    </Box>
+                  )
+                })}
+              </Box>
+            )}
+            {buttons.length === 0 && !isField ? null : (
+              <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP} marginTop={1}>
+                {buttons.map(button)}
+                {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
+              </Box>
+            )}
+            {heldText === undefined ? null : (
+              <Box key="held" flexDirection="column">
+                <Text color="yellow" wrap="wrap">
+                  {heldNoticeOf(task)}
+                </Text>
+                <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+                  <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
+                  <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
+                </Box>
+              </Box>
+            )}
             {!isField || Input === undefined ? null : (
               <Input
                 key={key}

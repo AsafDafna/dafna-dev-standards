@@ -205,6 +205,14 @@ export const FOCUS_BACKGROUND: ThemeKey = 'subtle'
 /** Drawn after the recommended option's button, in its box. */
 export const RECOMMENDED_MARK = '  ★ recommended'
 
+/** Drawn before the ask line, in the kind's color: the ask wraps beside it. */
+export const ASK_BAR = '▌ '
+
+/** The header box's first line: the kind `label`, drawn on the kind's color, then `#N`, the age and the waiting mark, drawn dim. */
+export function headerLineOf(task: Task, view: Pick<PaneView, 'nowMs'>): { label: string; rest: string } {
+  return { label: ` ${KIND_LABEL[task.kind]} `, rest: `  #${task.id}${ageOf(task, view)}` }
+}
+
 /** The cells a box with a round border and `paddingX={1}` takes from its text: two on each side. */
 const BOX_CELLS = 4
 
@@ -495,8 +503,9 @@ function savedRowsOf(view: PaneView, width: number): number {
 
 function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const boxed = Math.max(1, width - BOX_CELLS)
-  const header = BOX_ROWS + 1 + rowsOf(nameOf(task), boxed)
-  const ask = task.askLine === undefined ? 0 : rowsOf(printable(task.askLine, MAX_ASK), width) + 1
+  const { label, rest } = headerLineOf(task, view)
+  const header = BOX_ROWS + rowsOf(`${label}${rest}`, boxed) + rowsOf(nameOf(task), boxed)
+  const ask = task.askLine === undefined ? 0 : rowsOf(printable(task.askLine, MAX_ASK), Math.max(1, width - cellsOf(ASK_BAR))) + 1
   const { entries, hidden } = entriesOf(task, view.nowMs)
   const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, width)) + linesRowsOf(text, width), 0)
   const link = linkOf(task)
