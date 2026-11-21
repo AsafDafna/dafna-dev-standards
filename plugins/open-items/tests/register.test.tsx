@@ -4033,22 +4033,28 @@ describe('hand-off', () => {
     expect((world.store[OWN] as Saved).taken).toEqual([{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 6 }, { was: 8, now: 8 }] }])
   })
 
-  test('take_items keeps the ask and the option notes, and shows them', async ($, on) => {
-    const handed = savedItem(5, {
-      kind: 'decision',
-      title: 'Who else should hold a key?',
-      options: ['Both keys now', 'Later'],
-      askLine: 'Who else should hold a key?',
-      optionNotes: ['Choose the second person now.', 'Keep one holder for now.'],
-      isMarkdown: true,
-      state: 'handing-off',
-    })
-    const { world } = seat(on, { [OLD]: keyed([handed], { handoff: { code: CODE, atMs: NOW - 60_000 } }) })
+  test('a hand-off of a decision keeps its ask and notes: take_items lists them', async ($, on) => {
+    const { world, clock } = seat(on)
     await start($)
+    await $.tool.call({
+      tool: ADD,
+      title: 'Who else should hold a key?',
+      ask: 'Who else should hold a key?',
+      detail: 'One person holds both keys today.',
+      kind: 'decision',
+      options: ['Both keys now', 'Later'],
+      option_notes: ['Choose the second person now.', 'Keep one holder for now.'],
+    })
 
-    const taken = answerOf(await $.tool.call({ tool: TAKE, code: CODE }))
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code }))
 
-    expect(itemOf(world, 5)).toEqual(
+    expect(itemOf(world, 1)).toEqual(
       expect.objectContaining({ askLine: 'Who else should hold a key?', optionNotes: ['Choose the second person now.', 'Keep one holder for now.'], isMarkdown: true }),
     )
     expect(taken.result).toContain('Ask: Who else should hold a key?')
