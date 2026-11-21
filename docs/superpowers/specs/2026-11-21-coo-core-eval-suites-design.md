@@ -1,6 +1,6 @@
 # Eval suites for the core and coo plugins: design
 
-**Date:** 2026-11-21 · **Status:** draft, revised after review 1 · **Scope:** design only. Nothing here is built, and no eval has run.
+**Date:** 2026-11-21 · **Status:** reviewed twice; the owner's decisions are recorded under Decisions · **Scope:** design only. Nothing here is built, and no eval has run.
 
 ## Why
 
@@ -51,7 +51,7 @@ Not checked (build step 0 checks each one):
   - Each case's `fixture.sh` calls the suite's `scaffold.sh <case>`, as in secrets. The scaffold sets a repo-local git user, because the run's temp home has none.
   - No fixture or case file holds a word that the leak gate blocks (`scripts/validate.sh` matches substrings such as "monday", in any case).
 - **Rules in coo cases.** coo cites the core rules, so every coo case sets `plugins: ["../..", "../../../core"]`. Both plugins then come from the same commit.
-- **Workers.** Dispatch cases grade the `Agent` calls that the lead makes: the brief, `model`, `name`, description and order. They grade what workers do only under question 3, option 2. Every coo case and C12 list `Agent`.
+- **Workers.** Dispatch cases grade the `Agent` calls that the lead makes: the brief, `model`, `name`, description and order. Workers are stubs (decision 3), so no case grades what a worker does. Every coo case and C12 list `Agent`.
 - **Call record.** An `llm` judge on the trace sees only its first 12 and last 12 messages, so it can miss a brief in the middle. So the helper plugin `evals/stub-workers/` (repo root) always appends each original `Agent` input to `.eval/agent-calls.jsonl` in the workspace, before any rewrite. Every `llm` grader on a brief reads that file (`{ source: file, path: .eval/agent-calls.jsonl }`). Each dispatch case lists the helper in `plugins:` (for example `../../../../evals/stub-workers`).
 - **Tools.** Cases list `allowed_tools: [Bash, Read, Glob, Grep, Edit, Write, Skill]`, plus `Agent` where the line above says. C1 lists none. The run grants `--allow-tools Bash Edit Write`.
 - **Limits.** The defaults are 10 turns and 300 seconds, and a hit turn cap counts as a run error. Light cases set `max_turns: 8`. Task cases set `max_turns: 30` and `timeout_seconds: 600`. Review cases set `max_turns: 30` and `timeout_seconds: 900`. Build step 1 adjusts them from the real runs.
@@ -119,7 +119,7 @@ Coverage is per rule, not per file. A PR's `Eval:` line names the cases that use
 
 - **Arms.** Base is the merge-base of the PR head and its base branch. Head is the PR's head commit. So the two arms differ only by the PR. Both run the same suite with `--ablation none`.
 - **The no-plugin arm is not the baseline.** It shows that a plugin helps, not that a change did no harm. It runs once, in build step 2.
-- **Runs.** Guard cases run 3 times per arm and climb cases 5 times (open question 2).
+- **Runs.** Guard cases run 3 times per arm and climb cases 5 times (decision 2).
 - **Guard result.** "guard k/n" counts the guard cases with no regression, `model-default` guards apart. A guard case "drops" when head passed fewer runs than base.
   - The script reruns each dropped case 6 more times on both arms.
   - It then runs a one-sided Fisher exact test on the passed and failed runs of those 6 new runs per arm. The runs that caused the rerun are left out, so they do not bias the test. When p < 0.05, the line says "regression". Otherwise it says "not significant" and gives the counts.
@@ -154,7 +154,7 @@ Each line passes the gate's grammar: it does not start with `n/a` or `<`.
 | Task (code, a fixture to read, one or two dispatches with stub workers) | C4 to C9, C12, K4 to K10 | $0.20 | about 3× secrets |
 | Review (read a 7 KB spec, write findings) | C10, C11 | $0.25 | about 4× secrets |
 
-Opus costs 2× sonnet per token. The table applies that ratio to whole runs, so it also doubles the haiku judge calls and assumes sonnet's turn counts. The rows use the recommended answers to questions 1 and 2 (opus; 3 runs for guard cases, 5 for climb cases) unless the row says otherwise.
+Opus costs 2× sonnet per token. The table applies that ratio to whole runs, so it also doubles the haiku judge calls and assumes sonnet's turn counts. The rows use decisions 1 and 2 (opus; 3 runs for guard cases, 5 for climb cases) unless the row says otherwise.
 
 | Run | core | coo |
 |---|---|---|
@@ -169,7 +169,7 @@ Opus costs 2× sonnet per token. The table applies that ratio to whole runs, so 
 - A PR measure of both suites costs about $56 with no rerun. If guards pass 95% of runs, reruns add about $6 on average.
 - At most, it is 4 main invocations ($86 in caps) plus 4 rerun invocations ($44), so $130.
 - Build steps 0 and 1 (probes, then one run of each case) cost about $8 once. The no-plugin arm in step 2 costs about $28 once.
-- With real workers (open question 3, option 2), coo costs about 2 to 3 times more. That figure is a guess with no measurement behind it.
+- Real workers instead of the stub would make coo cost about 2 to 3 times more. That figure is a guess with no measurement behind it.
 - An estimate that is too low trips the cap, which gives exit 2 and no `Eval:` line. Step 1 sets the caps from measured figures.
 - On a subscription seat, the figures are list-price estimates, and the runs count against the plan's usage. A runner on an API key pays them.
 
@@ -209,36 +209,20 @@ It does not tell:
 
 0. **Probes**, with `--runs 1 --ablation none`, about $1. Each item under "Not checked" above, and also:
    - A `tool_used Agent` grader sees `"model"`.
-   - The worker choice from question 3 works in a two-step coo case: a digest, then a dispatch that uses it. Under option 2, whether a worker's own tool calls reach the lead's graders.
+   - The stub workers (decision 3) work in a two-step coo case: a digest, then a dispatch that uses it.
    - If C1 fails, the run script writes that tree's `RULES.md` into `append_system_prompt` of every case in the copied suite. The rules then reach the session by another path, C1 is dropped, and the `Eval:` line says so.
 1. Write the two suites, the stub helper and the run script. Run each case once to measure the cost per case kind. Set the caps and the turn limits.
 2. Run `--aa` and the no-plugin arm with `--suite-ref` set to the suite branch, on PR 28's merge-base. Set the classes, the `model-default` tags and the noise floor.
 3. Open the suite PR. Its files are not gated paths. The PR body gives the A/A result.
 4. Measure PR 28. The A/A run on its merge-base serves as the base arm. Put the two `Eval:` lines in its body.
 
-## Open questions
+## Decisions
 
-1. **Which model runs the cases?**
-   1. Opus, the model that reads these rules in real sessions. (recommended: rule-following differs by model, and the suite must measure the real reader)
-   2. Sonnet, as in the secrets suite: half the list price.
-   3. Sonnet on every PR, and opus before a release.
-2. **Runs per case?**
-   1. 3 for every case: about $44 per PR measure of both suites on opus, before reruns.
-   2. 3 for guard cases and 5 for climb cases. (recommended: climb scores get finer steps; about $56)
-   3. 6 for every case: about $88.
-3. **How do workers run in dispatch cases?**
-   1. The helper plugin at `evals/stub-workers/`, shared by both suites, also rewrites each `Agent` call into a haiku task that returns a fixed report. The n-th call of a case gets `EVAL_STUB_REPLY_<n>` (for example, a digest first in K4), and later calls get "done". (recommended: cheap, and the lead's flow goes on. Risk: a reply that does not fit may push the lead to work by itself. Build step 0 checks this, and checks that the grader still sees the original call)
-   2. Real workers on tiny tasks: the real flow, about 2 to 3 times the coo cost.
-   3. No `Agent` tool. Grade the written plan only: cheapest, but not real use.
-4. **When must a PR carry a suite result?**
-   1. Every PR that changes a line a case uses. The line names those cases, and a change no case uses waives and names the gap. (recommended: the suites exist to replace the waivers)
-   2. Only changes to `RULES.md` and `SKILL.md` files. Other changes may waive and name the cases they skip.
-   3. Only when the owner asks for a run.
-5. **Should `.claude/eval-targets` gate the core rules once the core suite exists?** The gate's spec leaves `RULES.md` out "until such a suite exists". Decide after build step 0. If the rules need the fallback, wait.
-   1. Add `plugins/core/rules/RULES.md` and `plugins/core/hooks/session-rules.sh`.
-   2. Add `RULES.md` only. (recommended: C1 covers only the main-session half of `session-rules.sh`; add the hook when a case covers its subagent line)
-   3. No change.
-6. **What does the first run on PR 28 cover?**
-   1. Both suites: the A/A run on the merge-base, then head. About $84, plus the one-time build cost of about $36 (steps 0 and 1, and the no-plugin arm). (recommended: it sets the noise floor and measures every PR 28 line once)
-   2. Option 1, plus a fourth core arm with the longer Proportion wording that the bloat-fix work measured: about +$17.
-   3. The core suite only: about $51, plus about $22 of one-time build cost.
+The owner decided these on 2026-11-21. Each one is the option the review recommended.
+
+1. **Model:** opus runs the cases, because it is the model that reads these rules in real sessions.
+2. **Runs per case:** 3 for guard cases and 5 for climb cases.
+3. **Workers:** the shared helper plugin `evals/stub-workers/` records each `Agent` call and rewrites it into a haiku task with a fixed reply. The n-th call of a case gets `EVAL_STUB_REPLY_<n>`, and later calls get "done". Build step 0 checks that the lead's flow goes on and that the graders still see the original call.
+4. **When a PR carries a suite result:** every PR that changes a line a case uses. Its `Eval:` line names those cases. A change that no case uses waives and names the gap.
+5. **`.claude/eval-targets`:** add `plugins/core/rules/RULES.md` only, after build step 0. If step 0 shows that the rules need the fallback, wait.
+6. **First run on PR 28:** both suites. The A/A run on the merge-base comes first, then head.
