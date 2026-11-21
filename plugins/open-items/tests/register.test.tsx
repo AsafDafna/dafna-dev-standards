@@ -2,7 +2,7 @@ import type { AgentInfo, On, PaneOpenArgs, PromptSubmitInput, SessionAppendInput
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
-import { arrowTargetOf, fieldRowsOf, focusOrderOf, rowBackTo, rowsFor } from '../hooks/pane'
+import { FOCUS_BACKGROUND, arrowTargetOf, fieldRowsOf, focusOrderOf, rowBackTo, rowsFor } from '../hooks/pane'
 import { register } from '../hooks/register'
 import { leftoversIn, savedIn } from '../hooks/saved'
 import { DONE as DONE_PRESS, movedBy } from '../hooks/tasks'
@@ -58,9 +58,11 @@ const XCODE_TASK = {
 const PAGING_TASK = {
   tool: ADD,
   title: 'Pick a pagination strategy for /feed',
+  ask: 'Which pagination should /feed use?',
   detail: 'I lean towards cursor: the feed is append-only.',
   kind: 'decision',
   options: ['Cursor', 'Offset, capped at 10k'],
+  option_notes: ['Pages stay stable while new posts arrive.', 'Page numbers work; pages past 10k items do not.'],
 } as const
 
 const NOW = 1_000_000
@@ -144,6 +146,8 @@ function seat(on: On, store: Record<string, unknown> = {}) {
     attachMs: 0,
     /** Set, the engine can't list the plugin's panes. */
     isPanesFailing: false,
+    /** Set, the engine keeps the pane's focus ring where it is: each move is refused with this reason. */
+    refusingFocus: undefined as string | undefined,
     /** How many times the plugin asked which of its panes are open. */
     panesAsked: 0,
     /** How many times the plugin read its task list. */
@@ -300,7 +304,9 @@ function seat(on: On, store: Record<string, unknown> = {}) {
 
     return { value }
   })
-  on('ui.focus', () => ({}))
+  // The plugin's own `$.ui.focus` calls reach the first stand-in under Claude Code 2.1.310 (CI's pin) and only the second under 2.1.330.
+  on('ui.focus', () => (world.refusingFocus === undefined ? {} : { deny: world.refusingFocus }))
+  on('ui.focus', { plugin: '*' }, () => (world.refusingFocus === undefined ? {} : { deny: world.refusingFocus }))
   on('ui.scroll', ($, e) => {
     world.scrolls.push({ by: e.by, origin: e.origin.kind })
     return {}
@@ -1110,7 +1116,7 @@ describe('long titles', () => {
     expect(world.isPaneOpen).toBe(false)
   })
 
-  test('a long title is cut to one line in the list, and drawn whole, wrapping, with its age after it on its item screen', async ($, on) => {
+  test('a long title is cut to one line in the list, and drawn whole, wrapping, under its number and age on its item screen', async ($, on) => {
     seat(on, earlier([INSTRUMENTS, XCODE_LONG]))
     await start($)
 
@@ -1123,7 +1129,8 @@ describe('long titles', () => {
     const title = await ui.find({ type: 'Text', text: /Run xcodebuild/ })
 
     expect(title?.props.wrap).toBe('wrap')
-    expect(title?.text).toBe(`#2 ${XCODE_LONG.title}  3m`)
+    expect(title?.text).toBe(XCODE_LONG.title)
+    expect(await textOf(ui, 'header')).toContain('#2  3m')
   })
 
   test('a title past 80 characters, an older version left, is drawn whole', async ($, on) => {
@@ -1178,16 +1185,16 @@ describe('long titles', () => {
     // The field takes the ring as the item opens.
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-2' })
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(18)
 
     // A short answer leaves the hint room on its row.
     await ui.input({ key: 'reply-2', text: 'abc', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(17)
 
     await ui.input({ key: 'reply-2', text: 'abcdefghijk', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(18)
   })
 
   test('a field in a narrow pane, hidden and opened again, has the ring no more and asks for no squeezed row', async ($, on) => {
@@ -1197,7 +1204,7 @@ describe('long titles', () => {
     await runTasks($)
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-2' })
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(18)
 
     // Opened again, the ring starts on nothing: the field has no autoFocus.
     await ui.press({ key: 'hide' })
@@ -1205,7 +1212,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(24))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(17)
   })
 
   test('the transcript row keeps its label whole and wraps the title after it', async ($, on) => {
@@ -1424,7 +1431,7 @@ describe('the list screen', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
 
-    // The ring's move itself is the live harness's to check: the kit answers no plugin's `$.ui.focus`.
+    // The ring's move itself is the live harness's to check: the world here answers `$.ui.focus` and moves nothing.
     await $.ui.focus(ringTo('row-1'))
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     await $.ui.focus(ringTo('row-2'))
@@ -1738,6 +1745,9 @@ describe('the item screen', () => {
 
   const keysOf = async (ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>) => (await ui.findAll({ type: 'Button' })).map(button => button.key)
 
+  const litOf = async (ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>) =>
+    (await ui.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('choice-') && box.props.backgroundColor === FOCUS_BACKGROUND).map(box => box.key)
+
   test('the item screen shows the whole thread with line breaks', async ($, on) => {
     seat(
       on,
@@ -1765,8 +1775,9 @@ describe('the item screen', () => {
     expect(await textOf(ui, 'msg-1')).toBe('Which  console?\n The old one?')
     expect(await textOf(ui, 'msg-2')).toBe('The new one.\nIts link is at the top.')
     expect(await textOf(ui, 'msg-3')).toBe('Claude changed the item · 1m')
-    expect(await textOf(ui, 'thread')).toMatch(/Claude · 4m.*You · 2m.*Claude · 1m/s)
+    expect(await textOf(ui, 'thread')).toMatch(/You · 2m.*Claude · 1m/s)
     expect((await ui.find({ type: 'Text', text: /^Done when:/ }))?.text).toBe('Done when: The tokens are in the vault.\nEach expires in 30 days.')
+    expect((await ui.find({ type: 'Text', text: /^Done when:/ }))?.props.dimColor).toBeFalsy()
     expect((await ui.find({ type: 'Link' }))?.props.href).toBe('https://example.com/plan#tokens')
   })
 
@@ -1777,11 +1788,8 @@ describe('the item screen', () => {
     await $.tool.call({ tool: ADD, kind: 'action', title: 'Add the key', detail: 'Needed.' })
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-1' })
-    // The ring is in the field as the item opens: `⏎ send` squeezes under it at 24 columns.
-    const rows = world.opens.at(-1)?.rows ?? 0
     await $.ui.focus(ringTo('back'))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(rows - 1)
 
     await $.ui.focus(ringTo('reply-1'))
     await ui.input({ key: 'reply-1', text: 'd', kind: 'change' })
@@ -1871,7 +1879,7 @@ describe('the item screen', () => {
     }
 
     expect(await screenOf(1)).toEqual({
-      buttons: ['option-1 1 Cursor (recommended)', 'option-2 2 Offset, capped at 10k', 'later l Later', 'long - Long answer…', 'back b Back', 'hide - Hide'],
+      buttons: ['option-1 1 Cursor', 'option-2 2 Offset, capped at 10k', 'later l Later', 'long - Long answer…', 'back b Back', 'hide - Hide'],
       field: 'reply-1',
     })
     expect(await screenOf(2)).toEqual({ buttons: ['later l Later', 'long - Long answer…', 'back b Back', 'hide - Hide'], field: 'reply-2' })
@@ -1925,7 +1933,13 @@ describe('the item screen', () => {
     await ui.input({ key: 'reply-1', text: 'Is the feed ordered by time?', kind: 'change' })
     held.isOn = true
     const pressed = ui.press({ key: 'option-2' })
-    await $.tool.call({ tool: REPLY, id: 1, text: 'Two other ways now.', options: ['Keyset', 'Offset, capped at 1k'] })
+    await $.tool.call({
+      tool: REPLY,
+      id: 1,
+      text: 'Two other ways now.',
+      options: ['Keyset', 'Offset, capped at 1k'],
+      option_notes: ['Deep pages stay fast; no page numbers.', 'Page numbers work; pages past 1k items do not.'],
+    })
     held.letGo()
     await pressed
     await clock.advance(1000)
@@ -2032,6 +2046,131 @@ describe('the item screen', () => {
     await ui.press({ key: 'option-1' })
     expect(world.screen).toEqual({ kind: 'list' })
     expect(await keysOf(ui)).toEqual(['row-1', 'hide'])
+  })
+
+  test('a decision draws a header box, the ask line, and a box per option with its note; the other buttons sit below', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    const recommended = await ui.find({ key: 'choice-1' })
+    const other = await ui.find({ key: 'choice-2' })
+
+    expect(await textOf(ui, 'header')).toContain('DECISION')
+    expect(await textOf(ui, 'header')).toContain('Pick a pagination strategy for /feed')
+    expect(await textOf(ui, 'ask')).toContain('Which pagination should /feed use?')
+    expect(recommended?.text).toContain('Cursor')
+    expect(recommended?.text).toContain('★ recommended')
+    expect(recommended?.text).toContain('Pages stay stable while new posts arrive.')
+    expect(recommended?.props.borderColor).toBe('success')
+    expect(other?.text).toContain('Page numbers work; pages past 10k items do not.')
+    expect(other?.text).not.toContain('★')
+    expect(other?.props.borderColor).toBe('subtle')
+    expect(await textOf(ui, 'options')).toContain('Later')
+    expect(await textOf(ui, 'options')).not.toMatch(/Cursor|Offset/)
+  })
+
+  test("Claude's detail on an item made now is drawn as Markdown", async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call({ tool: ADD, kind: 'action', title: 'Add the webhook', detail: '1. Open settings\n2. Click New' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+
+    expect((await ui.find({ type: 'Markdown' }))?.text).toBe('1. Open settings\n2. Click New')
+  })
+
+  test('the Markdown drawn keeps no link that is not https, though a zero-width character splits it', async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call({ tool: ADD, kind: 'action', title: 'Open the page', detail: '[click]\u200b(http://evil)' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+
+    expect((await ui.find({ type: 'Markdown' }))?.text).toBe('click (http://evil)')
+  })
+
+  test('an item saved before 0.3 draws its detail as plain text at full brightness, as today', async ($, on) => {
+    seat(on, earlierItems([saved(1)]))
+    await start($)
+
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    const detail = await ui.find({ type: 'Text', text: 'Needed before the release.' })
+
+    expect(await ui.find({ type: 'Markdown' })).toBeUndefined()
+    expect(detail?.text).toBe('Needed before the release.')
+    expect(detail?.props.dimColor).toBeFalsy()
+  })
+
+  test("the user's reply on an item made now is drawn as plain text, not Markdown", async ($, on) => {
+    seat(on)
+    await start($)
+
+    await $.tool.call(XCODE_TASK)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    await ui.input({ key: 'reply-1', text: 'The **App** scheme' })
+
+    expect((await ui.findAll({ type: 'Markdown' })).map(markdown => markdown.text)).toEqual([XCODE_TASK.detail])
+    expect((await ui.find({ type: 'Text', text: 'The **App** scheme' }))?.text).toBe('The **App** scheme')
+  })
+
+  test('the option box with the ring gets the focus background, and loses it once the ring leaves or the pane loses the keys', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    const lit = () => litOf(ui)
+    const ringOn = async (element: string | undefined) => {
+      await $.ui.focus(element === undefined ? { component: 'Pane', requestId: 'open-items', origin: { kind: 'person' } } : ringTo(element))
+      await clock.settle()
+    }
+
+    await ringOn('option-2')
+    expect(await lit()).toEqual(['choice-2'])
+
+    await ringOn('reply-1')
+    expect(await lit()).toEqual([])
+
+    // A move the engine refuses leaves the ring, and the background, where they were.
+    await ringOn('option-1')
+    world.refusingFocus = 'Another move came first.'
+    await ringOn('reply-1')
+    expect(await lit()).toEqual(['choice-1'])
+    world.refusingFocus = undefined
+
+    // Off to one of the engine's own stops, such as the pane's close mark.
+    await ringOn(undefined)
+    expect(await lit()).toEqual([])
+
+    await ringOn('option-2')
+    await ui.redraw({ ...PANE.props, isFocused: false })
+    expect(await lit()).toEqual([])
+  })
+
+  test('a key typed into the reply field, the ring last on an option, clears that option box\'s focus background', async ($, on) => {
+    const { clock } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    await $.ui.focus(ringTo('option-2'))
+    await clock.settle()
+    expect(await litOf(ui)).toEqual(['choice-2'])
+
+    // Keys typed in the field say the ring is there, though no move said so.
+    await ui.input({ key: 'reply-1', text: 'x', kind: 'change' })
+    await clock.settle()
+
+    expect(await litOf(ui)).toEqual([])
   })
 })
 
@@ -3236,6 +3375,18 @@ describe('the mod\'s own tools', () => {
     }
   })
 
+  test('add_item and reply_item describe the ask and the option notes', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    const propertiesOf = (name: string) => (world.tools.find(tool => tool.name === name)?.inputSchema as { properties: Record<string, unknown> }).properties
+    expect(descriptionOf(world, 'add_item')).toContain('a detail of about 5 sentences or a short list')
+    expect(propertiesOf('add_item')).toHaveProperty('ask')
+    expect(propertiesOf('add_item')).toHaveProperty('option_notes')
+    expect(propertiesOf('reply_item')).toHaveProperty('ask')
+    expect(propertiesOf('reply_item')).toHaveProperty('option_notes')
+  })
+
   test("add_item's description carries the live-chat rule and the session-end rule", async ($, on) => {
     const { world } = seat(on)
     await start($)
@@ -4023,6 +4174,34 @@ describe('hand-off', () => {
     expect((world.store[OWN] as Saved).taken).toEqual([{ code: CODE, fromKey: OLD, ids: [{ was: 5, now: 6 }, { was: 8, now: 8 }] }])
   })
 
+  test('a hand-off of a decision keeps its ask and notes: take_items lists them', async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+    await $.tool.call({
+      tool: ADD,
+      title: 'Who else should hold a key?',
+      ask: 'Who else should hold a key?',
+      detail: 'One person holds both keys today.',
+      kind: 'decision',
+      options: ['Both keys now', 'Later'],
+      option_notes: ['Choose the second person now.', 'Keep one holder for now.'],
+    })
+
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    const code = codeIn(answerOf(await $.tool.call({ tool: HANDOFF })).result)
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code }))
+
+    expect(itemOf(world, 1)).toEqual(
+      expect.objectContaining({ askLine: 'Who else should hold a key?', optionNotes: ['Choose the second person now.', 'Keep one holder for now.'], isMarkdown: true }),
+    )
+    expect(taken.result).toContain('Ask: Who else should hold a key?')
+    expect(taken.result).toContain('- Both keys now: Choose the second person now.')
+  })
+
   test('take_items with a wrong code takes nothing', async ($, on) => {
     const { world } = seat(on, { [OLD]: HANDED })
     await start($)
@@ -4436,9 +4615,11 @@ describe('the README example', () => {
     await $.tool.call({
       tool: ADD,
       title: 'Decide whether to make the repo public',
+      ask: 'Make the repo public before the npm release?',
       detail: 'npm will link to it, and its whole git history becomes public. I found no secrets in it.',
       kind: 'decision',
       options: ['Make it public', 'Keep it private'],
+      option_notes: ['npm links to the source and its whole history.', 'npm shows the package with no source link.'],
     })
     await ui.press({ key: 'row-2' })
     await ui.press({ key: 'option-1' })
@@ -4504,9 +4685,11 @@ describe('the four kinds', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
+    ask: 'Ship the feed rewrite this week?',
     detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
+    option_notes: ['The mobile release goes out on time.', 'The mobile release waits for the rewrite.'],
     recommended: 'Yes',
   } as const
 
@@ -4528,8 +4711,10 @@ describe('the four kinds', () => {
       return `${button?.props.hotkey}: ${button?.props.label}`
     }
 
-    expect(await labelOf('option-1')).toBe('1: Yes (recommended)')
+    expect(await labelOf('option-1')).toBe('1: Yes')
     expect(await labelOf('option-2')).toBe('2: Not yet')
+    expect(await textOf(ui, 'choice-1')).toContain('★ recommended')
+    expect(await textOf(ui, 'choice-2')).not.toContain('★')
     // "Other…" is the reply field.
     expect(await ui.find({ type: 'Input', key: 'reply-1' })).toBeDefined()
   })
@@ -4819,7 +5004,7 @@ describe('the four kinds', () => {
     await ui.press({ key: 'row-1' })
 
     expect(world.status).toBe('☐ 1 decision · /open-items')
-    expect((await ui.find({ type: 'Button', key: 'option-1' }))?.props.label).toBe('Yes (recommended)')
+    expect((await ui.find({ type: 'Button', key: 'option-1' }))?.props.label).toBe('Yes')
   })
 
   test('a seen info item is not brought back by a resumed session', async ($, on) => {
@@ -4835,9 +5020,11 @@ describe('the pane groups items by kind', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
+    ask: 'Ship the feed rewrite this week?',
     detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
+    option_notes: ['The mobile release goes out on time.', 'The mobile release waits for the rewrite.'],
   } as const
   const INFO = { tool: ADD, title: 'The migration ran clean', detail: 'Nothing for you to do.', kind: 'info' } as const
 
@@ -4908,7 +5095,14 @@ describe('the pane groups items by kind', () => {
 })
 
 describe('the alert', () => {
-  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ADD, title, detail: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
+  const ask = (kind: 'decision' | 'question' | 'action', title: string) =>
+    ({
+      tool: ADD,
+      title,
+      detail: 'Needed.',
+      kind,
+      ...(kind === 'decision' ? { ask: 'Go ahead?', options: ['Yes', 'No'], option_notes: ['Go ahead now.', 'Wait for now.'] } : {}),
+    }) as const
   const DECISION = ask('decision', 'Ship the feed rewrite this week')
   const QUESTION = ask('question', 'Which branch is the release cut from')
 
@@ -5058,9 +5252,11 @@ describe('threads', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
+    ask: 'Ship the feed rewrite this week?',
     detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
+    option_notes: ['The mobile release goes out on time.', 'The mobile release waits for the rewrite.'],
     recommended: 'Yes',
   } as const
 
@@ -5141,7 +5337,15 @@ describe('threads', () => {
     await start($)
 
     await $.tool.call(DECISION)
-    const changed = resultOf(await $.tool.call({ tool: REPLY, id: 1, options: ['Ship Tuesday', 'Ship Friday', 'Hold'], recommended: 'Ship Friday' }))
+    const changed = resultOf(
+      await $.tool.call({
+        tool: REPLY,
+        id: 1,
+        options: ['Ship Tuesday', 'Ship Friday', 'Hold'],
+        option_notes: ['Before the review.', 'After the review.', 'Wait for the mobile team.'],
+        recommended: 'Ship Friday',
+      }),
+    )
     const task = itemOf(world, 1)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'row-1' })
@@ -5151,10 +5355,10 @@ describe('threads', () => {
     expect(task?.options).toEqual(['Ship Tuesday', 'Ship Friday', 'Hold'])
     expect(task?.recommended).toBe('Ship Friday')
     expect(task?.thread.at(-1)).toEqual({ from: 'claude', text: '', event: 'changed', atMs: NOW })
-    expect((await ui.find({ type: 'Button', key: 'option-2' }))?.props.label).toBe('Ship Friday (recommended)')
+    expect((await ui.find({ type: 'Button', key: 'option-2' }))?.props.label).toBe('Ship Friday')
 
     // A recommended option the new options leave out goes with it.
-    await $.tool.call({ tool: REPLY, id: 1, options: ['Ship now', 'Hold'] })
+    await $.tool.call({ tool: REPLY, id: 1, options: ['Ship now', 'Hold'], option_notes: ['Ship before the review.', 'Wait for the mobile team.'] })
 
     expect(itemOf(world, 1)?.recommended).toBeUndefined()
   })
@@ -5194,6 +5398,26 @@ describe('threads', () => {
     expect(listed).toContain('Which one?')
     expect(listed).toContain('v2.3.0')
     expect(whole).toContain('Which branch is the release cut from?')
+  })
+
+  test('list_items shows the ask, and each option with its note', async ($, on) => {
+    seat(on)
+    await start($)
+    await $.tool.call({
+      tool: ADD,
+      title: 'Who else should hold a key?',
+      ask: 'Who else should hold a key?',
+      detail: 'One person holds both keys today.',
+      kind: 'decision',
+      options: ['Both keys now', 'Later'],
+      option_notes: ['Choose the second person now.', 'Keep one holder for now.'],
+      recommended: 'Both keys now',
+    })
+
+    const listed = resultOf(await $.tool.call({ tool: LIST })).result ?? ''
+
+    expect(listed).toContain('  Ask: Who else should hold a key?\n  Options:\n  - Both keys now: Choose the second person now.\n  - Later: Keep one holder for now.\n  Recommended: Both keys now')
+    expect(listed).not.toContain(' | ')
   })
 
   test('close_item resolved is refused until the thread holds a message from the user', async ($, on) => {

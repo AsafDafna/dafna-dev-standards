@@ -4,6 +4,7 @@ import type { AgentStatus, EngineInterface, PromptSubmitResult, Register, Render
 import type { Header, Held, Offer, Saved, Screen, Taken, Task } from '../types'
 import {
   DONE,
+  MAX_ASK,
   MAX_NOTE,
   MAX_TITLE,
   SEEN,
@@ -50,16 +51,20 @@ import {
 } from './tasks'
 import type { Move } from './tasks'
 import {
+  ASK_BAR,
   BACK,
   BUTTON_GAP,
+  FOCUS_BACKGROUND,
   HELD_BUTTONS,
   HIDE,
+  KIND_COLOR,
   LINK_LABEL,
   LONG_ANSWER,
   MAX_SHOWN_TITLE,
   MOVED_LABEL,
   MOVING_LABEL,
   OFFER_BUTTONS,
+  RECOMMENDED_MARK,
   REPLY_LABEL,
   REPLY_PLACEHOLDER,
   ROW_INDENT,
@@ -67,8 +72,6 @@ import {
   SUBMIT_LABEL,
   TAKE_BACK,
   UNCLAIMED_NOTE,
-  actionsOf,
-  ageOf,
   arrivedOf,
   arrowTargetOf,
   doneWhenOf,
@@ -76,14 +79,17 @@ import {
   focusOrderOf,
   groupsOf,
   hasReplyField,
+  headerLineOf,
   heldNoticeOf,
   heldOf,
   hiddenOf,
   hintOf,
   insteadOf,
+  itemButtonsOf,
   linkOf,
   marksOf,
   movingOf,
+  nameOf,
   numberCellsOf,
   offerOf,
   openTaskOf,
@@ -93,9 +99,8 @@ import {
   rowBackTo,
   rowTitleOf,
   rowsFor,
-  titleOf,
 } from './pane'
-import type { Entry, PaneView } from './pane'
+import type { Action, Entry, PaneView } from './pane'
 import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed, withTaken } from './saved'
 import { numbersOf, plural, printable } from './text'
 
@@ -180,7 +185,7 @@ const TOOLS: readonly ToolSpec[] = [
       "Put an item in the user's Open items pane. It stays until the user acts on it, and you keep working while it waits. The response reaches you as a message, or through list_items.",
       '',
       'When to add an item:',
-      '- While background agents, shell commands or monitors run, add an item for a short ask (about 3 sentences with its options). A longer ask waits for the chat recap when the batch ends. Do not repeat the item in the chat.',
+      '- While background agents, shell commands or monitors run, add an item for a short ask: a detail of about 5 sentences or a short list. The `ask` line and the option notes do not count. A longer ask waits for the chat recap. Do not repeat the item in the chat.',
       "- When no background work runs, ask in the chat. add_item refuses in a live chat: the user's last two inputs were typed prompts, the last under five minutes ago, and no background work runs.",
       "- Add only what is the user's: their decision, a question only they can answer, an action only they can do, or a finding they must see.",
       '- One item per ask. To change an ask, use reply_item, not a new item.',
@@ -189,7 +194,7 @@ const TOOLS: readonly ToolSpec[] = [
       '',
       'How to write an item:',
       '- Plain, simple English, clear without the chat, with no internal IDs.',
-      '- An imperative title; the rest goes in the detail.',
+      '- An imperative title, the ask in `ask`, a note for each option, and the rest in a short detail.',
       '- Numbers that are not item numbers have no "#": "PR 787", not "#787".',
       "- If you can publish artifact pages, put tables, diffs and long step lists on the session's one artifact page, and give the URL of its section in link.",
       '- For a secret, ask the user to put it where it belongs and mark the item done. Do not ask them to paste it.',
@@ -208,13 +213,28 @@ const TOOLS: readonly ToolSpec[] = [
             "decision: the user picks one of 2 to 4 options; mark the one you suggest with recommended. question: you need the user's words (an error, a log, test results). action: the user does something you cannot do, then marks it done. info: something the user must see; it asks nothing, and no response reaches you.",
         },
         title: { type: 'string', description: 'Under 80 characters.' },
-        detail: { type: 'string', description: 'What you need from the user and why. It keeps its line breaks, up to 4000 characters.' },
+        detail: {
+          type: 'string',
+          description: 'What the user needs to know and why, in about 5 sentences or a short list. Markdown shows formatted. Do not repeat the options here. Up to 4000 characters.',
+        },
+        ask: {
+          type: 'string',
+          description:
+            'One sentence, under 150 characters, shown first: for a decision or a question, what the user answers; for an action, what the user must do; for info, what the user must know. Required for a decision.',
+        },
         options: {
           type: 'array',
           items: { type: 'string' },
           minItems: 2,
           maxItems: 4,
           description: 'For decision only: short options.',
+        },
+        option_notes: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 4,
+          description: 'For decision only, and required there: one line per option, in the order of options, under 120 characters, on what the option means for the user.',
         },
         recommended: { type: 'string', description: 'For decision only: spelled exactly as in options.' },
         done_when: { type: 'string', description: 'Optional, for action only: what counts as done.' },
@@ -229,7 +249,7 @@ const TOOLS: readonly ToolSpec[] = [
       "Add a message to an item's thread, change the item in place, or both. A reply does not close the item.",
       '',
       '- When the user replies on an item, answer there with reply_item, not in the chat.',
-      '- To change the ask, change the item in place (title, options, recommended, done_when or link), and say in text why.',
+      '- To change the ask, change the item in place (title, ask, options, option_notes, recommended, done_when or link), and say in text why.',
       '- After the user pressed Later, go on without the item. It stays in the pane, and you can still reply on it.',
       '- Write as "How to write an item" in add_item says.',
     ].join('\n'),
@@ -239,12 +259,20 @@ const TOOLS: readonly ToolSpec[] = [
         id: { type: 'number', description: "The item's number." },
         text: { type: 'string', description: 'Your message to the user. It keeps its line breaks, up to 4000 characters.' },
         title: { type: 'string', description: 'A new title, under 80 characters.' },
+        ask: { type: 'string', description: 'A new ask: one sentence, under 150 characters.' },
         options: {
           type: 'array',
           items: { type: 'string' },
           minItems: 2,
           maxItems: 4,
           description: 'For a decision: new options. A recommended option that is not among them is dropped.',
+        },
+        option_notes: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 4,
+          description: 'For a decision: one note per option, in order. New options need new notes.',
         },
         recommended: { type: 'string', description: 'For a decision: spelled exactly as in its options.' },
         link: { type: 'string', description: 'A new URL for the long detail.' },
@@ -1069,12 +1097,15 @@ export const register: Register = on => {
   // The ring on the reply field lets the terminal wrap what is typed there:
   // the pane asks for the rows that takes, and for one row once it leaves.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    const was = live.ring
     const moved = await next(e)
 
     if (moved.deny === undefined) {
       live.ring = e.element
       void refit($)
     }
+
+    ringMoved($, was, e.element)
 
     return moved
   })
@@ -1114,7 +1145,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const emptied = live.emptied.get(e.surface)
     const elements = $.ui.resolve(e)
-    const { Box, Text, Button, Link } = elements
+    const { Box, Text, Button, Link, Markdown } = elements
     // The mobile app draws no field yet: replies wait for a surface that does. The engine fills an element
     // a surface lacks with one that draws nothing, so the surface says, not the table.
     const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
@@ -1182,12 +1213,17 @@ export const register: Register = on => {
       const heldText = heldOf(task, view)
       const thread = entriesOf(task, view.nowMs)
       const [detail, ...newest] = thread.entries
-      const actions = actionsOf(task)
+      const { choices, buttons } = itemButtonsOf(task)
       const isField = hasReplyField(task, view)
       const drawn = focusOrderOf(shown)
+      const color = KIND_COLOR[task.kind]
+      const headerLine = headerLineOf(task, view)
+      const button = (action: Action) => (
+        <Button key={action.key} plain hotkey={action.hotkey} label={action.label} onPress={() => pressOn($, task.id, action.move, drawn)} />
+      )
 
       // A Text keeps no key: each entry's Box holds it.
-      const entry = ({ i, head, text }: Entry) => [
+      const entry = ({ i, head, text, look }: Entry) => [
         ...(head === undefined
           ? []
           : [
@@ -1198,9 +1234,13 @@ export const register: Register = on => {
               </Box>,
             ]),
         <Box key={`msg-${i}`} flexDirection="column">
-          <Text dimColor={head === undefined} wrap="wrap">
-            {text}
-          </Text>
+          {look === 'markdown' ? (
+            <Markdown text={text} />
+          ) : (
+            <Text dimColor={look === 'event'} wrap="wrap">
+              {text}
+            </Text>
+          )}
         </Box>,
       ]
 
@@ -1208,70 +1248,89 @@ export const register: Register = on => {
         <Box flexDirection="column">
           {unsaved}
           <Box key={`item-${task.id}`} flexDirection="column" flexShrink={0}>
-            <Box flexDirection="row">
-              {/* The glyph keeps its cells beside a title that wraps. */}
-              <Box flexShrink={0}>
-                <Text color="yellow">{'☐ '}</Text>
-              </Box>
-              {/* One text, so a long title wraps under itself and the age follows it. */}
-              <Text wrap="wrap">
-                <Text bold>{titleOf(task)}</Text>
-                <Text dimColor>{ageOf(task, view)}</Text>
+            <Box key="header" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+              <Text>
+                <Text backgroundColor={color} color="inverseText" bold>
+                  {headerLine.label}
+                </Text>
+                <Text dimColor>{headerLine.rest}</Text>
+              </Text>
+              <Text bold wrap="wrap">
+                {nameOf(task)}
               </Text>
             </Box>
-            <Box flexDirection="column" paddingLeft={2}>
-              <Box key="thread" flexDirection="column">
-                {detail === undefined ? null : entry(detail)}
-                {thread.hidden === 0 ? null : (
-                  <Box key="earlier" flexDirection="column">
-                    <Text dimColor wrap="wrap">
-                      {hiddenOf(thread.hidden)}
-                    </Text>
-                  </Box>
-                )}
-                {newest.flatMap(entry)}
-              </Box>
-              {link === undefined ? null : (
-                <Box key="link" flexDirection="row">
-                  <Box flexShrink={0}>
-                    <Text dimColor>{LINK_LABEL}</Text>
-                  </Box>
-                  <Link href={link} />
+            {task.askLine === undefined ? null : (
+              <Box key="ask" flexDirection="row" marginTop={1}>
+                <Box flexShrink={0}>
+                  <Text color={color}>{ASK_BAR}</Text>
                 </Box>
-              )}
-              {doneWhen === undefined ? null : (
-                <Text dimColor wrap="wrap">
-                  {doneWhen}
+                <Text color={color} bold wrap="wrap">
+                  {printable(task.askLine, MAX_ASK)}
                 </Text>
-              )}
-              {actions.length === 0 && !isField ? null : (
-                <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-                  {actions.map(action => (
-                    <Button
-                      key={action.key}
-                      plain
-                      hotkey={action.hotkey}
-                      label={action.label}
-                      onPress={() => pressOn($, task.id, action.move, drawn)}
-                    />
-                  ))}
-                  {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
-                </Box>
-              )}
-              {heldText === undefined ? null : (
-                <Box key="held" flexDirection="column">
-                  <Text color="yellow" wrap="wrap">
-                    {heldNoticeOf(task)}
+              </Box>
+            )}
+            <Box key="thread" flexDirection="column" marginTop={1}>
+              {detail === undefined ? null : entry(detail)}
+              {thread.hidden === 0 ? null : (
+                <Box key="earlier" flexDirection="column">
+                  <Text dimColor wrap="wrap">
+                    {hiddenOf(thread.hidden)}
                   </Text>
-                  <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-                    <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
-                    <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
-                  </Box>
                 </Box>
               )}
+              {newest.flatMap(entry)}
             </Box>
-            {/* The terminal sizes a field by the pane's body, whatever box holds it:
-                it goes out of the item's indent, across the body's whole width. */}
+            {link === undefined ? null : (
+              <Box key="link" flexDirection="row">
+                <Box flexShrink={0}>
+                  <Text dimColor>{LINK_LABEL}</Text>
+                </Box>
+                <Link href={link} />
+              </Box>
+            )}
+            {doneWhen === undefined ? null : <Text wrap="wrap">{doneWhen}</Text>}
+            {choices.length === 0 ? null : (
+              <Box flexDirection="column" marginTop={1}>
+                {choices.map(({ action, note, isRecommended }, i) => (
+                  <Box
+                    key={`choice-${i + 1}`}
+                    flexDirection="column"
+                    borderStyle="round"
+                    borderColor={isRecommended ? 'success' : 'subtle'}
+                    paddingX={1}
+                    hover={{ backgroundColor: FOCUS_BACKGROUND }}
+                    backgroundColor={e.props.isFocused && live.ring === action.key ? FOCUS_BACKGROUND : undefined}
+                  >
+                    <Box flexDirection="row" flexWrap="wrap">
+                      {button(action)}
+                      {isRecommended ? (
+                        <Box flexShrink={0}>
+                          <Text color="success">{RECOMMENDED_MARK}</Text>
+                        </Box>
+                      ) : null}
+                    </Box>
+                    {note === undefined ? null : <Text wrap="wrap">{note}</Text>}
+                  </Box>
+                ))}
+              </Box>
+            )}
+            {buttons.length === 0 && !isField ? null : (
+              <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP} marginTop={1}>
+                {buttons.map(button)}
+                {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
+              </Box>
+            )}
+            {heldText === undefined ? null : (
+              <Box key="held" flexDirection="column">
+                <Text color="yellow" wrap="wrap">
+                  {heldNoticeOf(task)}
+                </Text>
+                <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+                  <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
+                  <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
+                </Box>
+              </Box>
+            )}
             {!isField || Input === undefined ? null : (
               <Input
                 key={key}
@@ -1995,10 +2054,22 @@ function inlineSeats(): Seat[] {
   return [...live.seats.values()].flat().filter(seat => seat.isInline)
 }
 
+/**
+ * Draws the pane again when the ring left `was` for `now` and either is an
+ * option: its box is lit from `live.ring`, which no render input carries.
+ */
+function ringMoved($: EngineInterface, was: string | undefined, now: string | undefined) {
+  if ([was, now].some(key => key?.startsWith('option-'))) {
+    $.ui.invalidate('ui.render')
+  }
+}
+
 /** Keeps what the user typed in the field keyed `key`, and the rows it takes. */
 async function typed($: EngineInterface, key: string, value: string) {
   // Keys typed in a field say the ring is on it, though no move said so.
+  const was = live.ring
   live.ring = key
+  ringMoved($, was, key)
   live.drafts.set(key, value)
   await refit($)
 }
