@@ -159,7 +159,11 @@ guards=$(printf '%s\n' "$classes" | awk -F '\t' '{
   for (i = 1; i <= m; i++) if (t[i] == "guard") { print $1; break }
 }' | tr '\n' ' ')
 
-case_hash() { git -C "$repo" rev-parse "$suite_sha:$evals_path/$1"; }
+# checks.json holds only free grader samples, so a change there leaves the paid run as it was.
+case_hash() {
+  git -C "$repo" ls-tree "$suite_sha:$evals_path/$1" | awk -F '\t' '$2 != "checks.json"' |
+    git -C "$repo" hash-object --stdin
+}
 
 case $mode in
   main)
@@ -403,7 +407,8 @@ if [ "$mode" = main ]; then
   add_tree base "$base_sha"
   add_tree head "$head_sha"
   if [ -n "$reuse" ]; then
-    cp "$reuse/a2.json" "$results/base.json" || die "cannot copy $reuse/a2.json"
+    # The A/A run paid for this arm, so the Eval line's cost leaves it out.
+    jq '.costUsd = 0' "$reuse/a2.json" >"$results/base.json" || die "cannot copy $reuse/a2.json"
     say "base arm reused from $reuse/a2.json"
   else
     run_eval base base "$cap_main" none

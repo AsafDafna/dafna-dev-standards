@@ -213,7 +213,7 @@ scripts/eval-compare.sh core --no-plugin <commit> [--suite-ref <ref>] [--jobs <n
 - **Env.** In its own environment, unset `CLAUDE_EFFORT` and every `ANTHROPIC_*` and `CLAUDE_CODE_*` variable except the six that the run settings rule keeps. The run settings file blanks the same names where the user settings set them, so no call relies on `env -u` alone. Write the names (never the values), from both places, to `meta.txt`.
 - **Suite copy.** `rm -rf <tree>/plugins/<suite>/evals <tree>/evals`, then `git archive <suite-ref> plugins/<suite>/evals evals/stub-workers | tar -x -C <tree>`.
 - **Results.** In `…/dds-evals/<date>/<suite>-<time>/` (never inside the repo; under `$HOME`): `base.json` and `head.json` (A/A: `a1.json`, `a2.json`), `rerun-<case>-<arm>.json`, `exit-codes`, `classes.tsv`, `run-settings.json`, on macOS `sandbox-git/git`, and `meta.txt` with the suite ref, the suite hash, base, head, `claude --version`, the run's `git --version`, the env names, the shared hash and a hash for each case.
-- **Hashes.** The suite hash is `git rev-parse --short <ref>:plugins/<suite>/evals`. The shared hash covers `<ref>:plugins/<suite>/evals/scaffold.sh` and `<ref>:evals/stub-workers`. Each case's hash is `git rev-parse <ref>:plugins/<suite>/evals/<case>`.
+- **Hashes.** The suite hash is `git rev-parse --short <ref>:plugins/<suite>/evals`. The shared hash covers `<ref>:plugins/<suite>/evals/scaffold.sh` and `<ref>:evals/stub-workers`. Each case's hash covers `<ref>:plugins/<suite>/evals/<case>` without its `checks.json`: the samples are free, so a change there leaves the paid run as it was.
 - **Base reuse.** `--reuse-base` reuses `a2.json` only when the base commit, the CLI version, the git version, the shared hash and every case's hash match. Otherwise it exits 2 and names the mismatch. With `--reuse-base`, the script still makes the base tree, for the reruns.
 - **Update.** `--update` reruns each listed case on both A/A trees, with the case's own `runs`, at `cap_rerun`. It merges the results into `a1.json` and `a2.json` and updates their case hashes.
   - It refuses more than 4 cases, a changed shared hash or git version, or a results folder that `meta.txt` marks as updated before.
@@ -281,10 +281,10 @@ Caps (Task 14's measured figures: one arm costs about $8.40 for core and $9.90 f
 - **First A/A run:** arms $13 × 2 (core) and $15 × 2 (coo), up to 3 Fisher reruns per suite on both arms at $4, and the no-plugin arm at $8. Expected about $44; at most $112. About 35 minutes at `--jobs 4`.
 - **The one update:** at most 4 cases per suite, on 2 arms, at $4. Expected about $5; at most $64.
 
-- [ ] `S=$(git -C <wt> rev-parse HEAD)`. Run `<wt>/scripts/eval-compare.sh core --aa 2e958ba --suite-ref "$S" --jobs 4`, the same for `coo`, then `<wt>/scripts/eval-compare.sh core --no-plugin 2e958ba --suite-ref "$S" --jobs 4`. The script targets each tree's root and passes the run settings file on every call. So every arm, the no-plugin arm too, gets the same blanked variables and, on macOS, the sandbox git, because they come from the call and not from a plugin.
+- [ ] `S=$(git -C <wt> rev-parse HEAD)`. Run `<wt>/scripts/eval-compare.sh core --no-plugin 2e958ba --suite-ref "$S" --jobs 4` first: it is the cheapest call, so it is the first real test of the script. Then run `<wt>/scripts/eval-compare.sh core --aa 2e958ba --suite-ref "$S" --jobs 4`, then the same for `coo`. Run them one at a time, because they share one rate limit. The script targets each tree's root and passes the run settings file on every call. So every arm, the no-plugin arm too, gets the same blanked variables and, on macOS, the sandbox git, because they come from the call and not from a plugin.
 - [ ] Tag the guards in the `no-plugin` list `model-default`. Put each suite's A/A climb difference in its README as the noise floor.
 - [ ] Fix each guard that failed an A/A run or got a Fisher flag, or move it to climb (`classes.tsv` and `runs: 5`). Commit. Then run `--aa 2e958ba --suite-ref <new head> --update <A/A dir> --cases "<changed>" --jobs 4` once per suite.
-- [ ] Stop for the lead's decision, with no further paid run, on a permutation flag, exit 4 from the update, more than 4 changed cases in a suite, a change to `scaffold.sh` or the stub helper, or any non-zero exit.
+- [ ] Stop for the lead's decision, with no further paid run, on a permutation flag, exit 4 from the update, more than 4 changed cases in a suite, a change to `scaffold.sh` or the stub helper, or any non-zero exit. An API error in one run (a rate limit or a usage limit) makes the harness exit 1, so the script ends the invocation; a rerun of the whole invocation is outside the caps and needs the owner's yes.
 - [ ] Done when both `--aa` runs printed an `A/A` line and exited 0, or the lead has the stop reason.
 
 ### Task 17: suite PR, build step 3 (the lead). NEEDS THE OWNER'S YES to push and to open the PR
@@ -296,13 +296,13 @@ Caps (Task 14's measured figures: one arm costs about $8.40 for core and $9.90 f
 
 Caps: head $13 for core and $15 for coo, plus up to 3 Fisher reruns per suite on both arms at $4. Expected about $21; at most $76. Add $28 if the merge-base moved and the base arm must run fresh.
 
-- [ ] Find the commits:
+- [ ] Set the commits by hand, because PR 28 is merged and its head now merges main:
   ```sh
-  H=$(gh pr view 28 --json headRefOid -q .headRefOid)
-  B=$(git -C <wt> merge-base origin/main "$H")
+  B=2e958ba
+  H=e7bdc90
   S=$(git -C <wt> rev-parse HEAD)
   ```
-  Pass `--reuse-base <A/A dir>` only when `$B` is `2e958ba…`. The reuse gate checks the case hashes, so commits that change only `classes.tsv` or a README do not void it. It also checks the git version, so after an Xcode update the base arm runs fresh. The script passes the run settings file on every call, the reruns too, so neither arm relies on `env -u` alone.
+  `e7bdc90` is PR 28's head before it merged main, and `2e958ba` is its merge-base, so the line's "merge-base" label is true. The later head `74e2d94` changes no file under `plugins/core` or `plugins/coo`. Do not take `H` from `gh pr view` or `B` from `git merge-base`: for the merged PR they give the same commit, and the line would compare head with head. Pass `--reuse-base <A/A dir>`. The reuse gate checks the case hashes, so commits that change only `classes.tsv` or a README do not void it. It also checks the git version, so after an Xcode update the base arm runs fresh. The script passes the run settings file on every call, the reruns too, so neither arm relies on `env -u` alone.
 - [ ] Check G passes. Run `<wt>/scripts/eval-compare.sh core "$B" "$H" --suite-ref "$S" [--reuse-base …] --covers "C3 C9 C10 C11 C12 and every guard" --jobs 4`. Then run the same for `coo`, with `--covers "K9 K10 and every guard"`. Each prints one `Eval:` line and exits 0.
 - [ ] Give both lines to the lead. Run the leak pattern on the body file. After the owner's yes, run `gh pr edit 28 --body-file <file>`.
 

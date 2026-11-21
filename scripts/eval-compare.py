@@ -123,6 +123,10 @@ def runs_label(classes, results, kind):
 def guard_part(classes, base_runs, head_runs, rerun_base, rerun_head):
     model_default = [n for n, tags in classes.items() if {"guard", "model-default"} <= tags]
     notes = [f"+{len(model_default)} model-default"] if model_default else []
+    for name in counted_guards(classes):
+        b, h = base_runs[name], head_runs[name]
+        if passes(b) < len(b) or passes(h) < len(h):
+            notes.append(f"{case_id(name)} runs {passes(b)}/{len(b)} -> {passes(h)}/{len(h)}")
     unresolved = []
     regressions = 0
     for name in find_drops(classes, base_runs, head_runs):

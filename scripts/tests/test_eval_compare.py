@@ -124,7 +124,8 @@ class LineTest(CliTest):
             res.stdout,
             "Eval: core-suite abc1234, merge-base 1111111 -> head 2222222, opus, "
             "3/5 runs per guard/climb case: "
-            "guard 2/2 -> 1/2 (+1 model-default; C3 rerun 6/6 -> 1/6, Fisher p=0.008, regression); "
+            "guard 2/2 -> 1/2 (+1 model-default; C3 runs 3/3 -> 2/3; "
+            "C3 rerun 6/6 -> 1/6, Fisher p=0.008, regression); "
             "climb 0.25 -> 0.35 (+0.10, p=1.00, within noise); "
             "run errors 0/1; $3.60; cases for this change: C9 C10\n",
         )
@@ -154,6 +155,19 @@ class LineTest(CliTest):
             "Eval: coo-suite def5678, A/A 3333333, opus, 3/5 runs per guard/climb case: "
             "guard 1/1 -> 1/1; climb 0.00 -> 1.00 (+1.00, p=0.000); run errors 0/0; $2.00\n",
         )
+
+    def test_guard_failing_on_both_arms_is_named(self):
+        classes = self.write("k.tsv", "k1-alpha\tguard\nk2-bravo\tguard\n")
+        arm = {"k1-alpha": [0, 0, 0], "k2-bravo": [1, 1, 1]}
+        res = self.cli(
+            "line", "--suite", "coo", "--suite-hash", "def5678", "--model", "opus",
+            "--aa", "3333333", "--classes", classes,
+            "--base", self.write("b.json", make_result(arm, 1.0)),
+            "--head", self.write("h.json", make_result(arm, 1.0)),
+            "--exit-codes", "0 0",
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(": guard 2/2 -> 2/2 (K1 runs 0/3 -> 0/3); climb none;", res.stdout)
 
     def test_partial_no_line(self):
         head = load("compare-head.json")
@@ -202,7 +216,8 @@ class LineTest(CliTest):
         self.assertEqual(
             res.stdout,
             "Eval: coo-suite def5678, A/A 3333333, opus, 3/5 runs per guard/climb case: "
-            f"guard 4/4 -> 3/4 (K1 {rerun}; K2 {rerun}; K3 {rerun}; unresolved: K4); "
+            "guard 4/4 -> 3/4 (K1 runs 3/3 -> 2/3; K2 runs 3/3 -> 2/3; K3 runs 3/3 -> 2/3; "
+            f"K4 runs 3/3 -> 2/3; K1 {rerun}; K2 {rerun}; K3 {rerun}; unresolved: K4); "
             "climb 0.00 -> 0.00 (+0.00, p=1.00, within noise); run errors 0/1; $5.50\n",
         )
 

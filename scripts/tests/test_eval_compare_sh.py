@@ -225,6 +225,7 @@ class EvalCompareShTest(unittest.TestCase):
         aa_dir = str(self.results_dir(aa))
         mismatches = {
             "case": (["--suite-ref", self.suite_variant("v-case", f"{EVALS}/c1-alpha/prompt.md", "changed\n")], {}, "c1-alpha"),
+            "grader": (["--suite-ref", self.suite_variant("v-grader", f"{EVALS}/c1-alpha/graders/g.md", "new\n")], {}, "c1-alpha"),
             "scaffold": (["--suite-ref", self.suite_variant("v-scaffold", f"{EVALS}/scaffold.sh", "changed\n")], {}, "shared"),
             "stub": (["--suite-ref", self.suite_variant("v-stub", "evals/stub-workers/hooks/stub.sh", "changed\n")], {}, "shared"),
             "cli": ([], {"FAKE_CLAUDE_VERSION": "9.9.9 (Claude Code)"}, "claude version"),
@@ -245,15 +246,20 @@ class EvalCompareShTest(unittest.TestCase):
         with self.subTest("match"):
             before = len(self.eval_calls())
             res = self.run_sh("core", self.base, self.head, "--reuse-base", aa_dir)
-            self.assert_line(res)
+            # This call paid for the head arm (11 runs) and two C2 reruns (6 runs each), at $0.10 a run.
+            self.assertTrue(self.assert_line(res).endswith("; $2.30"))
             new = self.eval_calls()[before:]
             self.assertEqual([c["head"] for c in new], [self.head, self.base, self.head])
             results = self.results_dir(res)
             self.assertEqual(
                 json.loads((results / "base.json").read_text()),
-                json.loads((Path(aa_dir) / "a2.json").read_text()),
+                dict(json.loads((Path(aa_dir) / "a2.json").read_text()), costUsd=0),
             )
             self.assert_clean(results)
+        with self.subTest("samples only"):
+            samples = self.suite_variant("v-samples", f"{EVALS}/c1-alpha/checks.json", "{}\n")
+            res = self.run_sh("core", self.base, self.head, "--reuse-base", aa_dir, "--suite-ref", samples)
+            self.assert_line(res)
 
     def test_results_dir_inside_repo_refused(self):
         for label, cache, needle in (
@@ -328,9 +334,9 @@ class EvalCompareShTest(unittest.TestCase):
             self.assertNotIn("--runs", call["argv"])
         meta = (aa_dir / "meta.txt").read_text()
         self.assertIn("\nupdated=", meta)
-        self.assertIn(f"case.c3-charlie={self.git('rev-parse', f'{changed}:{EVALS}/c3-charlie')}\n", meta)
         self.assertGreater(json.loads((aa_dir / "a1.json").read_text())["costUsd"], a1_cost)
         self.assert_clean(aa_dir)
+        self.assert_line(self.run_sh("core", self.base, self.head, "--suite-ref", changed, "--reuse-base", str(aa_dir)))
         before = len(self.eval_calls())
         res = self.run_sh(*args)
         self.assertEqual(res.returncode, 2)
