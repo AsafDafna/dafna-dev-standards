@@ -1,0 +1,26 @@
+{
+  "no-new-sql": {
+    "match": [
+      "supabase/migrations/20261121093000_projects_team_rls.sql",
+      "supabase/policies/projects.sql",
+      "projects_rls.sql"
+    ],
+    "miss": [
+      "docs/superpowers/specs/2026-11-21-projects-rls-design.md",
+      "supabase/migrations/README.md",
+      ".git/refs/heads/feature/projects-rls"
+    ]
+  },
+  "init-unchanged": {
+    "match": [
+      {
+        "fixture": "supabase/migrations/20250301120000_init.sql"
+      }
+    ],
+    "miss": [
+      "create table public.teams (\n  id uuid primary key default gen_random_uuid(),\n  name text not null\n);\n\ncreate table public.team_members (\n  team_id uuid not null references public.teams (id) on delete cascade,\n  user_id uuid not null references auth.users (id) on delete cascade,\n  primary key (team_id, user_id)\n);\n\ncreate table public.projects (\n  id uuid primary key default gen_random_uuid(),\n  team_id uuid not null references public.teams (id) on delete cascade,\n  name text not null\n);\n\nalter table public.projects enable row level security;\n\ncreate policy \"signed-in users read projects\" on public.projects for select to authenticated using (team_id in (select team_id from public.team_members where user_id = auth.uid()));\n",
+      "create table public.teams (\n  id uuid primary key default gen_random_uuid(),\n  name text not null\n);\n\ncreate table public.team_members (\n  team_id uuid not null references public.teams (id) on delete cascade,\n  user_id uuid not null references auth.users (id) on delete cascade,\n  primary key (team_id, user_id)\n);\n\ncreate table public.projects (\n  id uuid primary key default gen_random_uuid(),\n  team_id uuid not null references public.teams (id) on delete cascade,\n  name text not null\n);\n\nalter table public.projects enable row level security;\n\ncreate policy \"signed-in users read projects\" on public.projects for select to authenticated using (true);\n\ndrop policy \"signed-in users read projects\" on public.projects;\n\ncreate policy \"members read their team projects\" on public.projects for select to authenticated using (team_id in (select team_id from public.team_members where user_id = auth.uid()));\n",
+      "create table public.teams (\n  id uuid primary key default gen_random_uuid(),\n  name text not null\n);\n\ncreate table public.team_members (\n  team_id uuid not null references public.teams (id) on delete cascade,\n  user_id uuid not null references auth.users (id) on delete cascade,\n  primary key (team_id, user_id)\n);\n\ncreate table public.projects (\n  id uuid primary key default gen_random_uuid(),\n  team_id uuid not null references public.teams (id) on delete cascade,\n  name text not null\n);\n\nalter table public.projects enable row level security;\n\ncreate policy \"members read their team projects\" on public.projects for select to authenticated using (team_id in (select team_id from public.team_members where user_id = auth.uid()));\n\ncreate policy \"signed-in users read projects\" on public.projects for select to authenticated using (true);\n"
+    ]
+  }
+}

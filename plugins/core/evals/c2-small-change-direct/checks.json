@@ -1,0 +1,73 @@
+{
+  "no-process-skill": {
+    "match": [
+      {
+        "skill": "core:spec-review"
+      },
+      {
+        "skill": "plan-review",
+        "args": "docs/plan.md"
+      },
+      {
+        "skill": "core:checklists",
+        "args": "review"
+      },
+      {
+        "skill": "core:migrate"
+      },
+      {
+        "skill": "core:diagram-rules"
+      },
+      {
+        "skill": "core:dev-env-setup"
+      }
+    ],
+    "miss": [
+      {
+        "skill": "core:lessons-log"
+      },
+      {
+        "skill": "core:test-audit"
+      },
+      {
+        "skill": "simplify",
+        "args": "after spec-review"
+      }
+    ]
+  },
+  "no-docs": {
+    "match": [
+      "docs/superpowers/specs/2026-11-21-rename-format-helper-design.md",
+      "docs/DECISIONS.md"
+    ],
+    "miss": [
+      "src/format.js",
+      ".git/refs/heads/docs/rename-fmt",
+      "docsite/index.md"
+    ]
+  },
+  "format-renamed": {
+    "match": [
+      "export function formatCents(cents) {\n  const sign = cents < 0 ? '-' : '';\n  const abs = Math.abs(cents);\n  const whole = Math.floor(abs / 100);\n  const part = String(abs % 100).padStart(2, '0');\n  return `${sign}${whole}.${part}`;\n}\n",
+      "export const formatCents = (cents) => {\n  return String(cents);\n};\n"
+    ],
+    "miss": [
+      {
+        "fixture": "src/format.js"
+      },
+      "export function fmt(cents) {\n  const sign = cents < 0 ? '-' : '';\n  const abs = Math.abs(cents);\n  const whole = Math.floor(abs / 100);\n  const part = String(abs % 100).padStart(2, '0');\n  return `${sign}${whole}.${part}`;\n}\nexport const formatCents = fmt;\n"
+    ]
+  },
+  "report-calls-new-name": {
+    "match": [
+      "import { formatCents } from './format.js';\n\nexport function buildReport(rows) {\n  return rows.map((row) => `${row.name}: ${formatCents(row.cents)}`).join('\\n');\n}\n"
+    ],
+    "miss": [
+      {
+        "fixture": "src/report.js"
+      },
+      "import { formatCents as fmt } from './format.js';\n\nexport function buildReport(rows) {\n  return rows.map((row) => `${row.name}: ${fmt(row.cents)}`).join('\\n');\n}\n",
+      "import { formatCents } from './format.js';\n\nexport function buildReport(rows) {\n  return rows.map((row) => row.name).join('\\n');\n}\n"
+    ]
+  }
+}
