@@ -158,6 +158,11 @@ function hasNoteForEach(options: readonly string[], notes: readonly string[]): b
   return notes.length === options.length && !notes.includes('')
 }
 
+/** `task`'s option notes, none once they no longer pair with its options: a session before 0.3 changes the options and keeps the old notes. */
+export function optionNotesOf(task: Pick<Task, 'options' | 'optionNotes'>): readonly string[] | undefined {
+  return task.optionNotes?.length === task.options?.length ? task.optionNotes : undefined
+}
+
 function lineErrorOf(name: string, line: string, max: number): string | undefined {
   return line.length > max ? `${name} is ${line.length} characters; keep it under ${max} and put the rest in detail.` : undefined
 }
@@ -639,12 +644,13 @@ function listedOf(task: Task, nowMs: number, isWhole: boolean): string {
   const shown = task.thread.slice(isWhole ? 0 : Math.max(0, Math.min(task.thread.length - TAIL, lastOwn)))
   const threadHead =
     shown.length === task.thread.length ? 'Thread:' : `Thread, the last ${shown.length} of ${task.thread.length} entries (list_items with id ${task.id} gives all):`
+  const notes = optionNotesOf(task)
   const lines = [
     task.isWaitingForClaude ? 'The user replied and waits for you: answer in the item with reply_item, or close it with close_item.' : '',
     task.hasNewReply ? 'The user has not opened your last reply yet.' : '',
     task.askLine ? `Ask: ${task.askLine}` : '',
-    task.options && task.optionNotes ? ['Options:', ...task.options.map((option, at) => `- ${option}: ${task.optionNotes?.[at]}`)].join('\n') : '',
-    task.options && !task.optionNotes ? `Options: ${task.options.join(' | ')}` : '',
+    task.options && notes ? ['Options:', ...task.options.map((option, at) => `- ${option}: ${notes[at]}`)].join('\n') : '',
+    task.options && !notes ? `Options: ${task.options.join(' | ')}` : '',
     task.recommended ? `Recommended: ${task.recommended}` : '',
     task.doneWhen ? `Done when: ${task.doneWhen}` : '',
     task.link ? `Link: ${task.link}` : '',

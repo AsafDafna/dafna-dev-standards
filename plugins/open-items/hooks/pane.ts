@@ -1,7 +1,7 @@
 import type { ThemeKey } from 'claude-code'
 
 import type { Held, Message, Screen, Task, TaskKind } from '../types'
-import { DONE, LATER, MAX_ASK, MAX_DETAIL, MAX_OPTION, MAX_OPTION_NOTE, PRESSED, SEEN, choseOf, isActive, waitingOf } from './tasks'
+import { DONE, LATER, MAX_ASK, MAX_DETAIL, MAX_OPTION, MAX_OPTION_NOTE, PRESSED, SEEN, choseOf, isActive, optionNotesOf, waitingOf } from './tasks'
 import type { Move } from './tasks'
 import { ago, cellsOf, clip, clipCells, linesRowsOf, plural, printable, printableLines, rowsOf } from './text'
 
@@ -216,7 +216,6 @@ export function headerLineOf(task: Task, view: Pick<PaneView, 'nowMs'>): { label
 /** The cells a box with a round border and `paddingX={1}` takes from its text: two on each side. */
 const BOX_CELLS = 4
 
-/** The rows a box's round border takes: its top and its bottom. */
 const BOX_ROWS = 2
 
 /**
@@ -333,8 +332,9 @@ export function actionsOf(task: Task): Action[] {
 export function itemButtonsOf(task: Task): { choices: { action: Action; note: string | undefined; isRecommended: boolean }[]; buttons: Action[] } {
   const actions = actionsOf(task)
   const options = actions.filter(action => action.key.startsWith('option-'))
+  const notes = optionNotesOf(task)
   const choices = options.map((action, i) => {
-    const note = task.optionNotes?.[i]
+    const note = notes?.[i]
 
     return { action, note: note === undefined ? undefined : printable(note, MAX_OPTION_NOTE), isRecommended: task.options?.[i] === task.recommended }
   })
@@ -568,6 +568,7 @@ function footRowsOf(view: PaneView, width: number, buttons: readonly string[]): 
  * judging the scheme it will see would be a guess: only `https:` is kept.
  */
 const LIVE_LINK = /\](?=\((?!\s*<?https:))/gi
+const SCHEME_LINK = /\](?=\(\s*<?[a-z][a-z0-9+.-]*:)/gi
 const LIVE_AUTOLINK = /<(?=(?:http|file):)/gi
 const AUTOLINK = /<((?:http|file):[^\s<>]*)>?/gi
 const DEFINITION = /^( {0,3})\[((?:\\.|[^\\[\]\n])+)\]:(?=\s*<?(?:http|file):)/gim
@@ -576,33 +577,56 @@ const MAX_PASSES = 8
 
 function isEscaped(text: string, at: number): boolean {
   let slashes = 0
-  while (text[at - 1 - slashes] === '\\') slashes++
+
+  while (text[at - 1 - slashes] === '\\') {
+    slashes++
+  }
+
   return slashes % 2 === 1
 }
 
 /**
- * `[text](target)` as `text (target)`. Where the `[` follows a word or a
- * closing bracket, as code indexes (`handlers[name](event)`), or no `[`
- * pairs, `] (target)`: it breaks the link and leaves the code readable.
+ * `[text](target)` as `text (target)` when the target starts with a scheme
+ * (`http:`, `file:`). Any other target, a `[` after a word or a closing
+ * bracket, and a `]` with no `[` give `] (target)`: a regex class, a path
+ * or a code index (`handlers[name](event)`) keeps its brackets and gains
+ * one space, so it still reads as Claude wrote it.
  */
 function withoutLinkBrackets(text: string): string {
   const closes = new Set(Array.from(text.matchAll(LIVE_LINK), match => match.index))
-  if (closes.size === 0) return text
+
+  if (closes.size === 0) {
+    return text
+  }
+
+  const schemed = new Set(Array.from(text.matchAll(SCHEME_LINK), match => match.index))
   const edits = new Map<number, string>()
   const opens: number[] = []
+
   for (let at = 0; at < text.length; at++) {
-    if ((text[at] !== '[' && text[at] !== ']') || isEscaped(text, at)) continue
+    if ((text[at] !== '[' && text[at] !== ']') || isEscaped(text, at)) {
+      continue
+    }
+
     if (text[at] === '[') {
       opens.push(at)
       continue
     }
+
     const open = opens.pop()
-    if (open !== undefined && closes.has(at) && !CODE_BEFORE.test(text[open - 1] ?? '')) {
+
+    if (open !== undefined && closes.has(at) && schemed.has(at) && !CODE_BEFORE.test(text[open - 1] ?? '')) {
       edits.set(open, '')
       edits.set(at, ' ')
     }
   }
-  for (const close of closes) if (!edits.has(close)) edits.set(close, '] ')
+
+  for (const close of closes) {
+    if (!edits.has(close)) {
+      edits.set(close, '] ')
+    }
+  }
+
   return text
     .split('')
     .map((char, at) => edits.get(at) ?? char)
@@ -617,10 +641,16 @@ function withoutLinkBrackets(text: string): string {
  */
 export function safeLinksOf(markdown: string): string {
   let text = markdown
+
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const next = withoutLinkBrackets(text).replace(AUTOLINK, '$1').replace(DEFINITION, '$1$2:')
-    if (next === text) return text
+
+    if (next === text) {
+      return text
+    }
+
     text = next
   }
+
   return text.replace(DEFINITION, '$1$2:').replace(LIVE_LINK, '] ').replace(LIVE_AUTOLINK, '< ')
 }

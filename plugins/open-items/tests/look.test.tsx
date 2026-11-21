@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { actionsOf, entriesOf, rowsFor, safeLinksOf } from '../hooks/pane'
+import { actionsOf, entriesOf, itemButtonsOf, rowsFor, safeLinksOf } from '../hooks/pane'
 import type { PaneView } from '../hooks/pane'
 import type { Message, Task } from '../types'
 
@@ -102,7 +102,7 @@ describe('safeLinksOf', () => {
     }
   })
 
-  test('a link that is not https draws its target as plain text', () => {
+  test('a link to a scheme that is not https draws as its text and its target', () => {
     expect(safeLinksOf('[docs](http://a.b)')).toBe('docs (http://a.b)')
     expect(safeLinksOf('[d](HTTP://a.b)')).toBe('d (HTTP://a.b)')
     expect(safeLinksOf('[f](file:///etc/hosts)')).toBe('f (file:///etc/hosts)')
@@ -110,10 +110,18 @@ describe('safeLinksOf', () => {
     expect(safeLinksOf('![alt](http://a.b/i.png)')).toBe('!alt (http://a.b/i.png)')
     expect(safeLinksOf('[d](<http://a.b>)')).toBe('d (http://a.b)')
     expect(safeLinksOf('[d](http://a.b "title")')).toBe('d (http://a.b "title")')
-    expect(safeLinksOf('[x](http\\://a)')).toBe('x (http\\://a)')
     expect(safeLinksOf('[x](ftp://a)')).toBe('x (ftp://a)')
-    expect(safeLinksOf(`[${T}setup.sh${T}](/etc/passwd)`)).toBe(`${T}setup.sh${T} (/etc/passwd)`)
-    expect(safeLinksOf('[x](a.ts)')).toBe('x (a.ts)')
+  })
+
+  test('a target with no scheme keeps its brackets and gains a space, so code and paths read as written', () => {
+    expect(safeLinksOf("re.compile(r'[a-z](\\d+)')")).toBe("re.compile(r'[a-z] (\\d+)')")
+    expect(safeLinksOf('^[A-Z](\\d{3})$')).toBe('^[A-Z] (\\d{3})$')
+    expect(safeLinksOf(`${F}md\n[Guide](docs/guide.md)\n${F}`)).toBe(`${F}md\n[Guide] (docs/guide.md)\n${F}`)
+    expect(safeLinksOf('[see the guide](docs/guide.md)')).toBe('[see the guide] (docs/guide.md)')
+    expect(safeLinksOf('(see [docs](a))')).toBe('(see [docs] (a))')
+    expect(safeLinksOf('[x](a.ts)')).toBe('[x] (a.ts)')
+    expect(safeLinksOf(`[${T}setup.sh${T}](/etc/passwd)`)).toBe(`[${T}setup.sh${T}] (/etc/passwd)`)
+    expect(safeLinksOf('[x](http\\://a)')).toBe('[x] (http\\://a)')
   })
 
   test('after a word or a closing bracket the brackets stay, as code writes them', () => {
@@ -122,8 +130,6 @@ describe('safeLinksOf', () => {
     expect(safeLinksOf('f()[k](y)')).toBe('f()[k] (y)')
     expect(safeLinksOf('a[0][1](z)')).toBe('a[0][1] (z)')
     expect(safeLinksOf('x_[d](http://a.b)')).toBe('x_[d] (http://a.b)')
-    expect(safeLinksOf('[see the guide](docs/guide.md)')).toBe('see the guide (docs/guide.md)')
-    expect(safeLinksOf('(see [docs](a))')).toBe('(see docs (a))')
     expect(safeLinksOf('see [docs](http://a.b)')).toBe('see docs (http://a.b)')
   })
 
@@ -271,6 +277,13 @@ describe('the item screen helpers', () => {
     expect(entriesOf(marked, NOW).entries.map(entry => entry.text)).toEqual(['click (http://evil)', '[x](http://a)'])
     // The zero-width character is gone before the rule runs, as `printableLines` drops it from every text.
     expect(entriesOf(older, NOW).entries.map(entry => entry.text)).toEqual(['[click](http://evil)', '[x](http://a)'])
+  })
+
+  test('a decision whose options a session before 0.3 changed draws no notes, as they no longer pair with its options', () => {
+    const changed = { ...PAGING, options: ['Cursor', 'Offset, capped at 10k', 'Keyset'] }
+
+    expect(itemButtonsOf(changed).choices.map(choice => choice.note)).toEqual([undefined, undefined, undefined])
+    expect(itemButtonsOf(PAGING).choices.map(choice => choice.note)).toEqual(PAGING.optionNotes)
   })
 
   test('the recommended option is labeled with its plain text: its box marks it', () => {

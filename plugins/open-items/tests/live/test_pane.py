@@ -7,14 +7,13 @@ presses keys there and reads the screen back. The list draws a row per item,
 cut to one line, in sections; an item opened with Enter draws a header box
 with its kind, number, age and whole title, its ask, its thread, a box for
 each option of a decision, the buttons of its kind and its reply field.
-Nothing is cut off at the pane's bottom, and the pane asks for no rows it
-leaves empty. Below 110 columns the pane is framed above the prompt, 18 rows
-at most, and an item taller than that scrolls; from 110 it docks beside the
-transcript. The focus ring is read from the inverse video the engine draws it
-in. With RENDERS_DIR set, each screen a test reads is kept there, and
-`tests/live/renders.py` lays them out; with LIVE_THEME=light, the sessions
-draw in the light theme. Two cases read the store back: one after /clear, one
-after a session v0.1 saved.
+Nothing is cut off at the pane's bottom. Below 110 columns the pane is framed
+above the prompt, 18 rows at most, and an item taller than that scrolls; from
+110 it docks beside the transcript. The focus ring is read from the inverse
+video the engine draws it in. With RENDERS_DIR set, each screen a test reads
+is kept there, and `tests/live/renders.py` lays them out; with
+LIVE_THEME=light, the sessions draw in the light theme. Two cases read the
+store back: one after /clear, one after a session v0.1 saved.
 """
 
 import contextlib
@@ -391,10 +390,11 @@ class Live(unittest.TestCase):
 
     def assert_fits(self, body, context, columns):
         # The foot ends what is drawn, Hide in its first row and the hint
-        # whole: none cut off below it. No row above it is empty but the one
-        # a field out of the keys squeezes its label onto and, on an item
-        # screen, one between two of its parts; framed, nothing follows it
-        # either: no row asked for and left empty.
+        # whole: nothing is cut off at the pane's bottom. No row above it is
+        # empty but the one a field out of the keys squeezes its label onto
+        # and, on an item screen, one between two of its parts. Framed, the
+        # foot is the last row; on 2.1.330 a framed pane is never taller than
+        # what it draws, so this cannot catch rows asked for and left empty.
         rows = [row.strip() for row in body]
         last = max(i for i, row in enumerate(rows) if row)
         foot = max(i for i, row in enumerate(rows) if 'Hide' in row)
@@ -764,7 +764,6 @@ class Item(Live):
                 body, context = self.look(claude, columns, 'Home')
                 text = joined(body)
 
-                # Drawn whole: the header, the detail, and the line for the messages left out.
                 self.assert_title(body, LONG_THREAD[0], '1h', context)
                 self.assertTrue(prose(body).startswith('QUESTION #1 1h Pick the runner for the nightly build The nightly build needs a runner.'), context)
                 self.assertRegex(text, HIDDEN, context)
@@ -812,7 +811,6 @@ class Cards(Live):
             ask = next(i for i, row in enumerate(rows) if row.startswith('▌ '))
             options = self.options(body)
 
-            # One window, the header box first and the foot last.
             self.assert_fits(body, context, columns)
             self.assert_title(body, CARDS, '3m', context)
             self.assert_whole_rows(body, context)
@@ -882,7 +880,6 @@ class Cards(Live):
                 self.assert_fits(body, context, columns)
                 self.assert_title(body, OLDER, '3m', context)
                 self.assertEqual(rows[start : start + len(OLDER_LINES)], list(OLDER_LINES), context)
-                # No ask line: the item has none.
                 self.assertFalse(any(row.startswith('▌') for row in rows), context)
 
     def test_no_link_in_claude_s_markdown_hides_a_target_that_is_not_https(self):

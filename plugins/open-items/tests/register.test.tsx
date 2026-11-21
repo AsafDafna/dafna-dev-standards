@@ -1745,7 +1745,6 @@ describe('the item screen', () => {
 
   const keysOf = async (ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>) => (await ui.findAll({ type: 'Button' })).map(button => button.key)
 
-  /** The keys of the option boxes drawn with the focus background. */
   const litOf = async (ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>) =>
     (await ui.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('choice-') && box.props.backgroundColor === FOCUS_BACKGROUND).map(box => box.key)
 
@@ -1778,6 +1777,7 @@ describe('the item screen', () => {
     expect(await textOf(ui, 'msg-3')).toBe('Claude changed the item · 1m')
     expect(await textOf(ui, 'thread')).toMatch(/You · 2m.*Claude · 1m/s)
     expect((await ui.find({ type: 'Text', text: /^Done when:/ }))?.text).toBe('Done when: The tokens are in the vault.\nEach expires in 30 days.')
+    expect((await ui.find({ type: 'Text', text: /^Done when:/ }))?.props.dimColor).toBeFalsy()
     expect((await ui.find({ type: 'Link' }))?.props.href).toBe('https://example.com/plan#tokens')
   })
 

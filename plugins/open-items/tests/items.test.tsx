@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { leftoversIn, savedIn, takenCodes, trimmed } from '../hooks/saved'
-import { isOpenAsk, parseAsk, parseReply, repliedBy, replyErrorOf } from '../hooks/tasks'
+import { isOpenAsk, listOf, parseAsk, parseReply, repliedBy, replyErrorOf } from '../hooks/tasks'
 import type { Message, Saved, Task } from '../types'
 
 const DAY_MS = 24 * 60 * 60_000
@@ -307,6 +307,13 @@ describe('ask and option notes', () => {
     expect(replyErrorOf(OLD_DECISION, { id: 1, change: { options: ['C', 'D'], optionNotes: ['c', 'd'] } })).toBeUndefined()
     expect(replyErrorOf(item(), { id: 1, change: { optionNotes: ['a', 'b'] } })).toBe(DECISION_ONLY)
     expect(replyErrorOf(item(), { id: 1, change: { options: ['C', 'D'] } })).toBe('options and recommended are for a decision only.')
+  })
+
+  test('list_items gives the options on one line when a session before 0.3 changed them and kept notes that no longer pair', () => {
+    const listed = listOf([item({ kind: 'decision', options: ['A', 'B', 'C'], optionNotes: ['a', 'b'] })], NOW)
+
+    expect(listed).toContain('  Options: A | B | C\n')
+    expect(listed).not.toContain('undefined')
   })
 
   test('repliedBy saves a new ask line and notes, and leaves an item saved before 0.3 unmarked', () => {
