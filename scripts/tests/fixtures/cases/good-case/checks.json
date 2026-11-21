@@ -1,0 +1,18 @@
+{
+  "marker-kept": {
+    "match": [{"fixture": "src/app.js"}],
+    "miss": ["export const LIMIT = 4;\n", "export const LIMIT = 3;\nexport const LIMIT = 3;\n"]
+  },
+  "no-cat": {
+    "match": [{"command": "cat src/app.js"}, {"command": "cat 'src/app.js'"}],
+    "miss": [{"command": "grep -n LIMIT src/app.js"}]
+  },
+  "skill-first.before": {
+    "match": [{"skill": "core:test-audit"}],
+    "miss": [{"skill": "core:spec-review"}]
+  },
+  "no-docs": {
+    "match": ["docs/plan.md"],
+    "miss": ["src/app.js"]
+  }
+}
