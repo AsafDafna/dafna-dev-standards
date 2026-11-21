@@ -20,7 +20,7 @@ scripts/eval-compare.sh core --aa <commit> --suite-ref <ref> --jobs 4
 scripts/eval-compare.sh core --no-plugin <commit> --suite-ref <ref> --jobs 4
 ```
 
-The script copies the suite from `--suite-ref` into temp worktrees of both commits, runs each arm on opus, reruns dropped guards 6 times, and prints one `Eval:` line. It writes results under `${XDG_CACHE_HOME:-$HOME/.cache}/dds-evals/`, never in the repo. The measuring runs of both suites used `--jobs 4`: 22 runs, 4 at a time, and no rate-limit refusal.
+The script copies the suite from `--suite-ref` into temp worktrees of both commits, runs each arm on opus, reruns dropped guards 6 times, and prints one `Eval:` line. It writes results under `${XDG_CACHE_HOME:-$HOME/.cache}/dds-evals/`, never in the repo. The harness deletes each run's temp folder, trace included, when the run ends; the result JSON keeps only the grader explanations and evidence. To see why a run failed, rerun its case with `claude plugin eval … --case <dir> --keep-temp`. The measuring runs of both suites used `--jobs 4`: 22 runs, 4 at a time, and no rate-limit refusal.
 
 ## What the probes showed (build step 0)
 
