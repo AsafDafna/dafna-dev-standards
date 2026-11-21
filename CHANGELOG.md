@@ -12,8 +12,9 @@
   refused on the other kinds. `reply_item` accepts both.
 - Items saved before 0.3 keep plain text in the new frame. `reply_item` can
   give an older decision option notes, and they stay plain text.
-- In Claude's Markdown on a new item, only `https:` links stay links. Any
-  other link shows as plain text with its target in parentheses.
+- In Claude's Markdown on a new item, a link written as `[text](target)` whose
+  target is not `https:` shows as plain text with its target in parentheses.
+  An address written out in full stays as written, so its whole target shows.
 - The detail of an item can be about 5 sentences or a short list. It was about
   3 sentences with the options. The ask and the option notes do not count.
 - Width: `Ctrl+X ←` and `Ctrl+X →` make the pane wider or narrower by 4 columns,
