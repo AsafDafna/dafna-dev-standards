@@ -300,7 +300,7 @@ function seat(on: On, store: Record<string, unknown> = {}) {
 
     return { value }
   })
-  on('ui.focus', () => ({}))
+  on('ui.focus', { plugin: '*' }, () => ({}))
   on('ui.scroll', ($, e) => {
     world.scrolls.push({ by: e.by, origin: e.origin.kind })
     return {}
@@ -1424,7 +1424,7 @@ describe('the list screen', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
 
-    // The ring's move itself is the live harness's to check: the kit answers no plugin's `$.ui.focus`.
+    // The ring's move itself is the live harness's to check: the world here answers `$.ui.focus` and moves nothing.
     await $.ui.focus(ringTo('row-1'))
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     await $.ui.focus(ringTo('row-2'))
