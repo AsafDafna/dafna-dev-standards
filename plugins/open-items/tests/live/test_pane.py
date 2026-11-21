@@ -438,6 +438,16 @@ class Live(unittest.TestCase):
             self.assertTrue(row.startswith(' ') and not row.startswith('  '), 'a title row out of line\n' + context)
         self.assertEqual(unspaced(''.join(title)), unspaced(task['title']), context)
 
+    def assert_foot_starts(self, body, context):
+        """A full framed pane, its item taller than it: the window keeps the field, Hide is in view below it, and only the hint's tail is cut off."""
+        rows = [row.strip() for row in body]
+        foot = next((i for i, row in enumerate(rows) if 'Hide' in row), None)
+
+        self.assertEqual(len(body), FRAMED_ROWS, context)
+        self.assertIsNotNone(foot, 'the foot is cut off\n' + context)
+        hint = flat(' '.join(rows[foot:]).replace('b: Back', '').replace('Hide', ''))
+        self.assertTrue(hint and any(whole.startswith(hint) for whole in HINTS), f'{hint!r} does not start a hint\n' + context)
+
     def whole(self, claude, columns, body, context):
         """
         All of the item screen `body` shows: `body` itself when docked, or
@@ -991,10 +1001,10 @@ class Field(Live):
                 self.assertTrue(self.reply_rows(body), context)
                 body, context = self.look(claude, columns, DRAFT)
 
-                # Whole, wrapped beside the label, the hint after its first row. A full
-                # framed pane holds an item taller than it: the window keeps the field,
-                # and the foot is below.
-                if columns >= DOCK_FROM or len(body) < FRAMED_ROWS:
+                # Whole, wrapped beside the label, the hint after its first row.
+                if columns < DOCK_FROM and len(body) == FRAMED_ROWS:
+                    self.assert_foot_starts(body, context)
+                else:
                     self.assert_fits(body, context, columns)
                 self.assertIn(unspaced(DRAFT), unspaced(joined(body).replace('⏎ send', '')), context)
                 body, context = self.look(claude, columns, 'Tab')
