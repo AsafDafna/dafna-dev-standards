@@ -135,10 +135,11 @@ Each item keeps the spec's intent.
 - CLI `no-plugin --classes F --json J` prints the guard cases that passed every `without` run.
 - CLI `merge --into J --from J…` replaces the cases of the same name and adds the top-level `costUsd`.
 - CLI `line --suite core|coo --suite-hash H --model M (--base-ref B --head-ref C | --aa C) --classes F --base J… --head J… [--rerun-base J… --rerun-head J…] --exit-codes "<codes>" [--rules-fallback] [--covers <text>]` prints this line and exits 0:
-  `Eval: core-suite <hash>, merge-base <b> -> head <h>, opus[, rules via system prompt], 3/5 runs per guard/climb case: guard <n>/<n> -> <k>/<n> (+<m> model-default; C5 rerun 6/6 -> 1/6, Fisher p=0.008, regression); climb 0.48 -> 0.71 (+0.23, p=0.002[, within noise]); run errors <eb>/<eh>; $<cost>[; cases for this change: <text>]`
+  `Eval: core-suite <hash>, merge-base <b> -> head <h>, opus[, rules via system prompt], 3/5 runs per guard/climb case: guard <n>/<n> -> <k>/<n> (+<m> model-default; C5 runs 3/3 -> 1/3; C5 rerun 6/6 -> 1/6, Fisher p=0.008, regression); climb 0.48 -> 0.71 (+0.23, p=0.002[, within noise]); run errors <eb>/<eh>; $<cost>[; cases for this change: <text>]`
   - Leave out any part in parentheses that has no item. `--aa C` prints `A/A <C>` in place of the merge-base and head.
+  - `<id> runs <b> -> <h>` names each counted guard that failed a main run on either arm, with its passed runs on each arm.
   - n counts the guard cases without `model-default`. A regression is a Fisher p < 0.05 on the rerun runs only. A dropped case with no rerun prints as `unresolved: <ids>`.
-  - The run errors are the with-arm runs with a non-null `error`. The cost is the sum of each JSON's top-level `costUsd`.
+  - The run errors are the with-arm runs with a non-null `error`. The cost is the sum of each JSON's top-level `costUsd`; a reused base arm counts 0, and after an update the cost is the A/A folder's total, not the update's own cost.
   - When any exit code is not 0, any JSON has `partial: true`, or any run has `skippedPaidGraders`, it prints `partial: <reason>` and no `Eval:` line, and exits 3.
 
 - [ ] Write these tests, then run them. They must fail:

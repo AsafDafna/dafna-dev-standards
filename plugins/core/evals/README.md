@@ -63,6 +63,6 @@ The harness checks a cap before each run starts, so an invocation can pass its c
 
 ## A/A run and no-plugin arm (build step 2)
 
-Two arms on the same commit (`2e958ba`) gave the same result. Every guard passed every run. Each climb case scored the same on all 10 runs: C3 1.00, C8 1.00, C9 0.67, C10 0.40, C11 0.50 and C12 0.25. So the A/A climb difference, the noise floor, was 0.00. One arm cost about $8.80 and took about 5 minutes at `--jobs 4`.
+Two arms on the same commit (`2e958ba`) gave the same result. Every guard passed every run. Each climb case scored the same on all 10 runs: C3 1.00, C8 1.00, C9 0.67, C10 0.40, C11 0.50 and C12 0.25. So the A/A climb difference was 0.00. That is not a noise floor: every climb case was pinned at base, so it shows nothing about how much a changed head varies, and the permutation p is the test that counts. One arm cost about $8.80 and took about 5 minutes at `--jobs 4`.
 
 Without the plugin, C2, C6 and C7 passed every run, so they are tagged `model-default` and the `Eval:` line counts them apart. C1, C4 and C5 failed without the plugin, so they measure the plugin. The no-plugin arm cost $4.95.

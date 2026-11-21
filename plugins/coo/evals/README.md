@@ -74,4 +74,4 @@ The harness checks a cap before each run starts, so an invocation can pass its c
 
 ## A/A run (build step 2)
 
-Two arms on the same commit (`2e958ba`), after the update that moved K2 and K6: every guard passed every run, and the climb mean went 0.72 -> 0.69 (-0.03, p=0.61). Before the update, with four climb cases, it went 0.58 -> 0.65 (+0.07, p=0.17). So a climb difference of up to about 0.07 is noise. K4, K6 and K7 vary the most between runs. One arm cost about $10.70 and took about 10 minutes at `--jobs 4`.
+Two arms on the same commit (`2e958ba`), after the update that moved K2 and K6 (the line's cost after an update is the folder's total): every guard passed every run, and the climb mean went 0.72 -> 0.69 (-0.03, p=0.61). Before the update, with four climb cases, it went 0.58 -> 0.65 (+0.07, p=0.17). So a climb difference of up to about 0.07 is noise. K4, K6 and K7 vary the most between runs. One arm cost about $10.70 and took about 10 minutes at `--jobs 4`.
