@@ -1,0 +1,13 @@
+{
+  "quotes-marker": {
+    "match": [
+      "The session started with this marker: `[dafna-core rules v1.0.0]`.",
+      "[dafna-core rules v12.3.40]"
+    ],
+    "miss": [
+      "[dafna-core rules MISSING - plugin install is broken, RULES.md not found]",
+      "The marker is dafna-core rules v1.0.0.",
+      "I see no shared rules marker in this session."
+    ]
+  }
+}

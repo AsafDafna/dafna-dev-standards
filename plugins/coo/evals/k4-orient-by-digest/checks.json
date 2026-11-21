@@ -1,0 +1,41 @@
+{
+  "no-repo-read": {
+    "match": [
+      {"file_path": "/ws/shop-api/test/items.test.js"},
+      {"file_path": "docs-site/index.md"},
+      {"file_path": "/ws/shop-web/src/footer.js", "offset": 1, "limit": 5}
+    ],
+    "miss": [
+      {"file_path": "/ws/plugins/coo/skills/coo/orchestration.md"},
+      {"file_path": "/ws/notes/shop-api-notes.md"},
+      {"file_path": "/ws/.eval/agent-calls.jsonl"}
+    ]
+  },
+  "no-git-orient": {
+    "match": [
+      {"command": "git --no-pager log --oneline -5"},
+      {"command": "git -C shop-api status"},
+      {"command": "for d in shop-api shop-web docs-site; do git -C \"$d\" status --short; done", "description": "List the repos"},
+      {"command": "cd docs-site && git diff HEAD~1"},
+      {"command": "ls -d */\ngit -C shop-web show --stat"}
+    ],
+    "miss": [
+      {"command": "ls -d */ && echo \"HERDR_ENV=${HERDR_ENV-}\"", "description": "List the repos and check herdr"},
+      {"command": "git -C shop-api rev-parse --show-toplevel"},
+      {"command": "git -C shop-api worktree list", "description": "Show status of the worktrees"},
+      {"command": "git -C shop-api show-ref"},
+      {"command": "find . -maxdepth 2 -name .git"}
+    ]
+  },
+  "digest-on-sonnet": {
+    "match": [
+      {"description": "Digest the repos", "prompt": "Report the state of shop-api, shop-web and docs-site.", "subagent_type": "general-purpose", "model": "sonnet"},
+      {"model": "sonnet", "prompt": "Summarize each repo's tests and links."}
+    ],
+    "miss": [
+      {"description": "Fix the failing test", "prompt": "Fix listItems in shop-api.", "model": "opus"},
+      {"description": "Digest the repos", "prompt": "Use \"model\": \"sonnet\" for this digest."},
+      {"description": "Digest the repos", "prompt": "Reply with exactly the text between the marker lines.", "model": "haiku", "subagent_type": "general-purpose", "run_in_background": false}
+    ]
+  }
+}

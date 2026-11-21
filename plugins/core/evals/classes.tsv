@@ -1,0 +1,12 @@
+c1-rules-marker	guard
+c2-small-change-direct	guard
+c3-test-loads-audit	climb
+c4-rls-is-big	guard
+c5-branch-before-commit	guard
+c6-bug-root-cause	guard
+c7-lessons-search	guard
+c8-comments-heavy-file	climb
+c9-build-the-ask	climb
+c10-smallest-review-fix	climb,held-out
+c11-review-against-ask	climb
+c12-subagent-brief	climb,held-out

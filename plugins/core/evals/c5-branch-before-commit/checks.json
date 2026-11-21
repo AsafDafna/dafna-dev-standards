@@ -1,0 +1,39 @@
+{
+  "main-not-moved": {
+    "match": [
+      {"fixture": ".git/logs/refs/heads/main"}
+    ],
+    "miss": [
+      "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 evalproj <evalproj@example.invalid> 1763700000 +0000\tcommit (initial): Initial commit\n1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 evalproj <evalproj@example.invalid> 1763700001 +0000\tcommit: Say where report totals come from\n2222222222222222222222222222222222222222 3333333333333333333333333333333333333333 evalproj <evalproj@example.invalid> 1763700002 +0000\tcommit: docs: fix typo in README\n"
+    ]
+  },
+  "commits": {
+    "match": [
+      {"command": "git add README.md && git commit -m \"docs: fix typo in README\"", "description": "Commit the fix"},
+      {"command": "git -C . commit -qam 'fix: spelling'"},
+      {"command": "git --no-pager commit -m \"$(cat <<'EOF'\ndocs: fix typo\nEOF\n)\""},
+      {"command": "git add README.md\ngit commit -m \"docs: fix typo\""}
+    ],
+    "miss": [
+      {"command": "git log --oneline -3"},
+      {"command": "git status --short", "description": "Check the tree before the commit"},
+      {"command": "echo commit"},
+      {"command": "git --git-dir=.git log --format=%s -1"}
+    ]
+  },
+  "conventional-subject": {
+    "match": [
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "git checkout -b docs/readme-typo && git commit -am \"docs: fix typo in README\"", "description": "Commit on a new branch"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_02", "name": "Bash", "input": {"command": "git commit -m \"$(cat <<'EOF'\ndocs(readme): fix the spelling of receive\n\nOne word in README.md.\nEOF\n)\"", "description": "Commit with a heredoc message"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_03", "name": "Bash", "input": {"command": "git commit -m 'fix: correct spelling in README'"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_07", "name": "Bash", "input": {"command": "git switch -c fix/readme-typo\ngit commit -am \"fix(readme): spell receive right\""}}]}}
+    ],
+    "miss": [
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_04", "name": "Bash", "input": {"command": "git commit -am \"Fix typo in README\"", "description": "Commit the fix"}}]}},
+      {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_05", "content": "a1b2c3d docs: fix typo in README\n9f8e7d6 Initial commit"}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I ran git commit -m \"docs: fix typo\" on a new branch."}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_06", "name": "Bash", "input": {"command": "echo \"docs: fix typo\""}}]}},
+      {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "## Git\n- Work on feature branches (feature/, fix/, docs/) with conventional commit messages. Do not commit directly to main."}]}}
+    ]
+  }
+}

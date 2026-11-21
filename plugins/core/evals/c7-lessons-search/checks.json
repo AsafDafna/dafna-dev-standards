@@ -1,0 +1,57 @@
+{
+  "searches-lessons": {
+    "match": [
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_01", "name": "Grep", "input": {"pattern": "week|date|slow", "path": ".claude/lessons.md", "output_mode": "content", "-n": true, "-i": true}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_02", "name": "Grep", "input": {"pattern": "\\d{4}-\\d{2}|week", "glob": "**/lessons.md"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_03", "name": "Bash", "input": {"command": "grep -n -i \"week\\|date\" .claude/lessons.md", "description": "Search the lessons log"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_04", "name": "Bash", "input": {"command": "rg -n -i 'week|test/slow' .claude/"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_05", "name": "Bash", "input": {"command": "cat .claude/lessons.md | grep -n week"}}]}}
+    ],
+    "miss": [
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_06", "name": "Read", "input": {"file_path": ".claude/lessons.md"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_07", "name": "Grep", "input": {"pattern": "WEEK_START", "path": "src"}}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_08", "name": "Bash", "input": {"command": "cat .claude/lessons.md"}}]}},
+      {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_09", "content": "- Search it (`grep -n -i`) for the task's anchors. Read the matching entries of `.claude/lessons.md` with Read `offset`/`limit`."}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I will grep .claude/lessons.md for the week start first."}]}},
+      {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_10", "name": "Bash", "input": {"command": "grep -rn WEEK_START src/", "description": "Find lessons.md callers"}}]}}
+    ]
+  },
+  "no-whole-read": {
+    "match": [
+      {"file_path": ".claude/lessons.md"},
+      {"file_path": "/ws/tasklist/.claude/lessons.md"}
+    ],
+    "miss": [
+      {"file_path": "/ws/tasklist/.claude/lessons.md", "offset": 170, "limit": 10},
+      {"limit": 20, "file_path": ".claude/lessons.md"},
+      {"file_path": "src/week.js"}
+    ]
+  },
+  "no-cat-lessons": {
+    "match": [
+      {"command": "cat .claude/lessons.md"},
+      {"command": "cat -n \"$PWD/.claude/lessons.md\" || true"},
+      {"command": "cd /ws/tasklist\ncat .claude/lessons.md"}
+    ],
+    "miss": [
+      {"command": "cat .claude/lessons.md | grep -n -i week"},
+      {"command": "cat -n .claude/lessons.md | sed -n '160,180p'"},
+      {"command": "cat >> .claude/lessons.md <<'EOF'\n- [2026-11-21] [+] Run the slow tests.\nEOF"},
+      {"command": "concat lessons.md"}
+    ]
+  },
+  "runs-slow-tests": {
+    "match": [
+      {"command": "node --test test/slow"},
+      {"command": "npm test && node --test test/slow", "description": "Run all tests"},
+      {"command": "node --test /ws/tasklist/test/slow/week.test.js"},
+      {"command": "node --test \"./test/slow\""}
+    ],
+    "miss": [
+      {"command": "npm test"},
+      {"command": "node --test test/*.test.js"},
+      {"command": "node --test test/range.test.js; cat test/slow/week.test.js"},
+      {"command": "node --test mytest/slowness"}
+    ]
+  }
+}
