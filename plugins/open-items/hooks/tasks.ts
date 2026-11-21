@@ -2,7 +2,9 @@ import type { Message, Task, TaskKind, ThreadEvent } from '../types'
 import { ago, oneLine, plural, sizeOf } from './text'
 
 export const MAX_TITLE = 80
+export const MAX_ASK = 150
 export const MAX_OPTION = 60
+export const MAX_OPTION_NOTE = 120
 /** The longest detail, done-when or thread message Claude writes: the tools refuse a longer one, and cut nothing. */
 export const MAX_DETAIL = 4000
 /** The longest note Claude closes an item with: one line the user reads in a toast. */
@@ -96,12 +98,15 @@ export function sameAsk(a: string, b: string): boolean {
   return norm(a) === norm(b)
 }
 
-export type Ask = Pick<Task, 'kind' | 'title' | 'doneWhen' | 'options' | 'recommended' | 'link'> & { detail: string }
+export type Ask = Pick<Task, 'kind' | 'title' | 'askLine' | 'doneWhen' | 'options' | 'optionNotes' | 'recommended' | 'link'> & {
+  detail: string
+  isMarkdown: true
+}
 
 export type Reply = {
   id: number
   text?: string
-  change?: Partial<Pick<Task, 'title' | 'options' | 'recommended' | 'link' | 'doneWhen'>>
+  change?: Partial<Pick<Task, 'title' | 'askLine' | 'options' | 'optionNotes' | 'recommended' | 'link' | 'doneWhen'>>
 }
 
 export type Close = { id: number; as: 'resolved' | 'withdrawn'; note?: string }
@@ -109,6 +114,8 @@ export type Close = { id: number; as: 'resolved' | 'withdrawn'; note?: string }
 const LINK = /^https:\/\/\S+$/
 
 const ID_ERROR = "id is required: the item's number, a whole number."
+const NOTES_ERROR = 'option_notes needs one note for each option, in the same order.'
+const NOTES_FOR_DECISION = 'option_notes are for a decision only.'
 
 function idIn(args: Record<string, unknown>): number | undefined {
   const id = args['id']
@@ -129,16 +136,39 @@ function lineIn(args: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? oneLine(value) : ''
 }
 
-function optionsIn(raw: unknown[]): string[] {
-  return raw.filter((o): o is string => typeof o === 'string').map(oneLine).filter(o => o !== '')
+/** An empty option drops with its note, so the notes stay in order; notes are counted before that drop. */
+function choicesIn(rawOptions: unknown, rawNotes: unknown): { options?: string[]; notes?: string[] } | { error: string } {
+  const notes = Array.isArray(rawNotes) ? rawNotes.map(note => (typeof note === 'string' ? oneLine(note) : '')) : undefined
+
+  if (!Array.isArray(rawOptions)) {
+    return notes === undefined ? {} : { notes }
+  }
+
+  if (notes !== undefined && notes.length !== rawOptions.length) {
+    return { error: NOTES_ERROR }
+  }
+
+  const lines = rawOptions.map(option => (typeof option === 'string' ? oneLine(option) : ''))
+  const kept = (all: readonly string[]) => all.filter((_, i) => lines[i] !== '')
+
+  return { options: kept(lines), ...(notes === undefined ? {} : { notes: kept(notes) }) }
 }
 
-function titleErrorOf(title: string): string | undefined {
-  return title.length > MAX_TITLE ? `title is ${title.length} characters; keep it under ${MAX_TITLE} and put the rest in detail.` : undefined
+function hasNoteForEach(options: readonly string[], notes: readonly string[]): boolean {
+  return notes.length === options.length && !notes.includes('')
 }
 
-/** What is wrong with the longer texts, the options and the link of an ask or a reply; undefined when nothing is. */
-function errorIn(fields: { texts: Record<string, string>; options: readonly string[] | undefined; link: string }): string | undefined {
+function lineErrorOf(name: string, line: string, max: number): string | undefined {
+  return line.length > max ? `${name} is ${line.length} characters; keep it under ${max} and put the rest in detail.` : undefined
+}
+
+/** What is wrong with the longer texts, the options, their notes and the link of an ask or a reply; undefined when nothing is. */
+function errorIn(fields: {
+  texts: Record<string, string>
+  options: readonly string[] | undefined
+  notes: readonly string[] | undefined
+  link: string
+}): string | undefined {
   for (const [name, text] of Object.entries(fields.texts)) {
     if (text.length > MAX_DETAIL) {
       return `${name} is ${text.length} characters; keep it to ${MAX_DETAIL} or fewer.`
@@ -149,24 +179,29 @@ function errorIn(fields: { texts: Record<string, string>; options: readonly stri
     return `keep each option under ${MAX_OPTION} characters.`
   }
 
+  if (fields.notes?.some(note => note.length > MAX_OPTION_NOTE)) {
+    return `keep each option note under ${MAX_OPTION_NOTE} characters.`
+  }
+
   return fields.link !== '' && !LINK.test(fields.link) ? 'link must be a URL that starts with https://.' : undefined
 }
 
 /** Reads `add_item`'s arguments, or says what is wrong with them. */
 export function parseAsk(args: Record<string, unknown>): Ask | { error: string } {
   const title = lineIn(args, 'title')
+  const askLine = lineIn(args, 'ask')
   const detail = textIn(args, 'detail')
   const doneWhen = textIn(args, 'done_when')
   const recommended = lineIn(args, 'recommended')
   const link = lineIn(args, 'link')
   const kind = args['kind'] ?? 'action'
-  const options = optionsIn(Array.isArray(args['options']) ? args['options'] : [])
+  const choices = choicesIn(args['options'], args['option_notes'])
 
   if (title === '') {
     return { error: 'title is required: what the user should do, as an imperative.' }
   }
 
-  const titleError = titleErrorOf(title)
+  const titleError = lineErrorOf('title', title, MAX_TITLE)
 
   if (titleError !== undefined) {
     return { error: titleError }
@@ -180,11 +215,35 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
     return { error: 'kind must be "decision", "question", "action" or "info".' }
   }
 
+  if (kind === 'decision' && askLine === '') {
+    return { error: 'ask is required for a decision: the one question the user answers, in one sentence.' }
+  }
+
+  const askError = lineErrorOf('ask', askLine, MAX_ASK)
+
+  if (askError !== undefined) {
+    return { error: askError }
+  }
+
+  if (kind !== 'decision' && Array.isArray(args['option_notes'])) {
+    return { error: NOTES_FOR_DECISION }
+  }
+
+  if ('error' in choices) {
+    return choices
+  }
+
+  const { options = [], notes = [] } = choices
+
   if (kind === 'decision' && (options.length < 2 || options.length > 4)) {
     return { error: 'a decision needs 2 to 4 options.' }
   }
 
-  const error = errorIn({ texts: { detail, done_when: doneWhen }, options, link })
+  if (kind === 'decision' && !hasNoteForEach(options, notes)) {
+    return { error: NOTES_ERROR }
+  }
+
+  const error = errorIn({ texts: { detail, done_when: doneWhen }, options, notes, link })
 
   if (error !== undefined) {
     return { error }
@@ -197,11 +256,13 @@ export function parseAsk(args: Record<string, unknown>): Ask | { error: string }
   return {
     kind: kind as TaskKind,
     title,
+    ...(askLine === '' ? {} : { askLine }),
     detail,
     ...(doneWhen === '' ? {} : { doneWhen }),
-    ...(kind === 'decision' ? { options } : {}),
+    ...(kind === 'decision' ? { options, optionNotes: notes } : {}),
     ...(kind === 'decision' && recommended !== '' ? { recommended } : {}),
     ...(link === '' ? {} : { link }),
+    isMarkdown: true,
   }
 }
 
@@ -214,20 +275,28 @@ export function parseReply(args: Record<string, unknown>): Reply | { error: stri
   const id = idIn(args)
   const text = textIn(args, 'text')
   const title = lineIn(args, 'title')
+  const askLine = lineIn(args, 'ask')
   const doneWhen = textIn(args, 'done_when')
   const recommended = lineIn(args, 'recommended')
   const link = lineIn(args, 'link')
-  const options = Array.isArray(args['options']) ? optionsIn(args['options']) : undefined
+  const choices = choicesIn(args['options'], args['option_notes'])
 
   if (id === undefined) {
     return { error: ID_ERROR }
   }
 
+  if ('error' in choices) {
+    return choices
+  }
+
+  const { options, notes } = choices
+
   if (options !== undefined && (options.length < 2 || options.length > 4)) {
     return { error: 'a decision needs 2 to 4 options.' }
   }
 
-  const error = titleErrorOf(title) ?? errorIn({ texts: { text, done_when: doneWhen }, options, link })
+  const error =
+    lineErrorOf('title', title, MAX_TITLE) ?? lineErrorOf('ask', askLine, MAX_ASK) ?? errorIn({ texts: { text, done_when: doneWhen }, options, notes, link })
 
   if (error !== undefined) {
     return { error }
@@ -239,7 +308,9 @@ export function parseReply(args: Record<string, unknown>): Reply | { error: stri
 
   const change = {
     ...(title === '' ? {} : { title }),
+    ...(askLine === '' ? {} : { askLine }),
     ...(options === undefined ? {} : { options }),
+    ...(notes === undefined ? {} : { optionNotes: notes }),
     ...(recommended === '' ? {} : { recommended }),
     ...(link === '' ? {} : { link }),
     ...(doneWhen === '' ? {} : { doneWhen }),
@@ -247,7 +318,9 @@ export function parseReply(args: Record<string, unknown>): Reply | { error: stri
   const isChanged = Object.keys(change).length > 0
 
   if (text === '' && !isChanged) {
-    return { error: 'reply_item needs text or a change: a message for the user, or a new title, options, recommended, link or done_when.' }
+    return {
+      error: 'reply_item needs text or a change: a message for the user, or a new title, ask, options, option_notes, recommended, link or done_when.',
+    }
   }
 
   return { id, ...(text === '' ? {} : { text }), ...(isChanged ? { change } : {}) }
@@ -269,7 +342,21 @@ export function replyErrorOf(task: Task, reply: Reply): string | undefined {
     return 'options and recommended are for a decision only.'
   }
 
-  return change.recommended !== undefined && !(change.options ?? task.options ?? []).includes(change.recommended)
+  if (task.kind !== 'decision' && change.optionNotes !== undefined) {
+    return NOTES_FOR_DECISION
+  }
+
+  if (change.options !== undefined && change.optionNotes === undefined) {
+    return 'new options need new option_notes, one for each option.'
+  }
+
+  const options = change.options ?? task.options ?? []
+
+  if (change.optionNotes !== undefined && !hasNoteForEach(options, change.optionNotes)) {
+    return NOTES_ERROR
+  }
+
+  return change.recommended !== undefined && !options.includes(change.recommended)
     ? 'recommended must be one of the options, spelled the same.'
     : undefined
 }

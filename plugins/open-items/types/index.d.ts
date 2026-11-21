@@ -28,13 +28,19 @@ export type Task = {
   id: number
   kind: TaskKind
   title: string
+  /** The `ask` argument: the one line the user answers, does or must know. */
+  askLine?: string
   /** `thread[0]` is the detail, from Claude. A closed item saved past its delivery keeps none. */
   thread: readonly Message[]
   doneWhen?: string
   options?: readonly string[]
+  /** One note for each of `options`, in the same order: what the option means for the user. */
+  optionNotes?: readonly string[]
   /** One of `options`, the one Claude suggests. */
   recommended?: string
   link?: string
+  /** Made by `add_item` from 0.3 on, so Claude's messages are Markdown; an item saved before has none and shows as plain text. */
+  isMarkdown?: true
   state: ItemState
   /** The user replied; Claude has not replied or closed it since. */
   isWaitingForClaude: boolean

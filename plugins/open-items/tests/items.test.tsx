@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { leftoversIn, savedIn, takenCodes, trimmed } from '../hooks/saved'
-import { isOpenAsk, parseAsk, parseReply } from '../hooks/tasks'
+import { isOpenAsk, parseAsk, parseReply, repliedBy, replyErrorOf } from '../hooks/tasks'
 import type { Message, Saved, Task } from '../types'
 
 const DAY_MS = 24 * 60 * 60_000
@@ -49,7 +49,7 @@ describe('the item model', () => {
   test('parseAsk keeps line breaks in detail and done_when', () => {
     const ask = parseAsk({ kind: 'action', title: 'Create the dev tokens', detail: STEPS, done_when: STEPS })
 
-    expect(ask).toEqual({ kind: 'action', title: 'Create the dev tokens', detail: STEPS, doneWhen: STEPS })
+    expect(ask).toEqual({ kind: 'action', title: 'Create the dev tokens', detail: STEPS, doneWhen: STEPS, isMarkdown: true })
   })
 
   test('parseAsk refuses a detail or done_when over 4000 characters', () => {
@@ -214,5 +214,93 @@ describe('the item model', () => {
 
     expect(new TextEncoder().encode(json).length).toBeLessThan(1024 * 1024)
     expect(savedIn(JSON.parse(json))?.tasks[0]?.thread).toHaveLength(40)
+  })
+})
+
+describe('ask and option notes', () => {
+  const DECISION = {
+    kind: 'decision',
+    title: 'Pick a pagination strategy for /feed',
+    detail: 'The feed is append-only.',
+    ask: 'Pick one?',
+    options: ['A', 'B'],
+    option_notes: ['a', 'b'],
+  }
+  const ACTION = { kind: 'action', title: 'Create the dev tokens', detail: 'Two tokens.' }
+  const NOTES_ERROR = 'option_notes needs one note for each option, in the same order.'
+  const DECISION_ONLY = 'option_notes are for a decision only.'
+  const TOO_LONG = 'ask is 151 characters; keep it under 150 and put the rest in detail.'
+  /** A decision saved before 0.3: options, no notes, no mark. */
+  const OLD_DECISION = item({ kind: 'decision', options: ['A', 'B'] })
+
+  test('parseAsk keeps the ask and the option notes of a decision, and marks the item as Markdown', () => {
+    expect(parseAsk(DECISION)).toEqual({
+      kind: 'decision',
+      title: 'Pick a pagination strategy for /feed',
+      askLine: 'Pick one?',
+      detail: 'The feed is append-only.',
+      options: ['A', 'B'],
+      optionNotes: ['a', 'b'],
+      isMarkdown: true,
+    })
+  })
+
+  test('parseAsk needs an ask for a decision, in one line under 150 characters', () => {
+    expect(errorOf(parseAsk({ ...DECISION, ask: undefined }))).toBe('ask is required for a decision: the one question the user answers, in one sentence.')
+    expect(errorOf(parseAsk({ ...DECISION, ask: 'x'.repeat(151) }))).toBe(TOO_LONG)
+    expect(parseAsk({ ...DECISION, ask: 'x'.repeat(150) })).toMatchObject({ askLine: 'x'.repeat(150) })
+    expect(parseAsk({ ...DECISION, ask: 'Pick\none?' })).toMatchObject({ askLine: 'Pick one?' })
+  })
+
+  test('parseAsk needs one note under 120 characters for each option of a decision', () => {
+    expect(errorOf(parseAsk({ ...DECISION, option_notes: undefined }))).toBe(NOTES_ERROR)
+    expect(errorOf(parseAsk({ ...DECISION, option_notes: ['a'] }))).toBe(NOTES_ERROR)
+    expect(errorOf(parseAsk({ ...DECISION, option_notes: ['a', 'b', 'c'] }))).toBe(NOTES_ERROR)
+    expect(errorOf(parseAsk({ ...DECISION, option_notes: ['a', ''] }))).toBe(NOTES_ERROR)
+    expect(errorOf(parseAsk({ ...DECISION, option_notes: ['a', 5] }))).toBe(NOTES_ERROR)
+    expect(errorOf(parseAsk({ ...DECISION, option_notes: ['a', 'x'.repeat(121)] }))).toBe('keep each option note under 120 characters.')
+    expect(parseAsk({ ...DECISION, option_notes: ['a', 'x'.repeat(120)] })).toMatchObject({ optionNotes: ['a', 'x'.repeat(120)] })
+  })
+
+  test('parseAsk refuses option notes on the other kinds, where the ask is optional', () => {
+    expect(errorOf(parseAsk({ ...ACTION, option_notes: ['a', 'b'] }))).toBe(DECISION_ONLY)
+    expect(errorOf(parseAsk({ ...ACTION, options: ['A', 'B'], option_notes: ['a'] }))).toBe(DECISION_ONLY)
+    expect(parseAsk(ACTION)).toEqual({ ...ACTION, isMarkdown: true })
+    expect(parseAsk({ ...ACTION, ask: 'Make both tokens.' })).toEqual({ ...ACTION, askLine: 'Make both tokens.', isMarkdown: true })
+  })
+
+  test('parseAsk drops an empty option together with its note, so the notes stay in order', () => {
+    expect(parseAsk({ ...DECISION, options: ['A', '', 'B'], option_notes: ['a', 'x', 'b'] })).toMatchObject({ options: ['A', 'B'], optionNotes: ['a', 'b'] })
+    expect(parseAsk({ ...DECISION, options: ['A', 7, 'B'], option_notes: ['a', 'x', 'b'] })).toMatchObject({ options: ['A', 'B'], optionNotes: ['a', 'b'] })
+  })
+
+  test('parseReply takes option notes alone and a new ask, and an empty ask is no change', () => {
+    expect(parseReply({ id: 3, option_notes: ['a', 'b'] })).toEqual({ id: 3, change: { optionNotes: ['a', 'b'] } })
+    expect(parseReply({ id: 3, ask: 'New?' })).toEqual({ id: 3, change: { askLine: 'New?' } })
+    expect(errorOf(parseReply({ id: 3, ask: 'x'.repeat(151) }))).toBe(TOO_LONG)
+    expect(errorOf(parseReply({ id: 3, options: ['A', 'B'], option_notes: ['a'] }))).toBe(NOTES_ERROR)
+    expect(errorOf(parseReply({ id: 3, option_notes: ['a', 'x'.repeat(121)] }))).toBe('keep each option note under 120 characters.')
+    expect(errorOf(parseReply({ id: 3, ask: ' ' }))).toBe(
+      'reply_item needs text or a change: a message for the user, or a new title, ask, options, option_notes, recommended, link or done_when.',
+    )
+  })
+
+  test('replyErrorOf checks notes alone against the options of a decision saved before 0.3, and new options need new notes', () => {
+    expect(replyErrorOf(OLD_DECISION, { id: 1, change: { optionNotes: ['a', 'b'] } })).toBeUndefined()
+    expect(replyErrorOf(OLD_DECISION, { id: 1, change: { optionNotes: ['a'] } })).toBe(NOTES_ERROR)
+    expect(replyErrorOf(OLD_DECISION, { id: 1, change: { optionNotes: ['a', ''] } })).toBe(NOTES_ERROR)
+    expect(replyErrorOf(OLD_DECISION, { id: 1, change: { options: ['C', 'D'] } })).toBe('new options need new option_notes, one for each option.')
+    expect(replyErrorOf(OLD_DECISION, { id: 1, change: { options: ['C', 'D'], optionNotes: ['c', ''] } })).toBe(NOTES_ERROR)
+    expect(replyErrorOf(OLD_DECISION, { id: 1, change: { options: ['C', 'D'], optionNotes: ['c', 'd'] } })).toBeUndefined()
+    expect(replyErrorOf(item(), { id: 1, change: { optionNotes: ['a', 'b'] } })).toBe(DECISION_ONLY)
+    expect(replyErrorOf(item(), { id: 1, change: { options: ['C', 'D'] } })).toBe('options and recommended are for a decision only.')
+  })
+
+  test('repliedBy saves a new ask line and notes, and leaves an item saved before 0.3 unmarked', () => {
+    const replied = repliedBy(OLD_DECISION, { id: 1, change: { askLine: 'New?', optionNotes: ['a', 'b'] } }, NOW)
+
+    expect(replied.askLine).toBe('New?')
+    expect(replied.optionNotes).toEqual(['a', 'b'])
+    expect(replied).not.toHaveProperty('isMarkdown')
   })
 })

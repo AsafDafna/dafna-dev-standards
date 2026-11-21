@@ -58,9 +58,11 @@ const XCODE_TASK = {
 const PAGING_TASK = {
   tool: ADD,
   title: 'Pick a pagination strategy for /feed',
+  ask: 'Which pagination should /feed use?',
   detail: 'I lean towards cursor: the feed is append-only.',
   kind: 'decision',
   options: ['Cursor', 'Offset, capped at 10k'],
+  option_notes: ['Pages stay stable while new posts arrive.', 'Page numbers work; pages past 10k items do not.'],
 } as const
 
 const NOW = 1_000_000
@@ -1925,7 +1927,13 @@ describe('the item screen', () => {
     await ui.input({ key: 'reply-1', text: 'Is the feed ordered by time?', kind: 'change' })
     held.isOn = true
     const pressed = ui.press({ key: 'option-2' })
-    await $.tool.call({ tool: REPLY, id: 1, text: 'Two other ways now.', options: ['Keyset', 'Offset, capped at 1k'] })
+    await $.tool.call({
+      tool: REPLY,
+      id: 1,
+      text: 'Two other ways now.',
+      options: ['Keyset', 'Offset, capped at 1k'],
+      option_notes: ['Deep pages stay fast; no page numbers.', 'Page numbers work; pages past 1k items do not.'],
+    })
     held.letGo()
     await pressed
     await clock.advance(1000)
@@ -4436,9 +4444,11 @@ describe('the README example', () => {
     await $.tool.call({
       tool: ADD,
       title: 'Decide whether to make the repo public',
+      ask: 'Make the repo public before the npm release?',
       detail: 'npm will link to it, and its whole git history becomes public. I found no secrets in it.',
       kind: 'decision',
       options: ['Make it public', 'Keep it private'],
+      option_notes: ['npm links to the source and its whole history.', 'npm shows the package with no source link.'],
     })
     await ui.press({ key: 'row-2' })
     await ui.press({ key: 'option-1' })
@@ -4504,9 +4514,11 @@ describe('the four kinds', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
+    ask: 'Ship the feed rewrite this week?',
     detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
+    option_notes: ['The mobile release goes out on time.', 'The mobile release waits for the rewrite.'],
     recommended: 'Yes',
   } as const
 
@@ -4835,9 +4847,11 @@ describe('the pane groups items by kind', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
+    ask: 'Ship the feed rewrite this week?',
     detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
+    option_notes: ['The mobile release goes out on time.', 'The mobile release waits for the rewrite.'],
   } as const
   const INFO = { tool: ADD, title: 'The migration ran clean', detail: 'Nothing for you to do.', kind: 'info' } as const
 
@@ -4908,7 +4922,14 @@ describe('the pane groups items by kind', () => {
 })
 
 describe('the alert', () => {
-  const ask = (kind: 'decision' | 'question' | 'action', title: string) => ({ tool: ADD, title, detail: 'Needed.', kind, ...(kind === 'decision' ? { options: ['Yes', 'No'] } : {}) }) as const
+  const ask = (kind: 'decision' | 'question' | 'action', title: string) =>
+    ({
+      tool: ADD,
+      title,
+      detail: 'Needed.',
+      kind,
+      ...(kind === 'decision' ? { ask: 'Go ahead?', options: ['Yes', 'No'], option_notes: ['Go ahead now.', 'Wait for now.'] } : {}),
+    }) as const
   const DECISION = ask('decision', 'Ship the feed rewrite this week')
   const QUESTION = ask('question', 'Which branch is the release cut from')
 
@@ -5058,9 +5079,11 @@ describe('threads', () => {
   const DECISION = {
     tool: ADD,
     title: 'Ship the feed rewrite this week',
+    ask: 'Ship the feed rewrite this week?',
     detail: 'It unblocks the mobile release.',
     kind: 'decision',
     options: ['Yes', 'Not yet'],
+    option_notes: ['The mobile release goes out on time.', 'The mobile release waits for the rewrite.'],
     recommended: 'Yes',
   } as const
 
@@ -5141,7 +5164,15 @@ describe('threads', () => {
     await start($)
 
     await $.tool.call(DECISION)
-    const changed = resultOf(await $.tool.call({ tool: REPLY, id: 1, options: ['Ship Tuesday', 'Ship Friday', 'Hold'], recommended: 'Ship Friday' }))
+    const changed = resultOf(
+      await $.tool.call({
+        tool: REPLY,
+        id: 1,
+        options: ['Ship Tuesday', 'Ship Friday', 'Hold'],
+        option_notes: ['Before the review.', 'After the review.', 'Wait for the mobile team.'],
+        recommended: 'Ship Friday',
+      }),
+    )
     const task = itemOf(world, 1)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'row-1' })
@@ -5154,7 +5185,7 @@ describe('threads', () => {
     expect((await ui.find({ type: 'Button', key: 'option-2' }))?.props.label).toBe('Ship Friday (recommended)')
 
     // A recommended option the new options leave out goes with it.
-    await $.tool.call({ tool: REPLY, id: 1, options: ['Ship now', 'Hold'] })
+    await $.tool.call({ tool: REPLY, id: 1, options: ['Ship now', 'Hold'], option_notes: ['Ship before the review.', 'Wait for the mobile team.'] })
 
     expect(itemOf(world, 1)?.recommended).toBeUndefined()
   })
