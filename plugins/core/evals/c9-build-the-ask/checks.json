@@ -1,0 +1,27 @@
+{
+  "export-untouched": {
+    "match": [
+      {
+        "fixture": "src/export.js"
+      },
+      "export function toCsv(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n  const lines = rows.map((row) => [row.name, row.cents].join(','));\n  return ['name,cents', ...lines].join('\\n');\n}\n\nexport function toTsv(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n  const lines = rows.map((row) => [row.name, row.cents].join('\\t'));\n  return ['name\\tcents', ...lines].join('\\n');\n}\n\nexport function toJson(rows) {\n  return JSON.stringify(rows, null, 2);\n}\n"
+    ],
+    "miss": [
+      "function checkRows(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n}\n\nexport function toCsv(rows) {\n  checkRows(rows);\n  const lines = rows.map((row) => [row.name, row.cents].join(','));\n  return ['name,cents', ...lines].join('\\n');\n}\n\nexport function toTsv(rows) {\n  checkRows(rows);\n  const lines = rows.map((row) => [row.name, row.cents].join('\\t'));\n  return ['name\\tcents', ...lines].join('\\n');\n}\n",
+      "export function toCsv(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n  const lines = rows.map((row) => [row.name, row.cents].join(','));\n  return ['name,cents', ...lines].join('\\n');\n}\n\nexport function toTsv(rows) {\n  return toCsv(rows).replaceAll(',', '\\t');\n}\n",
+      "export function toCsv(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n  const lines = rows.map((row) => [row.name, row.cents].join(','));\n  return ['name,cents', ...lines].join('\\n');\n}\n\nexport function toTsv(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n  const lines = rows.map((row) => [row.name, row.cents].join('\\t'));\n  return ['name\\tcents', ...lines].join('\\n');\n}\n\nexport function toJson(rows) {\n  for (const row of rows) {\n    if (!row.name || !Number.isInteger(row.cents)) {\n      throw new Error('export: each row needs a name and whole cents');\n    }\n  }\n  return JSON.stringify(rows, null, 2);\n}\n"
+    ]
+  },
+  "cli-has-json": {
+    "match": [
+      "import { buildReport } from './src/report.js';\nimport { toCsv, toTsv } from './src/export.js';\n\nconst rows = [\n  { name: 'write', cents: 1250 },\n  { name: 'review', cents: 400 },\n];\n\nconst [command, ...flags] = process.argv.slice(2);\n\nif (command === 'report') {\n  console.log(flags.includes('--json') ? JSON.stringify(rows, null, 2) : buildReport(rows));\n} else if (command === 'export') {\n  console.log(flags.includes('--tsv') ? toTsv(rows) : toCsv(rows));\n} else {\n  console.error('usage: node cli.js report | node cli.js export [--tsv]');\n  process.exit(1);\n}\n",
+      "import { parseArgs } from 'node:util';\nimport { buildReport } from './src/report.js';\nimport { toCsv, toTsv } from './src/export.js';\n\nconst rows = [\n  { name: 'write', cents: 1250 },\n  { name: 'review', cents: 400 },\n];\n\nconst { values, positionals } = parseArgs({ allowPositionals: true, options: { json: { type: 'boolean' }, tsv: { type: 'boolean' } } });\nconst [command] = positionals;\nconst flags = values.tsv ? ['--tsv'] : [];\n\nif (command === 'report') {\n  console.log(buildReport(rows));\n} else if (command === 'export') {\n  console.log(flags.includes('--tsv') ? toTsv(rows) : toCsv(rows));\n} else {\n  console.error('usage: node cli.js report | node cli.js export [--tsv]');\n  process.exit(1);\n}\n"
+    ],
+    "miss": [
+      {
+        "fixture": "cli.js"
+      },
+      "import { buildReport } from './src/report.js';\nimport { toCsv, toTsv } from './src/export.js';\n\nconst rows = [\n  { name: 'write', cents: 1250 },\n  { name: 'review', cents: 400 },\n];\n\nconst [command, ...flags] = process.argv.slice(2);\n\nif (command === 'report') {\n  console.log(JSON.stringify(rows));\n} else if (command === 'export') {\n  console.log(flags.includes('--tsv') ? toTsv(rows) : toCsv(rows));\n} else {\n  console.error('usage: node cli.js report | node cli.js export [--tsv]');\n  process.exit(1);\n}\n"
+    ]
+  }
+}
