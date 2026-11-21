@@ -1,0 +1,731 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "9.9.9",
+  "startedAt": "2026-01-01T10:00:00.000Z",
+  "durationSeconds": 300,
+  "costUsd": 0.9,
+  "partial": false,
+  "suite": {
+    "root": "plugins/core",
+    "ablation": "with-without",
+    "modelOverride": "opus",
+    "threshold": 0,
+    "concurrency": 1,
+    "plugins": []
+  },
+  "aggregates": {},
+  "cases": [
+    {
+      "name": "c1-alpha",
+      "dir": "evals/c1-alpha",
+      "source": "mixed",
+      "promptMarkdown": "Fix the bug in the sample app.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "makes-the-change",
+          "type": "regex",
+          "weight": 1,
+          "config": {}
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {}
+    },
+    {
+      "name": "c2-bravo",
+      "dir": "evals/c2-bravo",
+      "source": "mixed",
+      "promptMarkdown": "Fix the bug in the sample app.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "makes-the-change",
+          "type": "regex",
+          "weight": 1,
+          "config": {}
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0.67,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": false,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {}
+    },
+    {
+      "name": "c3-charlie",
+      "dir": "evals/c3-charlie",
+      "source": "mixed",
+      "promptMarkdown": "Fix the bug in the sample app.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "makes-the-change",
+          "type": "regex",
+          "weight": 1,
+          "config": {}
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {}
+    },
+    {
+      "name": "c4-delta",
+      "dir": "evals/c4-delta",
+      "source": "mixed",
+      "promptMarkdown": "Fix the bug in the sample app.",
+      "runsPerCase": 5,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "makes-the-change",
+          "type": "regex",
+          "weight": 1,
+          "config": {}
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.05,
+            "judgeCostUsd": 0.0003,
+            "durationSeconds": 21,
+            "startedAt": "2026-01-01T10:00:00.000Z",
+            "error": null,
+            "tracePath": "traces/run.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "makes-the-change",
+                "passed": true,
+                "weight": 1,
+                "explanation": "synthetic",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {}
+    }
+  ]
+}
