@@ -212,6 +212,7 @@ describe('the item model', () => {
     const bare = (one: Task) => item({ id: one.id, kind: one.kind, state: one.state, update: one.update, thread: [] })
 
     expect(trimmed(saved([open, delivered, withdrawn]), NOW).tasks).toEqual([open, bare(delivered), bare(withdrawn)])
+
     const noted = { ...delivered, askLine: 'Pick?', optionNotes: ['a', 'b'], isMarkdown: true as const }
 
     expect(trimmed(saved([noted]), NOW).tasks).toEqual([{ ...bare(noted), isMarkdown: true }])

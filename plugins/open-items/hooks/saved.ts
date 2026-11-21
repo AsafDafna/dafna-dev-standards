@@ -198,8 +198,8 @@ export function isExpired(saved: Saved, nowMs: number): boolean {
 /**
  * `saved` as its key keeps it: open, later and handing-off items whole. A
  * closed item Claude has heard of keeps no thread, `doneWhen`, options,
- * `recommended`, ask line, option notes, link or note, and is gone 7 days after its last change. One
- * Claude has not heard of yet stays whole.
+ * `recommended`, ask line, option notes, link or note, and is gone 7 days
+ * after its last change. One Claude has not heard of yet stays whole.
  */
 export function trimmed(saved: Saved, nowMs: number): Saved {
   const tasks = saved.tasks.flatMap(task => {

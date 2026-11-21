@@ -154,12 +154,12 @@ export function nameOf(task: Task): string {
 }
 
 /** `#3 Rotate the token`: a task's number and its whole title. */
-export function titleOf(task: Task): string {
+function titleOf(task: Task): string {
   return `#${task.id} ${nameOf(task)}`
 }
 
-/** `  3m`, drawn dim after an open item's title, and `· waiting for Claude` once the user replied. */
-export function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
+/** `  3m`, an open item's age, and `· waiting for Claude` once the user replied. */
+function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
   return `  ${ago(view.nowMs - task.createdMs)}${task.isWaitingForClaude ? ' · waiting for Claude' : ''}`
 }
 
@@ -194,7 +194,7 @@ function rowTextOf(task: Task, numberCells: number, columns: number): string {
   return `${rowTitleOf(task, numberCells, columns)}${newReply}${waiting}`
 }
 
-export const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO' }
+const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO' }
 
 /** The background of an item's kind label and the color of its ask. */
 export const KIND_COLOR: Record<TaskKind, ThemeKey> = { decision: 'warning', question: 'suggestion', action: 'permission', info: 'success' }
@@ -297,8 +297,10 @@ export function linkOf(task: Task): string | undefined {
   return task.link === undefined ? undefined : printable(task.link, MAX_LINK)
 }
 
+export type Action = { key: string; hotkey: string; label: string; move: Move }
+
 /** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open. */
-export function actionsOf(task: Task): { key: string; hotkey: string; label: string; move: Move }[] {
+export function actionsOf(task: Task): Action[] {
   if (task.kind === 'info') {
     return [{ key: 'seen', hotkey: 'd', label: 'Seen', move: SEEN }]
   }
@@ -321,6 +323,23 @@ export function actionsOf(task: Task): { key: string; hotkey: string; label: str
   }
 
   return [{ key: 'done', hotkey: 'd', label: 'Done', move: DONE }, ...later]
+}
+
+/**
+ * `actionsOf(task)` as the item screen draws them: each option in a box of
+ * its own, with its note, safe to draw, and whether Claude recommends it;
+ * the other buttons in a row.
+ */
+export function itemButtonsOf(task: Task): { choices: { action: Action; note: string | undefined; isRecommended: boolean }[]; buttons: Action[] } {
+  const actions = actionsOf(task)
+  const options = actions.filter(action => action.key.startsWith('option-'))
+  const choices = options.map((action, i) => {
+    const note = task.optionNotes?.[i]
+
+    return { action, note: note === undefined ? undefined : printable(note, MAX_OPTION_NOTE), isRecommended: task.options?.[i] === task.recommended }
+  })
+
+  return { choices, buttons: actions.filter(action => !options.includes(action)) }
 }
 
 // The terminal draws a field's label as `Reply: `.
@@ -511,20 +530,15 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const link = linkOf(task)
   const doneWhen = doneWhenOf(task)
   const isField = hasReplyField(task, view)
-  const actions = actionsOf(task)
-  const choices = actions.filter(action => action.key.startsWith('option-'))
-  const boxes = choices.reduce((rows, action, i) => {
-    const label = `${action.hotkey}: ${action.label}`
+  const { choices, buttons } = itemButtonsOf(task)
+  const boxes = choices.reduce((rows, { action, note, isRecommended }) => {
+    const button = `${action.hotkey}: ${action.label}`
     // The mark wraps whole: below the label unless it fits after the label's one row.
-    const markRows = task.options?.[i] !== task.recommended || cellsOf(label) + cellsOf(RECOMMENDED_MARK) <= boxed ? 0 : 1
-    const note = task.optionNotes?.[i]
+    const markRows = !isRecommended || cellsOf(button) + cellsOf(RECOMMENDED_MARK) <= boxed ? 0 : 1
 
-    return rows + BOX_ROWS + rowsOf(label, boxed) + markRows + (note === undefined ? 0 : rowsOf(printable(note, MAX_OPTION_NOTE), boxed))
+    return rows + BOX_ROWS + rowsOf(button, boxed) + markRows + (note === undefined ? 0 : rowsOf(note, boxed))
   }, 0)
-  const buttons = [
-    ...actions.filter(action => !choices.includes(action)).map(action => `${action.hotkey}: ${action.label}`),
-    ...(isField ? [LONG_ANSWER.label] : []),
-  ]
+  const row = [...buttons.map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
 
   return (
     savedRowsOf(view, width) +
@@ -536,7 +550,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
     (link === undefined ? 0 : rowsOf(link, Math.max(1, width - cellsOf(LINK_LABEL)))) +
     (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, width)) +
     (choices.length === 0 ? 0 : 1 + boxes) +
-    (buttons.length === 0 ? 0 : 1 + buttonRowsOf(buttons, width)) +
+    (row.length === 0 ? 0 : 1 + buttonRowsOf(row, width)) +
     (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), width) + buttonRowsOf(HELD_BUTTONS, width)) +
     (isField ? fieldRowsOf(REPLY_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) : 0) +
     footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])

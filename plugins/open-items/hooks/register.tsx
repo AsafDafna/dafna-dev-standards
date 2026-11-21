@@ -6,7 +6,6 @@ import {
   DONE,
   MAX_ASK,
   MAX_NOTE,
-  MAX_OPTION_NOTE,
   MAX_TITLE,
   SEEN,
   addedOf,
@@ -73,7 +72,6 @@ import {
   SUBMIT_LABEL,
   TAKE_BACK,
   UNCLAIMED_NOTE,
-  actionsOf,
   arrivedOf,
   arrowTargetOf,
   doneWhenOf,
@@ -87,6 +85,7 @@ import {
   hiddenOf,
   hintOf,
   insteadOf,
+  itemButtonsOf,
   linkOf,
   marksOf,
   movingOf,
@@ -101,7 +100,7 @@ import {
   rowTitleOf,
   rowsFor,
 } from './pane'
-import type { Entry, PaneView } from './pane'
+import type { Action, Entry, PaneView } from './pane'
 import { handedOffIn, isExpired, isSavedKey, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom, trimmed, withTaken } from './saved'
 import { numbersOf, plural, printable } from './text'
 
@@ -1214,14 +1213,12 @@ export const register: Register = on => {
       const heldText = heldOf(task, view)
       const thread = entriesOf(task, view.nowMs)
       const [detail, ...newest] = thread.entries
-      const actions = actionsOf(task)
-      const choices = actions.filter(action => action.key.startsWith('option-'))
-      const buttons = actions.filter(action => !choices.includes(action))
+      const { choices, buttons } = itemButtonsOf(task)
       const isField = hasReplyField(task, view)
       const drawn = focusOrderOf(shown)
       const color = KIND_COLOR[task.kind]
       const headerLine = headerLineOf(task, view)
-      const button = (action: (typeof actions)[number]) => (
+      const button = (action: Action) => (
         <Button key={action.key} plain hotkey={action.hotkey} label={action.label} onPress={() => pressOn($, task.id, action.move, drawn)} />
       )
 
@@ -1294,32 +1291,27 @@ export const register: Register = on => {
             {doneWhen === undefined ? null : <Text wrap="wrap">{doneWhen}</Text>}
             {choices.length === 0 ? null : (
               <Box flexDirection="column" marginTop={1}>
-                {choices.map((action, i) => {
-                  const isRecommended = task.options?.[i] === task.recommended
-                  const note = task.optionNotes?.[i]
-
-                  return (
-                    <Box
-                      key={`choice-${i + 1}`}
-                      flexDirection="column"
-                      borderStyle="round"
-                      borderColor={isRecommended ? 'success' : 'subtle'}
-                      paddingX={1}
-                      hover={{ backgroundColor: FOCUS_BACKGROUND }}
-                      backgroundColor={e.props.isFocused && live.ring === action.key ? FOCUS_BACKGROUND : undefined}
-                    >
-                      <Box flexDirection="row" flexWrap="wrap">
-                        {button(action)}
-                        {isRecommended ? (
-                          <Box flexShrink={0}>
-                            <Text color="success">{RECOMMENDED_MARK}</Text>
-                          </Box>
-                        ) : null}
-                      </Box>
-                      {note === undefined ? null : <Text wrap="wrap">{printable(note, MAX_OPTION_NOTE)}</Text>}
+                {choices.map(({ action, note, isRecommended }, i) => (
+                  <Box
+                    key={`choice-${i + 1}`}
+                    flexDirection="column"
+                    borderStyle="round"
+                    borderColor={isRecommended ? 'success' : 'subtle'}
+                    paddingX={1}
+                    hover={{ backgroundColor: FOCUS_BACKGROUND }}
+                    backgroundColor={e.props.isFocused && live.ring === action.key ? FOCUS_BACKGROUND : undefined}
+                  >
+                    <Box flexDirection="row" flexWrap="wrap">
+                      {button(action)}
+                      {isRecommended ? (
+                        <Box flexShrink={0}>
+                          <Text color="success">{RECOMMENDED_MARK}</Text>
+                        </Box>
+                      ) : null}
                     </Box>
-                  )
-                })}
+                    {note === undefined ? null : <Text wrap="wrap">{note}</Text>}
+                  </Box>
+                ))}
               </Box>
             )}
             {buttons.length === 0 && !isField ? null : (
