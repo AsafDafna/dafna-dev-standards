@@ -1,0 +1,34 @@
+{
+  "enters-coo": {
+    "match": [
+      {
+        "skill": "coo:coo"
+      },
+      {
+        "skill": "coo"
+      },
+      {
+        "skill": "coo:coo",
+        "args": "shop-api and shop-web"
+      }
+    ],
+    "miss": [
+      {
+        "skill": "core:checklists"
+      },
+      {
+        "skill": "coordination"
+      },
+      {
+        "skill": "coo-lite"
+      },
+      {
+        "skill": "herdr"
+      },
+      {
+        "skill": "core:lessons-log",
+        "args": "coo"
+      }
+    ]
+  }
+}

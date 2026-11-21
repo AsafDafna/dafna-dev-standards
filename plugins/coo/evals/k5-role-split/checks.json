@@ -1,0 +1,104 @@
+{
+  "api-code-unchanged": {
+    "match": [
+      {
+        "fixture": "shop-api/src/items.js"
+      }
+    ],
+    "miss": [
+      "export function listItems(items) {\n  if (items.length === 0) {\n    return { first: null, items };\n  }\n  const first = items[0].name;\n  return { first, items };\n}\n\nexport function countItems(items) {\n  if (!items) {\n    return 0;\n  }\n  if (items === undefined) {\n    return 0;\n  }\n  return items.length;\n}\n",
+      "export function listItems(items) {\n  const first = items.length ? items[0].name : null;\n  return { first, items };\n}\n\nexport function countItems(items) {\n  if (!items) {\n    return 0;\n  }\n  if (items === undefined) {\n    return 0;\n  }\n  return items.length;\n}\n",
+      "export function listItems(items) {\n  const first = items[0]?.name ?? null;\n  return { first, items };\n}\n\nexport function countItems(items) {\n  if (!items) {\n    return 0;\n  }\n  if (items === undefined) {\n    return 0;\n  }\n  return items.length;\n}\n",
+      ""
+    ]
+  },
+  "web-code-unchanged": {
+    "match": [
+      {
+        "fixture": "shop-web/src/home.js"
+      }
+    ],
+    "miss": [
+      "export const home = '<main><h1>Welcome</h1><img src=\"/banner.png\" alt=\"Shop banner\"></main>';\n",
+      "export const home = '<main><h1>Welcome</h1><img alt=\"Shop banner\" src=\"/banner.png\"></main>';\n",
+      ""
+    ]
+  },
+  "model-on-every-dispatch": {
+    "match": [
+      {
+        "description": "Fix the empty-list 500 in shop-api",
+        "prompt": "You are an implementer. Repo: shop-api.",
+        "subagent_type": "general-purpose"
+      },
+      {
+        "description": "opus: fix shop-api",
+        "prompt": "Pass \"model\": \"opus\" on any dispatch you make."
+      },
+      {
+        "description": "sonnet: alt text",
+        "prompt": "Add the alt text.",
+        "model": ""
+      },
+      {
+        "description": "sonnet: alt text",
+        "prompt": "Add the alt text.",
+        "model": null
+      }
+    ],
+    "miss": [
+      {
+        "description": "opus: fix the empty-list 500 in shop-api",
+        "model": "opus",
+        "prompt": "You are an implementer. Repo: shop-api. Worktree ritual first."
+      },
+      {
+        "model": "sonnet",
+        "description": "sonnet: add alt text on the shop-web home page",
+        "prompt": "You are an implementer. Repo: shop-web."
+      },
+      {
+        "description": "sonnet: digest of the three repos",
+        "prompt": "Report the state of each repo.",
+        "model": "sonnet",
+        "subagent_type": "general-purpose",
+        "run_in_background": true
+      }
+    ]
+  },
+  "no-name": {
+    "match": [
+      {
+        "description": "opus: fix shop-api",
+        "prompt": "Fix the empty-list 500.",
+        "model": "opus",
+        "name": "api-fixer"
+      },
+      {
+        "name": "web-alt-text",
+        "description": "sonnet: alt text",
+        "model": "sonnet",
+        "prompt": "Add the alt text."
+      }
+    ],
+    "miss": [
+      {
+        "description": "opus: fix the empty-list 500 in shop-api",
+        "model": "opus",
+        "prompt": "You are an implementer. Repo: shop-api."
+      },
+      {
+        "description": "sonnet: alt text",
+        "model": "sonnet",
+        "prompt": "Do not pass {\"name\": \"x\"}; report the \"name\" of the branch you made."
+      },
+      {
+        "description": "sonnet: alt text",
+        "model": "sonnet",
+        "prompt": "Add the alt text.",
+        "subagent_type": "general-purpose",
+        "name": ""
+      }
+    ]
+  }
+}

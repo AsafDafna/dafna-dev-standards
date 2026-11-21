@@ -1,7 +1,6 @@
 ---
-type: tool_used
-tool: Read
-input_match: '"file_path"\s*:\s*"(?:[^"\\/]*/)*(?:shop-api|shop-web|docs-site)/'
-min: 0
-max: 0
+type: regex
+target: trace
+pattern: '^(?:(?!"name"\s*:\s*"Agent")[\s\S])*?"name"\s*:\s*"Read"[^{}]*?"input"\s*:\s*\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*?"file_path"\s*:\s*"(?:[^"\\/]*/)*(?:shop-api|shop-web|docs-site)/'
+match: not_contains
 ---

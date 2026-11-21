@@ -1,0 +1,46 @@
+{
+  "no-coo": {
+    "match": [
+      {
+        "skill": "coo:coo"
+      },
+      {
+        "skill": "coo"
+      },
+      {
+        "skill": "coo:coo",
+        "args": "shop-api and shop-web"
+      }
+    ],
+    "miss": [
+      {
+        "skill": "core:checklists"
+      },
+      {
+        "skill": "coordination"
+      },
+      {
+        "skill": "coo-lite"
+      },
+      {
+        "skill": "herdr"
+      },
+      {
+        "skill": "core:lessons-log",
+        "args": "coo"
+      }
+    ]
+  },
+  "footer-fixed": {
+    "match": [
+      {
+        "fixture": "shop-web/src/footer.js"
+      },
+      "export const footer = '<footer>Shoping made simple. Shoping again.</footer>';\n"
+    ],
+    "miss": [
+      "export const footer = '<footer>Shopping made simple</footer>';\n",
+      "export const footer = '<footer>Shop made simple</footer>';\n"
+    ]
+  }
+}

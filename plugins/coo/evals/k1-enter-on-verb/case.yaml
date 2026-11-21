@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: k1-enter-on-verb
+context:
+  scaffold_script: fixture.sh
