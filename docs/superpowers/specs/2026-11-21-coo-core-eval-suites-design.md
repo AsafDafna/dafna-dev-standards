@@ -40,7 +40,7 @@ Not checked (build step 0 checks each one):
 - A **climb** case checks judgment, where the best model still fails sometimes. It needs headroom. Its score is read with a test, never alone.
 - Both kinds live in one suite per plugin, with the tags `guard` and `climb`. The report gives them apart.
 - The classes are provisional until the A/A run (build step 2). A guard that fails any A/A run is fixed, or it moves to climb. If PR 28 targets its rule (case C3), it counts as climb for PR 28 and becomes a guard after the merge.
-- The no-plugin arm runs once in step 2. A guard that passes every run without the plugin gets the tag `model-default`. The `Eval:` line counts it apart, because it shows nothing about the rules.
+- The no-plugin arm runs once in step 2, on core's guard cases only. A guard that passes every run without the plugin gets the tag `model-default`. Coo runs no no-plugin arm: only K3 could pass without the plugin, because K1 and K2 need the coo skill and K4 to K8 grade the call record that only the stub helper writes. Without the plugins the stub is absent too, so leads could start real workers. The `Eval:` line counts it apart, because it shows nothing about the rules.
 - Two climb cases in core and one in coo carry the tag `held-out`. When someone edits a rule to raise the score, they do not read the transcripts of held-out cases. They never paste a failure into a rule.
 
 ## Shared harness
@@ -118,7 +118,7 @@ Coverage is per rule, not per file. A PR's `Eval:` line names the cases that use
 ## How a run measures a change
 
 - **Arms.** Base is the merge-base of the PR head and its base branch. Head is the PR's head commit. So the two arms differ only by the PR. Both run the same suite with `--ablation none`.
-- **The no-plugin arm is not the baseline.** It shows that a plugin helps, not that a change did no harm. It runs once, in build step 2.
+- **The no-plugin arm is not the baseline.** It shows that a plugin helps, not that a change did no harm. It runs once, in build step 2, on core's guard cases with no `Agent` tool, so no real worker can start.
 - **Runs.** Guard cases run 3 times per arm and climb cases 5 times (decision 2).
 - **Guard result.** "guard k/n" counts the guard cases with no regression, `model-default` guards apart. A guard case "drops" when head passed fewer runs than base.
   - The script reruns each dropped case 6 more times on both arms.
@@ -131,7 +131,9 @@ Coverage is per rule, not per file. A PR's `Eval:` line names the cases that use
   - When p ≥ 0.05, the line says "within noise". The change then has no proven gain, and the eval is no reason to merge it.
 - **A/A run** (build step 2). `--aa` runs one commit against itself.
   - It gives the first pass rate of each guard and the climb score's spread. Its climb difference goes in the suite README as the noise floor.
-  - The Fisher and permutation rules run on it too. Each can flag an A/A by chance (about 5%). One flag means: rerun the A/A once. A second flag means: fix the suite, because leftover state or a loose grader is the likely cause.
+  - The Fisher and permutation rules run on it too. Each can flag an A/A by chance (about 5%). A Fisher flag, or a guard that fails an A/A run, gets a fix or a move to climb.
+  - The build allows one A/A rerun. It covers only the cases whose files changed, at most 4 per suite, on both arms.
+  - A permutation flag, any flag or guard failure after the rerun, or a change to a shared file (the scaffold or the stub helper) stops the paid runs. The owner then decides, because leftover state or a loose grader is the likely cause.
 - **The `Eval:` line.** One line per suite. The suite hash is `git rev-parse --short <suite ref>:plugins/<suite>/evals`. The line gives the run errors per arm (turn cap, timeout), so a head that hits `max_turns` more often is not read as a rule change. A run that used the rules fallback (build step 0) says "rules via system prompt". The numbers below are made-up examples:
 
 ```
@@ -168,7 +170,7 @@ Opus costs 2× sonnet per token. The table applies that ratio to whole runs, so 
 - The prices are Opus 5.5 at $4/$20 and Sonnet 5.5 at $2/$10 per million input/output tokens. They come from the claude-api skill's model notes, not the live price page. NOT CHECKED: which model the `sonnet` alias picks.
 - A PR measure of both suites costs about $56 with no rerun. If guards pass 95% of runs, reruns add about $6 on average.
 - At most, it is 4 main invocations ($86 in caps) plus 4 rerun invocations ($44), so $130.
-- Build steps 0 and 1 (probes, then one run of each case) cost about $8 once. The no-plugin arm in step 2 costs about $28 once.
+- Build steps 0 and 1 (probes, then one run of each case) cost about $8 once. The no-plugin arm in step 2 (core guard cases, two arms) costs about $11 once. The plan gives the build's bounded total.
 - Real workers instead of the stub would make coo cost about 2 to 3 times more. That figure is a guess with no measurement behind it.
 - An estimate that is too low trips the cap, which gives exit 2 and no `Eval:` line. Step 1 sets the caps from measured figures.
 - On a subscription seat, the figures are list-price estimates, and the runs count against the plan's usage. A runner on an API key pays them.
@@ -212,7 +214,7 @@ It does not tell:
    - The stub workers (decision 3) work in a two-step coo case: a digest, then a dispatch that uses it.
    - If C1 fails, the run script writes that tree's `RULES.md` into `append_system_prompt` of every case in the copied suite. The rules then reach the session by another path, C1 is dropped, and the `Eval:` line says so.
 1. Write the two suites, the stub helper and the run script. Run each case once to measure the cost per case kind. Set the caps and the turn limits.
-2. Run `--aa` and the no-plugin arm with `--suite-ref` set to the suite branch, on PR 28's merge-base. Set the classes, the `model-default` tags and the noise floor.
+2. Run `--aa`, and the no-plugin arm for core's guard cases, with `--suite-ref` set to the suite branch, on PR 28's merge-base. Set the classes, the `model-default` tags and the noise floor.
 3. Open the suite PR. Its files are not gated paths. The PR body gives the A/A result.
 4. Measure PR 28. The A/A run on its merge-base serves as the base arm. Put the two `Eval:` lines in its body.
 
