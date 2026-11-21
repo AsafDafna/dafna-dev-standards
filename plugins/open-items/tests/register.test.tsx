@@ -302,6 +302,8 @@ function seat(on: On, store: Record<string, unknown> = {}) {
 
     return { value }
   })
+  // The plugin's own `$.ui.focus` calls reach the first stand-in under Claude Code 2.1.310 (CI's pin) and only the second under 2.1.330.
+  on('ui.focus', () => ({}))
   on('ui.focus', { plugin: '*' }, () => ({}))
   on('ui.scroll', ($, e) => {
     world.scrolls.push({ by: e.by, origin: e.origin.kind })
