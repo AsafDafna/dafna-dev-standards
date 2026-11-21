@@ -81,6 +81,10 @@ def scores(runs):
     return [float(r.get("score") or 0) for r in runs]
 
 
+def error_count(results):
+    return sum(1 for runs in arm_runs(results).values() for r in runs if r.get("error") is not None)
+
+
 def find_drops(classes, base_runs, head_runs):
     return [
         n for n in counted_guards(classes)
@@ -151,6 +155,7 @@ def climb_part(classes, base_runs, head_runs):
     base_mean = mean([mean(v) for v in base.values()])
     head_mean = mean([mean(v) for v in head.values()])
     p = permutation_p(base, head)
+    # + 0.0 turns -0.0 into 0.0, so a tiny drop prints +0.00, not -0.00.
     diff = round(head_mean - base_mean, 2) + 0.0
     noise = ", within noise" if p >= 0.05 else ""
     return f"climb {base_mean:.2f} -> {head_mean:.2f} ({diff:+.2f}, p={format_p(p)}{noise})"
@@ -172,19 +177,15 @@ def cmd_line(args):
 
     arms = f"A/A {args.aa}" if args.aa else f"merge-base {args.base_ref} -> head {args.head_ref}"
     model = args.model + (", rules via system prompt" if args.rules_fallback else "")
-    main = base + head
-    runs = f"{runs_label(classes, main, 'guard')}/{runs_label(classes, main, 'climb')}"
+    main_results = base + head
+    runs = f"{runs_label(classes, main_results, 'guard')}/{runs_label(classes, main_results, 'climb')}"
     guard = guard_part(classes, base_runs, head_runs, arm_runs(rerun_base), arm_runs(rerun_head))
     climb = climb_part(classes, base_runs, head_runs)
-    errors = [
-        sum(1 for rs in arm_runs(results).values() for r in rs if r.get("error") is not None)
-        for results in (base_all, head_all)
-    ]
     cost = sum(data.get("costUsd") or 0 for _, data in base_all + head_all)
     line = (
         f"Eval: {args.suite}-suite {args.suite_hash}, {arms}, {model}, "
         f"{runs} runs per guard/climb case: {guard}; {climb}; "
-        f"run errors {errors[0]}/{errors[1]}; ${cost:.2f}"
+        f"run errors {error_count(base_all)}/{error_count(head_all)}; ${cost:.2f}"
     )
     if args.covers:
         line += f"; cases for this change: {args.covers}"

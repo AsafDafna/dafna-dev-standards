@@ -24,6 +24,7 @@ EOF
 }
 say() { echo "eval-compare: $*" >&2; }
 die() { say "$*"; exit 2; }
+in_list() { case " $1 " in *" $2 "*) ;; *) return 1 ;; esac; } # <space-separated list> <word>
 
 child=
 tree_names=
@@ -111,7 +112,7 @@ family_names() {
 shell_names=$(family_names)
 unset_names=
 for _n in $shell_names; do
-  case " $keep_env " in *" $_n "*) continue ;; esac
+  in_list "$keep_env" "$_n" && continue
   unset "$_n" 2>/dev/null || die "cannot unset $_n"
   unset_names="$unset_names $_n"
 done
@@ -149,8 +150,8 @@ classes=$(git -C "$repo" show "$suite_sha:$evals_path/classes.tsv" 2>/dev/null) 
   die "$suite_ref has no $evals_path/classes.tsv"
 rows=$(printf '%s\n' "$classes" | awk -F '\t' 'NF && $1 !~ /^#/ { gsub(/[ \r]/, "", $1); print $1 }' | tr '\n' ' ')
 missing='' norow=''
-for _n in $rows; do case " $case_names " in *" $_n "*) ;; *) missing="$missing $_n" ;; esac; done
-for _n in $case_names; do case " $rows " in *" $_n "*) ;; *) norow="$norow $_n" ;; esac; done
+for _n in $rows; do in_list "$case_names" "$_n" || missing="$missing $_n"; done
+for _n in $case_names; do in_list "$rows" "$_n" || norow="$norow $_n"; done
 [ -z "$missing$norow" ] ||
   die "classes.tsv and the case folders at $suite_ref differ:${missing:+ no folder for$missing;}${norow:+ no classes.tsv row for$norow}"
 guards=$(printf '%s\n' "$classes" | awk -F '\t' '{
@@ -218,7 +219,7 @@ all_zero() { [ -f "$1/exit-codes" ] && awk '$1 != 0 { bad = 1 } END { exit bad }
 complete_json() {
   jq -e '(.partial != true) and ([.cases[]?.arms[]?[]? | .skippedPaidGraders == true] | any | not)' "$1" >/dev/null 2>&1
 }
-# Prints the names of the cases that were added, removed or changed since <dir>'s meta.txt.
+# Sets added, removed and changed to the case names that differ from <dir>'s meta.txt.
 case_drift() {
   added='' removed='' changed=''
   for _n in $case_names; do
@@ -231,10 +232,10 @@ case_drift() {
   done
   _old_names=$(awk -F '=' 'index($0, "case.") == 1 { print substr($1, 6) }' "$1/meta.txt")
   for _n in $_old_names; do
-    case " $case_names " in *" $_n "*) ;; *) removed="$removed $_n" ;; esac
+    in_list "$case_names" "$_n" || removed="$removed $_n"
   done
 }
-same_setup() { # <dir> <label>: refuses when the CLI, the git or the shared files differ from <dir>
+same_setup() { # <dir>: prints a "; reason" for each of the CLI, the git and the shared files that differs from <dir>
   _why=
   [ "$(meta_get "$1" claude-version)" = "$claude_version" ] ||
     _why="$_why; claude version $(meta_get "$1" claude-version) -> $claude_version"
@@ -268,13 +269,13 @@ if [ "$mode" = aa ] && [ -n "$update" ]; then
   [ "$_count" -ge 1 ] || die "--cases names no case"
   [ "$_count" -le 4 ] || die "--cases names $_count cases; an update takes at most 4"
   for _c in $update_cases; do
-    case " $case_names " in *" $_c "*) ;; *) die "no case $_c at $suite_ref" ;; esac
+    in_list "$case_names" "$_c" || die "no case $_c at $suite_ref"
   done
   why=$(same_setup "$results")
   case_drift "$results"
   [ -z "$added$removed" ] || why="$why; cases added:${added:- none}, removed:${removed:- none}"
   for _n in $changed; do
-    case " $update_cases " in *" $_n "*) ;; *) why="$why; case $_n changed but is not in --cases" ;; esac
+    in_list "$update_cases" "$_n" || why="$why; case $_n changed but is not in --cases"
   done
   [ -z "$why" ] || die "cannot update $results${why}"
 else
@@ -387,7 +388,7 @@ if [ "$mode" = no-plugin ]; then
   printf '%s\n' "$classes" >"$results/classes.tsv"
   add_tree no-plugin "$base_sha"
   for _n in $case_names; do
-    case " $guards " in *" $_n "*) ;; *) rm -rf "${trees:?}/no-plugin/$evals_path/$_n" ;; esac
+    in_list "$guards" "$_n" || rm -rf "${trees:?}/no-plugin/$evals_path/$_n"
   done
   run_eval no-plugin no-plugin "$cap_noplugin" with-without --disallow-tools Agent
   complete_json "$results/no-plugin.json" || { echo "partial: no-plugin.json is partial"; exit 3; }
@@ -474,7 +475,7 @@ rc=$?
 if [ -n "$update" ] && [ "$rc" -eq 0 ]; then
   stops=
   for _c in $update_cases; do
-    case " $guards " in *" $_c "*) ;; *) continue ;; esac
+    in_list "$guards" "$_c" || continue
     if jq -e -s '[.[].cases[]?.arms.with[]? | .score != 1] | any' \
       "$results/update-$_c-a1.json" "$results/update-$_c-a2.json" >/dev/null; then
       stops="$stops; guard $(printf '%s' "${_c%%-*}" | tr '[:lower:]' '[:upper:]') failed a run in the update"

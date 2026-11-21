@@ -32,7 +32,9 @@ const failures = [];
 const temps = new Set();
 let building = null;
 
-const fail = (line) => failures.push(line);
+function fail(line) {
+  failures.push(line);
+}
 
 function cleanup() {
   for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
@@ -294,6 +296,11 @@ function sampleText(sample, workspace) {
   return fs.readFileSync(file, 'utf8');
 }
 
+function wantedHits(kind, count) {
+  if (count === null) return kind === 'match' ? 'at least 1' : '0';
+  return kind === 'match' ? `${count}` : `not ${count}`;
+}
+
 function checkSamples(dir, patterns, checks, workspace) {
   for (const p of patterns) {
     for (const kind of ['match', 'miss']) {
@@ -314,10 +321,7 @@ function checkSamples(dir, patterns, checks, workspace) {
         if (text === null) return;
         const n = p.hits(text);
         const hit = p.count === null ? n > 0 : n === p.count;
-        if (hit !== (kind === 'match')) {
-          const want = p.count === null ? (kind === 'match' ? 'at least 1' : '0') : `${kind === 'match' ? '' : 'not '}${p.count}`;
-          fail(`${where}: ${n} hits, want ${want}`);
-        }
+        if (hit !== (kind === 'match')) fail(`${where}: ${n} hits, want ${wantedHits(kind, p.count)}`);
       });
     }
   }

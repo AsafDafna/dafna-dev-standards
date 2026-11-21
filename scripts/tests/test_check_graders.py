@@ -34,8 +34,8 @@ class CheckGradersTest(unittest.TestCase):
 
     def failure_lines(self, result):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertNotIn("OK", result.stdout.splitlines())
         lines = result.stdout.splitlines()
+        self.assertNotIn("OK", lines)
         self.assertTrue(lines, result.stderr)
         return lines
 
