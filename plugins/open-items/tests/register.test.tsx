@@ -3246,6 +3246,18 @@ describe('the mod\'s own tools', () => {
     }
   })
 
+  test('add_item and reply_item describe the ask and the option notes', async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    const propertiesOf = (name: string) => (world.tools.find(tool => tool.name === name)?.inputSchema as { properties: Record<string, unknown> }).properties
+    expect(descriptionOf(world, 'add_item')).toContain('a detail of about 5 sentences or a short list')
+    expect(propertiesOf('add_item')).toHaveProperty('ask')
+    expect(propertiesOf('add_item')).toHaveProperty('option_notes')
+    expect(propertiesOf('reply_item')).toHaveProperty('ask')
+    expect(propertiesOf('reply_item')).toHaveProperty('option_notes')
+  })
+
   test("add_item's description carries the live-chat rule and the session-end rule", async ($, on) => {
     const { world } = seat(on)
     await start($)
