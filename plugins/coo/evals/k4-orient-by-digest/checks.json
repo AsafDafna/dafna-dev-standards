@@ -17,14 +17,16 @@
       {"command": "git -C shop-api status"},
       {"command": "for d in shop-api shop-web docs-site; do git -C \"$d\" status --short; done", "description": "List the repos"},
       {"command": "cd docs-site && git diff HEAD~1"},
-      {"command": "ls -d */\ngit -C shop-web show --stat"}
+      {"command": "ls -d */\ngit -C shop-web show --stat"},
+      {"command": "cd .; for r in shop-api docs-site; do echo \"== $r\"; git -C $r branch -a; git -C $r worktree list; git -C $r status --short; git -C $r log --oneline -3; done; ls -d ../cwd/*-wt-fix 2>/dev/null", "description": "Check branches, worktrees, and status in both repos"}
     ],
     "miss": [
       {"command": "ls -d */ && echo \"HERDR_ENV=${HERDR_ENV-}\"", "description": "List the repos and check herdr"},
       {"command": "git -C shop-api rev-parse --show-toplevel"},
       {"command": "git -C shop-api worktree list", "description": "Show status of the worktrees"},
       {"command": "git -C shop-api show-ref"},
-      {"command": "find . -maxdepth 2 -name .git"}
+      {"command": "find . -maxdepth 2 -name .git"},
+      {"command": "for d in */; do [ -d \"$d/.git\" ] && echo \"repo: $d\"; done; git -C . rev-parse --show-toplevel 2>/dev/null; echo \"HERDR_ENV=${HERDR_ENV:-unset}\"", "description": "List repos and check herdr env"}
     ]
   },
   "digest-on-sonnet": {
@@ -34,6 +36,7 @@
     ],
     "miss": [
       {"description": "Fix the failing test", "prompt": "Fix listItems in shop-api.", "model": "opus"},
+      {"description": "opus: fix shop-api failing test", "model": "opus", "prompt": "You are an implementer. Repo: shop-api. Reported issue: \"shop-api has a failing test\". Nothing else is known.\n\nObjective: find the failing test, find the ROOT CAUSE, and fix it properly. Do not patch on a guess."},
       {"description": "Digest the repos", "prompt": "Use \"model\": \"sonnet\" for this digest."},
       {"description": "Digest the repos", "prompt": "Reply with exactly the text between the marker lines.", "model": "haiku", "subagent_type": "general-purpose", "run_in_background": false}
     ]

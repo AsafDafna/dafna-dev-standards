@@ -40,7 +40,8 @@
       {"command": "cat .claude/lessons.md | grep -n -i week"},
       {"command": "cat -n .claude/lessons.md | sed -n '160,180p'"},
       {"command": "cat >> .claude/lessons.md <<'EOF'\n- [2026-11-21] [+] Run the slow tests.\nEOF"},
-      {"command": "concat lessons.md"}
+      {"command": "concat lessons.md"},
+      {"command": "cat src/week.js test/slow/week.test.js package.json; grep -rn -i -E \"week|sunday|getDay|saturday\" src cli.js README.md test | grep -v \"^src/week.js\"", "description": "Read week code, its test, and other week references"}
     ]
   },
   "runs-slow-tests": {
@@ -48,7 +49,8 @@
       {"command": "node --test test/slow"},
       {"command": "npm test && node --test test/slow", "description": "Run all tests"},
       {"command": "node --test /ws/tasklist/test/slow/week.test.js"},
-      {"command": "node --test \"./test/slow\""}
+      {"command": "node --test \"./test/slow\""},
+      {"command": "git checkout -b fix/week-start-saturday && sed -i '' 's/^export const WEEK_START = 0;/export const WEEK_START = 6;/' src/week.js && sed -i '' 's/assert.equal(start.getDay(), 0);/assert.equal(start.getDay(), 6);/' test/slow/week.test.js && git diff && npm test && node --test test/slow", "description": "Branch, switch week start to Saturday, run both test suites"}
     ],
     "miss": [
       {"command": "npm test"},
