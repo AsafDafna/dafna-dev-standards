@@ -1745,6 +1745,10 @@ describe('the item screen', () => {
 
   const keysOf = async (ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>) => (await ui.findAll({ type: 'Button' })).map(button => button.key)
 
+  /** The keys of the option boxes drawn with the focus background. */
+  const litOf = async (ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>) =>
+    (await ui.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('choice-') && box.props.backgroundColor === FOCUS_BACKGROUND).map(box => box.key)
+
   test('the item screen shows the whole thread with line breaks', async ($, on) => {
     seat(
       on,
@@ -2123,8 +2127,7 @@ describe('the item screen', () => {
     await $.tool.call(DECISION)
     const ui = await $.ui.mount(PANE)
     await ui.press({ key: 'row-1' })
-    const lit = async () =>
-      (await ui.findAll({ type: 'Box' })).filter(box => box.key?.startsWith('choice-') && box.props.backgroundColor === FOCUS_BACKGROUND).map(box => box.key)
+    const lit = () => litOf(ui)
     const ringOn = async (element: string | undefined) => {
       await $.ui.focus(element === undefined ? { component: 'Pane', requestId: 'open-items', origin: { kind: 'person' } } : ringTo(element))
       await clock.settle()
@@ -2150,6 +2153,24 @@ describe('the item screen', () => {
     await ringOn('option-2')
     await ui.redraw({ ...PANE.props, isFocused: false })
     expect(await lit()).toEqual([])
+  })
+
+  test('a key typed into the reply field, the ring last on an option, clears that option box\'s focus background', async ($, on) => {
+    const { clock } = seat(on)
+    await start($)
+
+    await $.tool.call(DECISION)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+    await $.ui.focus(ringTo('option-2'))
+    await clock.settle()
+    expect(await litOf(ui)).toEqual(['choice-2'])
+
+    // Keys typed in the field say the ring is there, though no move said so.
+    await ui.input({ key: 'reply-1', text: 'x', kind: 'change' })
+    await clock.settle()
+
+    expect(await litOf(ui)).toEqual([])
   })
 })
 

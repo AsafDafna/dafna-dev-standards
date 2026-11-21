@@ -1097,8 +1097,6 @@ export const register: Register = on => {
 
   // The ring on the reply field lets the terminal wrap what is typed there:
   // the pane asks for the rows that takes, and for one row once it leaves.
-  // The option box with the ring is lit from `live.ring`, which no render
-  // input carries: a move onto or off one draws the pane again.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     const was = live.ring
     const moved = await next(e)
@@ -1108,9 +1106,7 @@ export const register: Register = on => {
       void refit($)
     }
 
-    if ([was, e.element].some(key => key?.startsWith('option-'))) {
-      $.ui.invalidate('ui.render')
-    }
+    ringMoved($, was, e.element)
 
     return moved
   })
@@ -2062,10 +2058,22 @@ function inlineSeats(): Seat[] {
   return [...live.seats.values()].flat().filter(seat => seat.isInline)
 }
 
+/**
+ * Draws the pane again when the ring left `was` for `now` and either is an
+ * option: its box is lit from `live.ring`, which no render input carries.
+ */
+function ringMoved($: EngineInterface, was: string | undefined, now: string | undefined) {
+  if ([was, now].some(key => key?.startsWith('option-'))) {
+    $.ui.invalidate('ui.render')
+  }
+}
+
 /** Keeps what the user typed in the field keyed `key`, and the rows it takes. */
 async function typed($: EngineInterface, key: string, value: string) {
   // Keys typed in a field say the ring is on it, though no move said so.
+  const was = live.ring
   live.ring = key
+  ringMoved($, was, key)
   live.drafts.set(key, value)
   await refit($)
 }
