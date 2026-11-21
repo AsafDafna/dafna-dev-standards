@@ -19,7 +19,7 @@
 - **Check G (free).** `node <wt>/scripts/check-graders.mjs <case dir>…` prints `OK`. It builds each fixture in the harness's bare environment, with a temp home that has no git identity, and gives it 120 seconds. Then it tests every grader pattern against the case's `checks.json`. Run it before every paid task, on every case.
 - **Case layout.** `plugins/<suite>/evals/<id>-<slug>/`, for example `c1-rules-marker`; the `Eval:` line prints the id in upper case (C5, K10). `case.yaml` holds `schema_version: "1.1"`, `name` (always the folder name: `classes.tsv`, `--case` and `cases[].name` use it) and `context.scaffold_script: fixture.sh`. `fixture.sh` runs `sh "$(dirname "$0")/../scaffold.sh" || exit 1`, then makes and commits the case's own files. No case edits `scaffold.sh`.
 - **prompt.md frontmatter.** `runs`: 3 for a guard, 5 for a climb. Limits: light 8 turns; task 30 turns and 600 s; review 30 turns and 900 s. `allowed_tools: [Bash, Read, Glob, Grep, Edit, Write, Skill]`; every coo case and C12 add `Agent`; C1 lists none.
-  - `plugins`: core `["../.."]`; C12 adds `"../../../../evals/stub-workers"`; coo `["../..", "../../../core", "../../../../evals/stub-workers"]`. `env` holds the `EVAL_STUB_REPLY_<n>` values.
+  - `plugins`: core `["../.."]`; C12 adds `"../../../../evals/stub-workers"`; coo `["../..", "../../../core", "../../../../evals/stub-workers"]`. The paths are relative to the case folder. The harness loads a `plugins` entry only under its containment root: the enclosing plugin of the target, else the target folder. So every paid call targets the repo root (or a temp tree's root) with `--eval-dir plugins/<suite>/evals`, never `plugins/<suite>`. `env` holds the `EVAL_STUB_REPLY_<n>` values; the harness refuses any key that does not start with `EVAL_`.
   - A main run never passes `--runs`. A guard rerun passes `--runs 6`. Only the probes and the measuring run pass `--runs 1`.
 - **Classes.** `plugins/<suite>/evals/classes.tsv` has one line per case: `<case dir><TAB><tags>`. The tags are comma-separated, from `guard`, `climb`, `held-out` and `model-default`. C3 is `climb` with `runs: 5` until PR 28 merges.
 - **Graders.** Follow the spec's grader rules.
@@ -30,7 +30,24 @@
   - A sample is a string, an object (JSON-encoded first, as the harness encodes a tool input), or `{"fixture": "<path>"}` (that file in the built fixture). A `match` sample must hit (exactly N hits under `count:N`); a `miss` sample must not.
 - **Run pass.** Every run uses `--threshold 0`, so `passed` is always true. A run passes only when its `score` is 1.
 - **Paid runs.** Each uses `--model opus --no-publish --max-cost-usd <cap>`, with output under `${XDG_CACHE_HOME:-$HOME/.cache}/dds-evals/<date>/` (never in the repo), on a seat with no 5-hour usage window. Each starts only after the lead's go; before it, give the lead the expected cost and duration (runs × measured seconds per run ÷ `--jobs`). Push, a PR and a PR-body edit each need the owner's yes.
-- **Env step E** (before every paid call that does not go through `eval-compare.sh`): record the names, not the values, of the `ANTHROPIC_*` and `CLAUDE_CODE_*` variables. Unset any that sets a model, an effort or a subagent model.
+- **Env step E** (before every paid call that does not go through `eval-compare.sh`): record the names, not the values, of the `ANTHROPIC_*` and `CLAUDE_CODE_*` variables and of `CLAUDE_EFFORT`, both in the shell and in the user settings `env`. Unset the shell ones that the run settings file blanks, with `env -u`. `env -u` alone is not enough: the harness sets every variable of the user settings `env` again, so the run settings file blanks those.
+- **Run settings.** Every paid call, on every system, is `claude --settings <run dir>/run-settings.json plugin eval …`. `<run dir>` is the call's results folder, under `$HOME`. The file's `env` holds two things:
+  - The empty value for each variable of the user settings `env` that the run must not see: every `ANTHROPIC_*` and `CLAUDE_CODE_*` name except `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`, and `CLAUDE_EFFORT`. That covers the agent-teams flag and every model, effort or subagent-model variable. The `--settings` env wins over the user settings; a probe showed the agent-teams flag empty and no team tools.
+  - On macOS only, a `PATH` with a copy of git first. Inside a run, `/usr/bin/git` (the xcrun shim) exits 72, and the shell cannot find the Xcode or Command Line Tools git, because the harness hides them: their `git-credential-*` helpers are links to them. So `mkdir -p <run dir>/sandbox-git && cp "$(xcode-select -p)/usr/bin/git" <run dir>/sandbox-git/git`. The run dir must be under `$HOME`, because the sandbox reads a PATH folder only there. The folder must not be named `bin`: in any other folder, Apple git uses its built-in prefix (the developer folder it came from), so it finds `git-core` and the templates there. Tested with Xcode only. A PATH prefix on the command line does not reach the agent when the user settings set `env.PATH`.
+  - Write the file with this command; `gitdir` is `<run dir>/sandbox-git` on macOS and empty elsewhere:
+    ```sh
+    cfg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json; [ -f "$cfg" ] || cfg=/dev/null
+    jq -n --slurpfile s "$cfg" --arg gitdir "$gitdir" --arg shellpath "$PATH" '
+      ($s[0].env // {}) as $u
+      | ([$u | keys[]
+          | select(test("^(ANTHROPIC_|CLAUDE_CODE_)") or . == "CLAUDE_EFFORT")
+          | select(IN("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+              "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX") | not)
+          | {(.): ""}] | add // {})
+      | {env: (. + (if $gitdir == "" then {} else {PATH: ($gitdir + ":" + ($u.PATH // $shellpath))} end))}' \
+      > <run dir>/run-settings.json
+    ```
+  - The sandbox keeps `.git/worktrees`, `.git/config`, `.git/hooks` and `.git/info/exclude` read-only on every system. So `git worktree add` and `git init` fail inside a run, even with this git. In a worktree that the fixture made, reads work, but `git add` and `git commit` fail. So no grader reads git state that the lead makes inside a run (Task 12).
 - **Held-out cases.** C10, C12 and K10 are held out. Whoever edits a rule to raise a score does not read their transcripts.
 - **Comments.** Write none, unless one explains a non-obvious why.
 
@@ -159,8 +176,8 @@ Each item keeps the spec's intent.
 
 ### Task 7: run the probes, build step 0 (opus). NEEDS THE LEAD'S GO. Caps: $2 core and $2 coo, so $4 at most
 
-- [ ] Do env step E. Then `out=${XDG_CACHE_HOME:-$HOME/.cache}/dds-evals/$(date +%F)/probe; mkdir -p "$out"`. Run this for core, then the same for coo with its own paths:
-  `claude plugin eval <wt>/plugins/core --scaffold --allow-tools Bash Edit Write --trust-plugin --no-publish --ablation none --threshold 0 --model opus --runs 1 --keep-temp --max-cost-usd 2 --json "$out/core.json" --report "$out/core.html" --output-dir "$out/core"`
+- [ ] Do env step E. Then `out=${XDG_CACHE_HOME:-$HOME/.cache}/dds-evals/$(date +%F)/probe; mkdir -p "$out"`. Write the run settings file with `$out` as the run dir. Run this for core, then the same for coo with its own paths:
+  `claude --settings "$out/run-settings.json" plugin eval <wt> --eval-dir plugins/core/evals --scaffold --allow-tools Bash Edit Write --trust-plugin --no-publish --ablation none --threshold 0 --model opus --runs 1 --keep-temp --max-cost-usd 2 --json "$out/core.json" --report "$out/core.html" --output-dir "$out/core"`
 - [ ] Fill `$out/probe-results.md` from the traces and the kept workspaces. For each probe, write yes or no, with one line of evidence and no transcript text.
 
 | Probe | Read it from | If it fails |
@@ -191,22 +208,22 @@ scripts/eval-compare.sh core --no-plugin <commit> [--suite-ref <ref>] [--jobs <n
 ```
 - **Steps.** These are the spec's run-script steps 1 to 6. The script calls `${CLAUDE_BIN:-claude}`. `--suite-ref` defaults to `origin/main`, and `--jobs` passes `-j` (default 1).
 - **Caps.** Constants at the top: `cap_main_core=26`, `cap_main_coo=17`, `cap_rerun=4` and `cap_noplugin=17`. Task 14 resets them.
-- **Every call** passes `--scaffold --allow-tools Bash Edit Write --trust-plugin --no-publish --threshold 0 --model opus --ablation none --max-cost-usd <cap> --json --report --output-dir`.
+- **Every call** is `${CLAUDE_BIN:-claude} --settings <results>/run-settings.json plugin eval <tree> --eval-dir plugins/<suite>/evals --scaffold --allow-tools Bash Edit Write --trust-plugin --no-publish --threshold 0 --model opus --ablation none --max-cost-usd <cap> --json --report --output-dir`. The target is the tree's root, never `<tree>/plugins/<suite>` (Global Constraints, `plugins`). The script writes the run settings file once (Global Constraints), with `<results>` as the run dir.
 - **No-plugin mode.** It copies only the `guard` cases. It passes `--ablation with-without --disallow-tools Agent` at `cap_noplugin`, and prints the `no-plugin` list. It refuses `coo`.
-- **Env.** Unset every `ANTHROPIC_*` and `CLAUDE_CODE_*` variable except `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`. Write the names (never the values) to `meta.txt`.
+- **Env.** In its own environment, unset `CLAUDE_EFFORT` and every `ANTHROPIC_*` and `CLAUDE_CODE_*` variable except the six that the run settings rule keeps. The run settings file blanks the same names where the user settings set them, so no call relies on `env -u` alone. Write the names (never the values), from both places, to `meta.txt`.
 - **Suite copy.** `rm -rf <tree>/plugins/<suite>/evals <tree>/evals`, then `git archive <suite-ref> plugins/<suite>/evals evals/stub-workers | tar -x -C <tree>`.
-- **Results.** In `…/dds-evals/<date>/<suite>-<time>/` (never inside the repo): `base.json` and `head.json` (A/A: `a1.json`, `a2.json`), `rerun-<case>-<arm>.json`, `exit-codes`, `classes.tsv`, and `meta.txt` with the suite ref, the suite hash, base, head, `claude --version`, the env names, the shared hash and a hash for each case.
+- **Results.** In `…/dds-evals/<date>/<suite>-<time>/` (never inside the repo; under `$HOME`): `base.json` and `head.json` (A/A: `a1.json`, `a2.json`), `rerun-<case>-<arm>.json`, `exit-codes`, `classes.tsv`, `run-settings.json`, on macOS `sandbox-git/git`, and `meta.txt` with the suite ref, the suite hash, base, head, `claude --version`, the run's `git --version`, the env names, the shared hash and a hash for each case.
 - **Hashes.** The suite hash is `git rev-parse --short <ref>:plugins/<suite>/evals`. The shared hash covers `<ref>:plugins/<suite>/evals/scaffold.sh` and `<ref>:evals/stub-workers`. Each case's hash is `git rev-parse <ref>:plugins/<suite>/evals/<case>`.
-- **Base reuse.** `--reuse-base` reuses `a2.json` only when the base commit, the CLI version, the shared hash and every case's hash match. Otherwise it exits 2 and names the mismatch. With `--reuse-base`, the script still makes the base tree, for the reruns.
+- **Base reuse.** `--reuse-base` reuses `a2.json` only when the base commit, the CLI version, the git version, the shared hash and every case's hash match. Otherwise it exits 2 and names the mismatch. With `--reuse-base`, the script still makes the base tree, for the reruns.
 - **Update.** `--update` reruns each listed case on both A/A trees, with the case's own `runs`, at `cap_rerun`. It merges the results into `a1.json` and `a2.json` and updates their case hashes.
-  - It refuses more than 4 cases, a changed shared hash, or a results folder that `meta.txt` marks as updated before.
+  - It refuses more than 4 cases, a changed shared hash or git version, or a results folder that `meta.txt` marks as updated before.
   - A guard that fails a run in the update, or any test flag, prints `stop: <reason>` and exits 4.
 - **Reruns.** `eval-compare.py drops` gives the dropped cases. The first 3 each rerun on both trees with `--case <dir> --runs 6`, at `cap_rerun`.
 - **Rules fallback.** Build it only if P1 failed. `inject-rules` writes the tree's `RULES.md` into `append_system_prompt` in every copied case, and the line gets `--rules-fallback`.
 - **Cleanup.** A trap on EXIT, INT (exit 130) and TERM (exit 143) runs `git worktree remove --force` on both trees, then `git worktree prune`. The script prints the `line` output last. It exits 0 only with an `Eval:` line.
 
 - [ ] Write these tests. Each one sets `CLAUDE_BIN` to the fake, builds a throwaway repo, and checks that the fake's argv log exists. Run them; they must fail.
-  - `test_every_call_has_cap_and_no_publish`, `test_reuse_base_refused_on_hash_change`, `test_results_dir_inside_repo_refused`, `test_suite_copied_from_suite_ref`, `test_no_plugin_runs_guards_without_agent`, `test_update_refuses_second_update_and_five_cases`;
+  - `test_every_call_has_cap_and_no_publish`, `test_call_targets_tree_root` (the target is the tree, with `--eval-dir plugins/<suite>/evals`), `test_run_settings_blank_user_env` (with a temp `CLAUDE_CONFIG_DIR` whose `settings.json` sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` and `ANTHROPIC_API_KEY`, every call passes `--settings` with a file that sets the first to `""` and leaves out the second; on macOS its `PATH` starts with a folder that holds `git`), `test_reuse_base_refused_on_hash_change`, `test_results_dir_inside_repo_refused`, `test_suite_copied_from_suite_ref`, `test_no_plugin_runs_guards_without_agent`, `test_update_refuses_second_update_and_five_cases`;
   - `test_worktrees_removed_on_failure`: a fake exit of 1 or 2 leaves no temp worktree and no `Eval:` line;
   - `test_interrupt_cleans_up`: SIGINT gives exit 130 and no temp worktree.
 - [ ] Implement. `python3 -m unittest discover -s <wt>/scripts/tests -v` prints `OK`.
@@ -224,7 +241,8 @@ Each task writes complete case folders, with `checks.json`, from the spec rows. 
 - **Task 11, coo entry and roles:** `k1-enter-on-verb`, `k2-enter-cross-repo`, `k3-no-enter-single` and `k5-role-split`.
   - K5's `"model"` and `"name"` patterns have a JSON-encoded `Agent` input as each sample.
 - **Task 12, coo flow:** `k6-review-before-pr`, `k7-third-round-asks`, `k8-irreversible-waits`, `k9-brief-quotes-ask` and `k10-nonblocking-in-scope`.
-  - K6 and K10 make the branch `fix/empty-list` and the worktree `.worktrees/shop-api-fix`. K6's `tool_order` matches on `description`.
+  - K6's and K10's `fixture.sh` make the branch `fix/empty-list` and the worktree `.worktrees/shop-api-fix`, outside the sandbox. K6's `tool_order` matches on `description`.
+  - No K6, K9 or K10 grader reads git state that the lead makes in the run (no `git worktree list`, no branch or commit check): the sandbox keeps `.git/worktrees` read-only. Their worktree and branch graders are the `llm` rubrics on `.eval/agent-calls.jsonl` from the spec rows. Each `checks.json` gives every free pattern a JSON-encoded `Agent` input as its `match` and `miss` sample.
   - K8's prompt makes clear that the user's approval is missing.
   - K10 writes `docs/review.md`, and its graders read `shop-api/docs/tracker.md`.
   - Each case's `env` sets the stub replies that its flow needs.
@@ -240,7 +258,8 @@ Each task writes complete case folders, with `checks.json`, from the spec rows. 
 ### Task 14: measuring run, build step 1 (opus). NEEDS THE LEAD'S GO. Caps: $7 core and $5 coo, plus at most 4 single-case reruns at $2, so $20 at most
 
 - [ ] Check G passes on every case. Do env step E. If P1 failed, run on a copy with `inject-rules` applied.
-- [ ] Run Task 7's command with no `--keep-temp`, with `-j 4`, with `--max-cost-usd 7` for core and `5` for coo, and output under `…/measure`.
+- [ ] `out=${XDG_CACHE_HOME:-$HOME/.cache}/dds-evals/$(date +%F)/measure; mkdir -p "$out"`. Write the run settings file with `$out` as the run dir. Then run this for each suite, with `--max-cost-usd 7` for core and `5` for coo:
+  `claude --settings "$out/run-settings.json" plugin eval <wt> --eval-dir plugins/<suite>/evals --scaffold --allow-tools Bash Edit Write --trust-plugin --no-publish --ablation none --threshold 0 --model opus --runs 1 -j 4 --max-cost-usd <cap> --json "$out/<suite>.json" --report "$out/<suite>.html" --output-dir "$out/<suite>"`
 - [ ] If a run hits its turn or time cap, raise the limit, then rerun only that case with `--case <dir> --runs 1 --max-cost-usd 2`.
 - [ ] From the JSON, find the mean `costUsd` and `durationSeconds` per run for each case kind (light, task, review). Set these constants:
   - `cap_main_<suite>` = 1.5 × the sum, over cases, of the cost per run × `runs`;
@@ -262,7 +281,7 @@ Caps (spec figures; Task 14 may replace them):
 - **First A/A run:** arms $26 × 2 (core) and $17 × 2 (coo), up to 3 Fisher reruns per suite on both arms at $4, and the no-plugin arm at $17. Expected about $77; at most $151.
 - **The one update:** at most 4 cases per suite, on 2 arms, at $4. Expected about $10; at most $64.
 
-- [ ] `S=$(git -C <wt> rev-parse HEAD)`. Run `<wt>/scripts/eval-compare.sh core --aa 2e958ba --suite-ref "$S"`, the same for `coo`, then `<wt>/scripts/eval-compare.sh core --no-plugin 2e958ba --suite-ref "$S"`.
+- [ ] `S=$(git -C <wt> rev-parse HEAD)`. Run `<wt>/scripts/eval-compare.sh core --aa 2e958ba --suite-ref "$S"`, the same for `coo`, then `<wt>/scripts/eval-compare.sh core --no-plugin 2e958ba --suite-ref "$S"`. The script targets each tree's root and passes the run settings file on every call. So every arm, the no-plugin arm too, gets the same blanked variables and, on macOS, the sandbox git, because they come from the call and not from a plugin.
 - [ ] Tag the guards in the `no-plugin` list `model-default`. Put each suite's A/A climb difference in its README as the noise floor.
 - [ ] Fix each guard that failed an A/A run or got a Fisher flag, or move it to climb (`classes.tsv` and `runs: 5`). Commit. Then run `--aa 2e958ba --suite-ref <new head> --update <A/A dir> --cases "<changed>"` once per suite.
 - [ ] Stop for the lead's decision, with no further paid run, on a permutation flag, exit 4 from the update, more than 4 changed cases in a suite, a change to `scaffold.sh` or the stub helper, or any non-zero exit.
@@ -283,7 +302,7 @@ Caps: head $26 for core and $17 for coo, plus up to 3 Fisher reruns per suite on
   B=$(git -C <wt> merge-base origin/main "$H")
   S=$(git -C <wt> rev-parse HEAD)
   ```
-  Pass `--reuse-base <A/A dir>` only when `$B` is `2e958ba…`. The reuse gate checks the case hashes, so commits that change only `classes.tsv` or a README do not void it.
+  Pass `--reuse-base <A/A dir>` only when `$B` is `2e958ba…`. The reuse gate checks the case hashes, so commits that change only `classes.tsv` or a README do not void it. It also checks the git version, so after an Xcode update the base arm runs fresh. The script passes the run settings file on every call, the reruns too, so neither arm relies on `env -u` alone.
 - [ ] Check G passes. Run `<wt>/scripts/eval-compare.sh core "$B" "$H" --suite-ref "$S" [--reuse-base …] --covers "C3 C9 C10 C11 C12 and every guard"`. Then run the same for `coo`, with `--covers "K9 K10 and every guard"`. Each prints one `Eval:` line and exits 0.
 - [ ] Give both lines to the lead. Run the leak pattern on the body file. After the owner's yes, run `gh pr edit 28 --body-file <file>`.
 
