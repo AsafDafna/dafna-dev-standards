@@ -1,5 +1,7 @@
+import type { ThemeKey } from 'claude-code'
+
 import type { Held, Message, Screen, Task, TaskKind } from '../types'
-import { DONE, LATER, MAX_DETAIL, MAX_OPTION, PRESSED, SEEN, choseOf, isActive, waitingOf } from './tasks'
+import { DONE, LATER, MAX_ASK, MAX_DETAIL, MAX_OPTION, MAX_OPTION_NOTE, PRESSED, SEEN, choseOf, isActive, optionNotesOf, waitingOf } from './tasks'
 import type { Move } from './tasks'
 import { ago, cellsOf, clip, clipCells, linesRowsOf, plural, printable, printableLines, rowsOf } from './text'
 
@@ -12,9 +14,6 @@ export const MAX_SHOWN_TITLE = 300
 
 /** The columns between two buttons in a row of them. */
 export const BUTTON_GAP = 3
-
-/** The cells before a task's text: its glyph, `☐ `. */
-const GLYPH_CELLS = 2
 
 /** The cells a list row is indented under its section's label. */
 export const ROW_INDENT = 2
@@ -155,12 +154,12 @@ export function nameOf(task: Task): string {
 }
 
 /** `#3 Rotate the token`: a task's number and its whole title. */
-export function titleOf(task: Task): string {
+function titleOf(task: Task): string {
   return `#${task.id} ${nameOf(task)}`
 }
 
-/** `  3m`, drawn dim after an open item's title, and `· waiting for Claude` once the user replied. */
-export function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
+/** `  3m`, an open item's age, and `· waiting for Claude` once the user replied. */
+function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
   return `  ${ago(view.nowMs - task.createdMs)}${task.isWaitingForClaude ? ' · waiting for Claude' : ''}`
 }
 
@@ -195,22 +194,50 @@ function rowTextOf(task: Task, numberCells: number, columns: number): string {
   return `${rowTitleOf(task, numberCells, columns)}${newReply}${waiting}`
 }
 
-/** A thread entry as the item screen draws it: a message, line breaks kept, under its `head` (`Claude · 4m`); an event on one line. */
-export function entryOf(message: Message, nowMs: number): { head?: string; text: string } {
+const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO' }
+
+/** The background of an item's kind label and the color of its ask. */
+export const KIND_COLOR: Record<TaskKind, ThemeKey> = { decision: 'warning', question: 'suggestion', action: 'permission', info: 'success' }
+
+/** The background of the option box with the focus or under the mouse: the theme has no key for one. */
+export const FOCUS_BACKGROUND: ThemeKey = 'subtle'
+
+/** Drawn after the recommended option's button in its box, or whole on the row below when it does not fit there. */
+export const RECOMMENDED_MARK = '  ★ recommended'
+
+/** Drawn before the ask line, in the kind's color: the ask wraps beside it. */
+export const ASK_BAR = '▌ '
+
+/** The header box's first line: the kind `label`, drawn on the kind's color, then `#N`, the age and the waiting mark, drawn dim. */
+export function headerLineOf(task: Task, view: Pick<PaneView, 'nowMs'>): { label: string; rest: string } {
+  return { label: ` ${KIND_LABEL[task.kind]} `, rest: `  #${task.id}${ageOf(task, view)}` }
+}
+
+/** The cells a box with a round border and `paddingX={1}` takes from its text: two on each side. */
+const BOX_CELLS = 4
+
+const BOX_ROWS = 2
+
+/**
+ * A thread entry as the item screen draws it: a message, line breaks kept,
+ * under its `head` (`Claude · 4m`), Markdown when Claude wrote it on an item
+ * `isMarkdown`; an event on one line.
+ */
+export function entryOf(message: Message, nowMs: number, isMarkdown: boolean): Omit<Entry, 'i'> {
   const who = message.from === 'claude' ? 'Claude' : 'You'
   const age = ago(nowMs - message.atMs)
 
   switch (message.event) {
     case undefined:
-      return { head: `${who} · ${age}`, text: printableLines(message.text, MAX_DETAIL) }
+      return { head: `${who} · ${age}`, text: printableLines(message.text, MAX_DETAIL), look: isMarkdown && message.from === 'claude' ? 'markdown' : 'plain' }
     case 'chose':
-      return { text: `${who} chose "${printable(message.text, MAX_OPTION)}" · ${age}` }
+      return { text: `${who} chose "${printable(message.text, MAX_OPTION)}" · ${age}`, look: 'event' }
     case 'changed':
-      return { text: `${who} changed the item · ${age}` }
+      return { text: `${who} changed the item · ${age}`, look: 'event' }
     case 'took':
-      return { text: `The item moved here from an earlier session · ${age}` }
+      return { text: `The item moved here from an earlier session · ${age}`, look: 'event' }
     default:
-      return { text: `${who} pressed ${PRESSED[message.event]} · ${age}` }
+      return { text: `${who} pressed ${PRESSED[message.event]} · ${age}`, look: 'event' }
   }
 }
 
@@ -220,14 +247,20 @@ export function entryOf(message: Message, nowMs: number): { head?: string; text:
  */
 const THREAD_CHARS = 80_000
 
-export type Entry = { i: number; head?: string; text: string }
+export type Entry = { i: number; head?: string; text: string; look: 'markdown' | 'plain' | 'event' }
 
 /**
- * The entries of `task`'s thread the item screen draws: the detail, then the
- * newest that fit in THREAD_CHARS; `hidden` counts those left out between.
+ * The entries of `task`'s thread the item screen draws: the detail, with no
+ * head as the header shows its age, then the newest that fit in
+ * THREAD_CHARS; `hidden` counts those left out between.
  */
 export function entriesOf(task: Task, nowMs: number): { entries: Entry[]; hidden: number } {
-  const [detail, ...rest] = task.thread.map((message, i): Entry => ({ i, ...entryOf(message, nowMs) }))
+  const [detail, ...rest] = task.thread.map((message, i): Entry => {
+    const { head, text, look } = entryOf(message, nowMs, task.isMarkdown === true)
+
+    // After `printableLines`, which drops the zero-width characters that could join `]` and `(` into a link.
+    return { i, ...(i === 0 || head === undefined ? {} : { head }), text: look === 'markdown' ? safeLinksOf(text) : text, look }
+  })
   const size = (entry: Entry) => (entry.head?.length ?? 0) + entry.text.length
 
   if (detail === undefined) {
@@ -263,8 +296,10 @@ export function linkOf(task: Task): string | undefined {
   return task.link === undefined ? undefined : printable(task.link, MAX_LINK)
 }
 
+export type Action = { key: string; hotkey: string; label: string; move: Move }
+
 /** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open. */
-export function actionsOf(task: Task): { key: string; hotkey: string; label: string; move: Move }[] {
+export function actionsOf(task: Task): Action[] {
   if (task.kind === 'info') {
     return [{ key: 'seen', hotkey: 'd', label: 'Seen', move: SEEN }]
   }
@@ -279,7 +314,7 @@ export function actionsOf(task: Task): { key: string; hotkey: string; label: str
     const choices = task.options.map((option, i) => ({
       key: `option-${i + 1}`,
       hotkey: String(i + 1),
-      label: `${printable(option, MAX_OPTION)}${option === task.recommended ? ' (recommended)' : ''}`,
+      label: printable(option, MAX_OPTION),
       move: choseOf(option),
     }))
 
@@ -287,6 +322,24 @@ export function actionsOf(task: Task): { key: string; hotkey: string; label: str
   }
 
   return [{ key: 'done', hotkey: 'd', label: 'Done', move: DONE }, ...later]
+}
+
+/**
+ * `actionsOf(task)` as the item screen draws them: each option in a box of
+ * its own, with its note, safe to draw, and whether Claude recommends it;
+ * the other buttons in a row.
+ */
+export function itemButtonsOf(task: Task): { choices: { action: Action; note: string | undefined; isRecommended: boolean }[]; buttons: Action[] } {
+  const actions = actionsOf(task)
+  const options = actions.filter(action => action.key.startsWith('option-'))
+  const notes = optionNotesOf(task)
+  const choices = options.map((action, i) => {
+    const note = notes?.[i]
+
+    return { action, note: note === undefined ? undefined : printable(note, MAX_OPTION_NOTE), isRecommended: task.options?.[i] === task.recommended }
+  })
+
+  return { choices, buttons: actions.filter(action => !options.includes(action)) }
 }
 
 // The terminal draws a field's label as `Reply: `.
@@ -414,7 +467,10 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
  * The rows the Open items pane's body takes at `columns` cells across, each
  * text wrapped as the pane draws it, at most `max`. The list: the head, each
  * section's label and a row for each of its items, and the foot. An item:
- * its title, thread, link, done-when, buttons and reply field, and the foot.
+ * its header box, ask, thread, link, done-when, option boxes, buttons and
+ * reply field, and the foot, an empty row after the header and the ask and
+ * before the boxes and the buttons. Markdown counts as its lines, though it
+ * can draw more: the body scrolls.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
@@ -465,23 +521,37 @@ function savedRowsOf(view: PaneView, width: number): number {
 }
 
 function itemRowsOf(task: Task, view: PaneView, width: number): number {
-  const inner = Math.max(1, width - GLYPH_CELLS)
+  const boxed = Math.max(1, width - BOX_CELLS)
+  const { label, rest } = headerLineOf(task, view)
+  const header = BOX_ROWS + rowsOf(`${label}${rest}`, boxed) + rowsOf(nameOf(task), boxed)
+  const ask = task.askLine === undefined ? 0 : rowsOf(printable(task.askLine, MAX_ASK), Math.max(1, width - cellsOf(ASK_BAR))) + 1
   const { entries, hidden } = entriesOf(task, view.nowMs)
-  const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, inner)) + linesRowsOf(text, inner), 0)
+  const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, width)) + linesRowsOf(text, width), 0)
   const link = linkOf(task)
   const doneWhen = doneWhenOf(task)
   const isField = hasReplyField(task, view)
-  const buttons = [...actionsOf(task).map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
+  const { choices, buttons } = itemButtonsOf(task)
+  const boxes = choices.reduce((rows, { action, note, isRecommended }) => {
+    const button = `${action.hotkey}: ${action.label}`
+    // The mark wraps whole: below the label unless it fits after the label's one row.
+    const markRows = !isRecommended || cellsOf(button) + cellsOf(RECOMMENDED_MARK) <= boxed ? 0 : 1
+
+    return rows + BOX_ROWS + rowsOf(button, boxed) + markRows + (note === undefined ? 0 : rowsOf(note, boxed))
+  }, 0)
+  const row = [...buttons.map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
 
   return (
     savedRowsOf(view, width) +
-    rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner) +
+    header +
+    1 +
+    ask +
     thread +
-    (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), inner)) +
-    (link === undefined ? 0 : rowsOf(link, Math.max(1, inner - cellsOf(LINK_LABEL)))) +
-    (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, inner)) +
-    (buttons.length === 0 ? 0 : buttonRowsOf(buttons, inner)) +
-    (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), inner) + buttonRowsOf(HELD_BUTTONS, inner)) +
+    (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), width)) +
+    (link === undefined ? 0 : rowsOf(link, Math.max(1, width - cellsOf(LINK_LABEL)))) +
+    (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, width)) +
+    (choices.length === 0 ? 0 : 1 + boxes) +
+    (row.length === 0 ? 0 : 1 + buttonRowsOf(row, width)) +
+    (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), width) + buttonRowsOf(HELD_BUTTONS, width)) +
     (isField ? fieldRowsOf(REPLY_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) : 0) +
     footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])
   )
@@ -490,4 +560,97 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
 /** The rows the foot takes: the hint, wrapped beside the `buttons`. */
 function footRowsOf(view: PaneView, width: number, buttons: readonly string[]): number {
   return rowsOf(hintOf(view), Math.max(1, width - buttons.reduce((cells, label) => cells + BUTTON_GAP + cellsOf(label), 0)))
+}
+
+/**
+ * A `](` that does not open a plain `https:` target. The engine draws a
+ * path as a hidden `file:` link and reads `http\://` as `http://`, so
+ * judging the scheme it will see would be a guess: only `https:` is kept.
+ */
+const LIVE_LINK = /\](?=\((?!\s*<?https:))/gi
+const SCHEME_LINK = /\](?=\(\s*<?[a-z][a-z0-9+.-]*:)/gi
+const LIVE_AUTOLINK = /<(?=(?:http|file):)/gi
+const AUTOLINK = /<((?:http|file):[^\s<>]*)>?/gi
+const DEFINITION = /^( {0,3})\[((?:\\.|[^\\[\]\n])+)\]:(?=\s*<?(?:http|file):)/gim
+const CODE_BEFORE = /[\p{L}\p{N}_\])]/u
+const MAX_PASSES = 8
+
+function isEscaped(text: string, at: number): boolean {
+  let slashes = 0
+
+  while (text[at - 1 - slashes] === '\\') {
+    slashes++
+  }
+
+  return slashes % 2 === 1
+}
+
+/**
+ * `[text](target)` as `text (target)` when the target starts with a scheme
+ * (`http:`, `file:`). Any other target, a `[` after a word or a closing
+ * bracket, and a `]` with no `[` give `] (target)`: a regex class, a path
+ * or a code index (`handlers[name](event)`) keeps its brackets and gains
+ * one space, so it still reads as Claude wrote it.
+ */
+function withoutLinkBrackets(text: string): string {
+  const closes = new Set(Array.from(text.matchAll(LIVE_LINK), match => match.index))
+
+  if (closes.size === 0) {
+    return text
+  }
+
+  const schemed = new Set(Array.from(text.matchAll(SCHEME_LINK), match => match.index))
+  const edits = new Map<number, string>()
+  const opens: number[] = []
+
+  for (let at = 0; at < text.length; at++) {
+    if ((text[at] !== '[' && text[at] !== ']') || isEscaped(text, at)) {
+      continue
+    }
+
+    if (text[at] === '[') {
+      opens.push(at)
+      continue
+    }
+
+    const open = opens.pop()
+
+    if (open !== undefined && closes.has(at) && schemed.has(at) && !CODE_BEFORE.test(text[open - 1] ?? '')) {
+      edits.set(open, '')
+      edits.set(at, ' ')
+    }
+  }
+
+  for (const close of closes) {
+    if (!edits.has(close)) {
+      edits.set(close, '] ')
+    }
+  }
+
+  return text
+    .split('')
+    .map((char, at) => edits.get(at) ?? char)
+    .join('')
+}
+
+/**
+ * Claude's Markdown with every link that is not `https:` drawn as plain
+ * text. It never guesses where code is, since a wrong guess left links
+ * live, so a link in code is rewritten too. A rewrite can join brackets
+ * into a new link, hence the passes.
+ */
+export function safeLinksOf(markdown: string): string {
+  let text = markdown
+
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    const next = withoutLinkBrackets(text).replace(AUTOLINK, '$1').replace(DEFINITION, '$1$2:')
+
+    if (next === text) {
+      return text
+    }
+
+    text = next
+  }
+
+  return text.replace(DEFINITION, '$1$2:').replace(LIVE_LINK, '] ').replace(LIVE_AUTOLINK, '< ')
 }

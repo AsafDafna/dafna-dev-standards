@@ -19,7 +19,7 @@ import tempfile
 import time
 import uuid
 
-from renders import SGR, apply, text_of
+from renders import OTHER, SGR, apply, text_of
 
 KEY = 'render-check-not-a-real-key'
 
@@ -55,15 +55,20 @@ def keep(styled, name):
 
 # What `capture-pane -e` adds to the text: colors and styles, and any other CSI or OSC sequence.
 ESCAPES = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)')
+# A hyperlink's start, its target in the group, or its end, the target empty.
+HYPERLINK = re.compile(r'\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)')
 
 
 def snapshot(session, name=None):
-    """The screen as text, read once and kept as `name` when given, colors and all: what is kept is what a test reads."""
+    """The screen read once, colors and all, and kept as `name` when given: what is kept is what a test reads."""
     styled = capture(session, escapes=True)
     if name is not None:
         keep(styled, name)
-    # As the plain capture reads it: that trims the spaces ending a row,
-    # styled ones too.
+    return styled
+
+
+def plain_of(styled):
+    """A screen read with its escapes as the plain capture reads it: that trims the spaces ending a row, styled ones too."""
     return '\n'.join(line.rstrip(' ') for line in ESCAPES.sub('', styled).split('\n'))
 
 
@@ -81,8 +86,9 @@ def wait_for(session, predicate, timeout=30.0, escapes=False):
 class Claude:
     """One Claude Code in a tmux window of its own, in a folder of its own."""
 
-    def __init__(self, plugin_dir, claude='claude'):
+    def __init__(self, plugin_dir, claude='claude', env=None):
         self.plugin_dir = os.path.abspath(plugin_dir)
+        self.extra_env = env or {}
         self.claude = shutil.which(claude) or claude
         self.home = os.path.realpath(tempfile.mkdtemp(prefix='hitl-screen-'))
         self.config = os.path.join(self.home, 'config')
@@ -93,7 +99,7 @@ class Claude:
             json.dump(
                 {
                     'hasCompletedOnboarding': True,
-                    'theme': 'dark',
+                    'theme': os.environ.get('LIVE_THEME', 'dark'),
                     'customApiKeyResponses': {'approved': [KEY[-20:]], 'rejected': []},
                     'projects': {self.project: {'hasTrustDialogAccepted': True}},
                 },
@@ -112,6 +118,7 @@ class Claude:
             'LANG': os.environ.get('LANG') or 'C.UTF-8',
             'CLAUDE_CONFIG_DIR': self.config,
             'ANTHROPIC_API_KEY': KEY,
+            **self.extra_env,
         }
 
     def start(self, columns, rows, *args):
@@ -248,11 +255,12 @@ class Claude:
             time.sleep(pause)
 
     def read(self, name=None):
-        """The screen once the pane is drawn and has settled; kept as `name` when given."""
+        """The screen once the pane is drawn and has settled; kept as `name` when given, and as `styled` with its escapes."""
         # Keys that close the pane and open it again leave it to come back.
         wait_for(self.session, has_pane)
         time.sleep(1.0)
-        return snapshot(self.session, name)
+        self.styled = snapshot(self.session, name)
+        return plain_of(self.styled)
 
     def ring(self):
         """The text the focus ring is on in the pane, as the engine draws it inverse: one entry for each run of it."""
@@ -306,7 +314,7 @@ class Claude:
         self.start(columns, rows, '--resume', session)
         wait_for(self.session, lambda s: '☐' in s)
         time.sleep(1.0)
-        return snapshot(self.session, name)
+        return plain_of(snapshot(self.session, name))
 
     def close(self):
         self.stop()
@@ -347,19 +355,22 @@ def styles_of(line):
     return styles
 
 
+def body_rows(plain):
+    """Where the pane's body is in a screen's rows: each row's index and the column the body starts at."""
+    top = frame_top(plain)
+    if top is None:
+        column = rule_of(plain)
+        return [] if column is None else [(i, column + 1) for i, line in enumerate(plain) if len(line) > column and line[column] == '│']
+    bottom = next((i for i, line in enumerate(plain) if i > top and line.lstrip().startswith('╰')), len(plain))
+    return [(i, 0) for i in range(top + 1, bottom)]
+
+
 def ring_of(styled):
     """The runs of text drawn inverse in the pane's body, each stripped: where the engine draws the focus ring."""
     lines = styled.split('\n')
     plain = [text_of(line) for line in lines]
-    top = frame_top(plain)
-    if top is None:
-        column = rule_of(plain)
-        rows = [] if column is None else [(i, column + 1) for i, line in enumerate(plain) if len(line) > column and line[column] == '│']
-    else:
-        bottom = next((i for i, line in enumerate(plain) if i > top and line.lstrip().startswith('╰')), len(plain))
-        rows = [(i, 0) for i in range(top + 1, bottom)]
     runs = []
-    for i, start in rows:
+    for i, start in body_rows(plain):
         inverse = ''
         for character, style in list(zip(plain[i], styles_of(lines[i])))[start:] + [('', {})]:
             if style.get('inverse'):
@@ -368,6 +379,45 @@ def ring_of(styled):
                 runs.append(inverse.strip())
                 inverse = ''
     return [one for one in runs if one]
+
+
+def links_of(line):
+    """The hyperlink target each character of a captured row is drawn under, None where none, in the order of its characters."""
+    targets, target, at = [], None, 0
+    for match in [*OTHER.finditer(line), None]:
+        targets += [target] * len(line[at : len(line) if match is None else match.start()])
+        if match is not None:
+            link = HYPERLINK.fullmatch(match.group(0))
+            if link is not None:
+                target = link.group(1) or None
+            at = match.end()
+    return targets
+
+
+def hyperlinks_of(styled):
+    """
+    The hyperlinks drawn in the pane's body, in order: each one's target, its
+    text, and the screen row it starts on. A link the pane wraps goes on at the
+    next row's start, past the spaces and borders between, and is joined.
+    """
+    lines = styled.split('\n')
+    plain = [text_of(line) for line in lines]
+    found, link, between = [], None, ''
+    for i, start in body_rows(plain):
+        for character, target in [*list(zip(plain[i], links_of(lines[i])))[start:], ('\n', None)]:
+            if target is not None and link is not None and target == link[0] and (between == '' or '\n' in between):
+                link[1] += character
+                between = ''
+            elif target is not None:
+                if link is not None:
+                    found.append(tuple(link))
+                link, between = [target, character, i], ''
+            elif link is not None:
+                between += character
+                if between.strip(' \n│'):
+                    found.append(tuple(link))
+                    link, between = None, ''
+    return found + ([] if link is None else [tuple(link)])
 
 
 def placement(screen):

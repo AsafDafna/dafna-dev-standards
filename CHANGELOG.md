@@ -1,5 +1,30 @@
 # Changelog
 
+## open-items 0.3.0 — an item screen that is easy to read
+
+- The item screen has a new look. A header box holds the kind, the number, the
+  age and the title. Each option of a decision is a box with its note, and the
+  recommended one shows `★ recommended`. Claude's detail and replies show as
+  Markdown.
+- `add_item` has two new fields. `ask` is one line under 150 characters and
+  shows first, in the kind's color. `option_notes` is one note per option, one
+  line under 120 characters each. A new decision needs both. `option_notes` is
+  refused on the other kinds. `reply_item` accepts both.
+- Items saved before 0.3 keep plain text in the new frame. `reply_item` can
+  give an older decision option notes, and they stay plain text.
+- In Claude's Markdown on a new item, a link written as `[text](target)` whose
+  target is not `https:` shows as plain text. A target that starts with a
+  scheme, such as `http:`, shows as `text (target)`. A target with no scheme,
+  such as a path, keeps its brackets and gains a space: `[text] (target)`. So
+  does a `[` right after a letter, a digit or a closing bracket, as in code.
+  An address written out in full stays as written, so its whole target shows.
+- The detail of an item can be about 5 sentences or a short list. It was about
+  3 sentences with the options. The ask and the option notes do not count.
+- Width: `Ctrl+X ←` and `Ctrl+X →` make the pane wider or narrower by 4 columns,
+  up to 45% of the window, while the pane has the keyboard and not inside the
+  reply field. You can also drag the edge. One width is kept for every plugin
+  pane.
+
 ## core 1.10.0 — review rounds stop at two; skill text matches the lean rules
 
 - spec-review and plan-review (review-fundamentals.md): after two rounds, stop
