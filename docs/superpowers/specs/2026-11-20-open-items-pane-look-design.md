@@ -119,7 +119,7 @@ What Claude reads back from `list_items`, `take_items` and a leftover Take shows
 
 ### Saved items
 
-A saved item gets three optional fields: `ask`, `optionNotes`, and the mark that 0.3 made it. The check that reads saved items accepts all three as optional typed fields, and closed items drop `ask` and `optionNotes` as they drop options today. An item saved before 0.3 has none of them and shows as plain text, without the ask line and without notes. A hand-off copies all three fields to the new session.
+A saved item gets three optional fields: `askLine` (the `ask` argument), `optionNotes`, and the mark that 0.3 made it. The check that reads saved items accepts all three as optional typed fields, and closed items drop `askLine` and `optionNotes` as they drop options today. An item saved before 0.3 has none of them and shows as plain text, without the ask line and without notes. A hand-off copies all three fields to the new session.
 
 ## Constraints
 
