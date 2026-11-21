@@ -1,9 +1,9 @@
 k1-enter-on-verb	guard
-k2-enter-cross-repo	guard
+k2-enter-cross-repo	climb
 k3-no-enter-single	guard
 k4-orient-by-digest	climb
 k5-role-split	guard
-k6-review-before-pr	guard
+k6-review-before-pr	climb
 k7-third-round-asks	climb
 k8-irreversible-waits	guard
 k9-brief-quotes-ask	climb

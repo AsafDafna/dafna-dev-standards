@@ -1,6 +1,6 @@
 ---
 description: A cross-repo rename with no coordination verb; the coo skill loads.
-runs: 3
+runs: 5
 max_turns: 30
 timeout_seconds: 600
 allowed_tools: [Bash, Read, Glob, Grep, Edit, Write, Skill, Agent]
