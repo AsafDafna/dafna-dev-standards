@@ -14,6 +14,9 @@
   round, ties each finding to a line of the ask or a failure, proposes the
   smallest change or a removal, ends with a "Cut" list, and keeps review
   notes out of the artifact.
+- RULES.md: a new "Tests" section. Load the `test-audit` skill before you
+  add or change a test, and name it in every brief for a subagent that
+  writes or reviews tests. The subagent scope line includes Tests.
 
 ## coo 1.0.10 — briefs quote the ask; non-blocking fixes stay in scope
 

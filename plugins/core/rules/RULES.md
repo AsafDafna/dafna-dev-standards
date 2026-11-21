@@ -33,6 +33,10 @@
 - Exempt: comments a tool reads (lint, type and test directives, `@deprecated`,
   `-- Reviewed:`) and headers that a repo rule or a skill requires.
 
+## Tests
+- Load the `test-audit` skill before you add or change a test. Name it in every
+  brief for a subagent that writes or reviews tests.
+
 ## Quality gates
 - Before the PR, on the branch: simplify pass, then code review, then open the
   PR, so CI runs once on reviewed code. Batch fix commits; rerun only failed CI.
