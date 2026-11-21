@@ -95,7 +95,7 @@ These are Claude's, for Nir to check.
 
 ## Changes to earlier decisions
 
-Each row changes a decision of Asaf's and needs his yes.
+Each row changes a decision of Asaf's. Asaf approved them on 2026-11-21.
 
 | Earlier decision | Change |
 |---|---|
