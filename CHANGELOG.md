@@ -1,5 +1,31 @@
 # Changelog
 
+## core 1.11.0 — build what the ask names; fix findings with the smallest change
+
+- RULES.md: a new "Proportion" section. The ask is the user's words, their
+  decisions and the repo's rules; a brief, spec, plan or review is not. Build
+  what the ask names and put other needs in the report as a question with
+  its size. A brief quotes the ask and marks the lead's additions. Fix a
+  finding with the smallest change; a new mechanism only when nothing
+  smaller works, said in one line. Always fix a real failure. Never add to a
+  part that an earlier review fix added. Sizes are given as before → after.
+- review-fundamentals.md: a "Review against the ask" block before the output
+  format. The reviewer reviews the whole artifact against the ask in every
+  round, ties each finding to a line of the ask or a failure, proposes the
+  smallest change or a removal, ends with a "Cut" list, and keeps review
+  notes out of the artifact.
+- RULES.md: a new "Tests" section. Load the `test-audit` skill before you
+  add or change a test, and name it in every brief for a subagent that
+  writes or reviews tests. The subagent scope line includes Tests.
+
+## coo 1.0.10 — briefs quote the ask; non-blocking fixes stay in scope
+
+- SKILL.md: every brief quotes the ask word for word and marks the lead's
+  additions.
+- orchestration.md, adversarial review: a non-blocking finding is fixed on
+  the branch only when it is inside the PR's scope and small; any other gets
+  a tracker row.
+
 ## open-items 0.3.0 — an item screen that is easy to read
 
 - The item screen has a new look. A header box holds the kind, the number, the
