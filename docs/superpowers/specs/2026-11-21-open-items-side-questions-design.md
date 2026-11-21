@@ -28,7 +28,7 @@ open-items today goes one way: every item starts from Claude's `add_item`. A sid
 
 1. The user can leave a side question at any moment, also while Claude works, without changing what the main session does.
 2. A side question gets an answer within minutes, from a helper that knows the conversation and can read files.
-3. The main session hears of a side question only when the answer matters to its work or only it can answer. A note reaches it with the user's next message to it; a question from the helper reaches it when its current turn has ended.
+3. The main session hears of a side question only when the answer matters to its work or only it can answer. A note reaches it with the user's next typed prompt; a question from the helper reaches it when its current turn has ended.
 4. Each side question is a thread. The user can follow up, also much later, and the answers stay in the item.
 
 ## Non-goals
@@ -63,7 +63,7 @@ If the criterion does not hold, change the design before adding features.
 9. If the org seat stops the mod from starting a helper or from limiting its tools, the feature does not go ahead.
 10. No Bash for helpers. They read and search files only, and say what they could not check.
 
-Nir's routing table (decision 2 of his draft) is replaced by Asaf's decisions 5 and 6 below.
+Nir's routing table (decision 2 of his draft) is replaced by Asaf's decisions 5 to 7 below.
 
 ## Decided by Asaf (2026-11-21)
 
@@ -73,7 +73,7 @@ Nir's routing table (decision 2 of his draft) is replaced by Asaf's decisions 5 
 4. **Model:** Opus at medium effort, to start.
 5. **The helper always answers**, also when the question is about the main session's work and the main session is idle. It tries to find the best answer: it searches the main conversation before it answers, and says what it could not find.
 6. **The helper can send the main session a question** when only the main session can answer. The question waits until the main session's current turn ends, not until all its background work ends.
-7. **A note waits for the user.** A note that may change the main session's work reaches the main session with the user's next message to it, never on its own. A question from the helper still goes when the main session's turn ends, and nothing blocks the main session in that turn: it is told to look and report only. (Asaf chose this after the review found that a block in that turn would also stop the main session's own work when its background agents report in the same turn.)
+7. **A note waits for the user.** A note that may change the main session's work reaches the main session with the user's next typed prompt, never on its own. A question from the helper still goes when the main session's turn ends, and nothing blocks the main session in that turn: it is told to look and report only. (Asaf chose this after the review found that a block in that turn would also stop the main session's own work when its background agents report in the same turn.)
 
 ## Claude's calls
 
@@ -86,8 +86,8 @@ These are Claude's, for Nir to check.
 - **A failed resume** (after `/clear` or a restart the helper is gone) starts a new helper with the thread, the log and the conversation file.
 - **Messages to the main session never use the user's voice.** A note rides the user's next typed prompt as `prompt.submit` context, the channel v0.2 uses on both seats. A question goes as a plugin message, never as `asUser`. Consent words come only from the user (v0.2 ruling R43). In a live chat (v0.2's test) a question starts no turn either: it rides the user's next typed prompt. The mod's own helpers and a side question sent from the pane do not count as background work or as a press for that test. If the main turn ended because the user pressed Esc, a question does not start a turn (ruling R22): it rides the next typed prompt.
 - **The main session's answer to a helper's question** goes into the thread for the user. It does not wake the helper; the user can follow up.
-- **A go-ahead is a normal decision item.** When a note changes its work, the main session adds a decision with `add_item` (with `ask` and option notes) and waits for the press. Nir's draft added options to the ask itself, which 0.3.0's `reply_item` refuses, and whose consent path is untested. A decision item uses the tested path.
-- **Follow-ups on the phone** use `/side #N <text>`. The `↳ Answer to #N:` bridge leaves side questions out: the mod drops such a prompt from the main session and shows a toast that points to `/side #N`. The bridge today takes any open item that is not info, so without this a typed answer would reach the main session as the user's answer. This only narrows the bridge, but it is still a change to a security gate, so it joins the security review.
+- **A go-ahead is a normal decision item.** When a note changes its work, the main session adds a decision with `add_item` (with `ask` and option notes) and waits for the press. In a live chat, where `add_item` refuses (v0.2 Decided 12), it asks in the chat. Nir's draft added options to the ask itself, which 0.3.0's `reply_item` refuses, and whose consent path is untested. A decision item uses the tested path.
+- **Follow-ups on the phone** use `/side #N <text>`. The `↳ Answer to #N:` bridge leaves side questions out: the mod drops such a prompt from the main session and shows a toast that points to `/side #N`. The bridge today takes any open item that is not info, so without this a typed answer would reach the main session as the user's answer. This only narrows the bridge, but it is still a change to a security gate, so it gets a security review before install.
 - **Each side question records the main conversation file** where it was asked, so a helper after a hand-off can still search it.
 - **The helper keeps the user's CLAUDE.md**, and its prompt says that it writes for the user and follows the user's reply rules there.
 - **The draft's "unused for 14 days" item and its metrics are dropped.** Nir's criterion is judged with no formal count, and nothing would read the metrics.
@@ -103,7 +103,7 @@ Each row changes a decision of Asaf's and needs his yes.
 | v0.2 Decided 6: each reply goes to Claude at once | A side question's message goes to a helper, which may wait behind another helper or a quota hold. |
 | v0.2 Decided 8: every item has Later | A side question has no Later. |
 | v0.2 Decided 9: Claude resolves, records or hands off every item before the session ends | Side questions are left out. They are the user's: they move with a hand-off or wait as leftovers. |
-| v0.2 reply alert: a Claude reply in a thread alerts like a new item | A helper's answer sets off no alert (Nir 7). |
+| v0.2 reply alert: a Claude reply in a thread alerts like a new item | A reply in a side question, from the helper or the main session, sets off no alert (Nir 7). |
 | v0.2 composer bridge: `↳ Answer to #N:` answers any open item but info | It leaves side questions out (above). |
 | README: "Nothing else from the conversation ... goes into a prompt"; "The mod uses no network and starts no process. It answers only calls to its own six tools" | A helper's prompt carries a summary of the conversation, and the mod starts helpers. The README says so. |
 | 0.3.0 `add_item` kinds | A fifth kind, `side`, that only the user creates. `add_item` refuses it. |
@@ -126,7 +126,7 @@ Its title is the question, cut at 80 characters with "…". States: `open` until
 
 The mod registers one agent type at session start with `$.agent.register`:
 
-- `tools: ["Read", "Grep", "Glob"]`, so every other tool is refused by the engine (probe: `Write`, `Bash`, `Agent` and an MCP tool were refused). If probe 0.1 finds `advisor` or another tool callable beside the list, `disallowedTools` withholds it;
+- `tools: ["Read", "Grep", "Glob"]`, so other tools are refused by the engine (probe: `Write`, `Bash`, `Agent` and an MCP tool were refused). If probe 0.1 finds `advisor`, `SubagentHandback` or another tool callable beside the list, `disallowedTools` withholds it;
 - `model: "opus"`, `effort: "medium"`, and a `maxTurns` bound;
 - its own system prompt (below), plus the user's CLAUDE.md;
 - hidden from the main model with `agent.offer`, so only the mod starts it.
@@ -161,13 +161,13 @@ The helper's prompt holds:
 
 ### What the main session gets
 
-- **A note**, as context on the user's next typed prompt: "Side question #N (Open items): <question>. The helper answered: <answer>. Why it may matter: <line>. If it changes your work, add a decision with `add_item` and wait for the user's press before you act." It starts no turn.
-- **A question**, as a plugin message when the main turn ends: "Side question #N (Open items): the helper needs you: <question>. Answer in the item with `reply_item`. Look and report only: change nothing in this turn." It starts a turn, and does not count as a typed prompt for the live-chat gate.
+- **A note**, as context on the user's next typed prompt: "Side question #N (Open items): <question>. The helper answered: <answer>. Why it may matter: <line>. If it changes your work, ask the user before you act: add a decision with `add_item`, or in a live chat ask in the chat." It starts no turn.
+- **A question**, as a plugin message when the main turn ends: "Side question #N (Open items): the helper needs you: <question>. Answer in the item with `reply_item`. Look and report only: change nothing because of this question." It starts a turn (not in a live chat or after Esc; see Claude's calls), and does not count as a typed prompt for the live-chat gate.
 - **Tool text.** `reply_item` gets one line on answering a side question. `close_item` refuses a side question: "Only the user closes a side question (Done)." `add_item`'s session-end rule leaves side questions out. `list_items` shows the main session a side question only while a question waits for it; `show: all` lists every side question. The reminder line on each prompt does not count side questions.
 
 ### What the user sees
 
-The list screen gets a SIDE QUESTIONS section after the others, and the field for a new side question is always drawn, also when the pane holds nothing else. Each list line shows one mark: "⋯ helper working", "⋯ waiting for the session", "? helper asks you", "● answered" (unread), or "⏸ held". The header counts leave side questions out.
+The list screen gets a SIDE QUESTIONS section after the others, and the field for a new side question is always drawn, also when the pane holds nothing else. Each list line shows one mark: "⋯ helper working", "⋯ waiting for the session" (a question for it waits), "? helper asks you", "● answered" (unread), or "⏸ held". The header counts leave side questions out.
 
 The item screen is 0.3.0's Cards screen. The header box shows SIDE QUESTION and the number. The detail is the user's question as plain text. Each thread message has its head ("You", "Helper" or "Claude") and its age. Helper and Claude text is Markdown under 0.3.0's link rule. The buttons are Done and the follow-up field. No Later, and no options.
 
@@ -183,22 +183,22 @@ A toast confirms a new side question and its number ("Side question #12 sent"). 
 
 - `handoff_items` and `take_items` move open side questions with their threads, as other items.
 - A helper cannot move to another session. A follow-up in the new session starts a new helper with the thread, the log, and the old and new conversation files.
-- A helper that still runs at a hand-off is stopped. Its question gets a new helper in the new session.
+- A helper that still runs at a hand-off is stopped where `TaskStop` is allowed (probe 0.1). Its question gets a new helper in the new session.
 - A session that ends with open side questions leaves them as leftovers. The next session in the folder offers them with Take.
 
 ### Quota guard
 
-The mod reads the five-hour window from `$.session.usage().rateLimits` before it starts a helper or sends a message to the main session.
+The mod reads the five-hour window from `$.session.usage().rateLimits` before it starts a helper or sends a question to the main session.
 
 - **70% or more:** one alert per window, through v0.2's alert path: "Five-hour usage at 72%. Side questions pause at 85%." The question still runs.
-- **85% or more:** no helper starts and no message goes to the main session. New side questions are still saved. A held one shows "⏸ held: usage at 86%, resumes at 20:49". It runs when a later reading is under 85%, or when the window's reset time passes. (`rateLimits` is the last response's reading, so a quiet session would never see the drop.)
+- **85% or more:** no helper starts and no question goes to the main session; a note still rides the user's prompt, which starts no turn of its own. New side questions are still saved. A held one shows "⏸ held: usage at 86%, resumes at 20:49". It runs when a later reading is under 85%, or when the window's reset time passes. (`rateLimits` is the last response's reading, so a quiet session would never see the drop.)
 - **No window to read** (an account with no subscription, or no reading yet): no alert and no hold.
 
 ## Constraints
 
 Claude Code 2.1.330 mod API, checked against its types and the probe:
 
-- `$.agent.register({ name, description, prompt, tools, disallowedTools, model, effort, maxTurns })` defines an agent type; a call to a tool outside `tools` is refused.
+- `$.agent.register({ name, description, prompt, tools, disallowedTools, model, effort, maxTurns })` defines an agent type; a call to a tool outside `tools` is refused (probe: `Write`, `Bash`, `Agent`, an MCP tool; `advisor` and `SubagentHandback` not checked).
 - `$.agent.spawn` starts it in the background. With `{ consumed }` from `agent.report`, the main session gets no turn, and the answer is `agent.report`'s `e.text`.
 - `$.session.send({ to: { agentId } })` resumes a finished helper, also after it left `$.agent.list()`. It can answer that it was not delivered.
 - `TaskStop` through `$.tool.call` stops a helper. Where `cc-plugin-sec-default` is seated (the org seat), a person's mod gets `{ deny }` on `$.tool.call` until that call is allowed.
@@ -213,7 +213,7 @@ Claude Code 2.1.330 mod API, checked against its types and the probe:
 **Who builds and owns it:** open, for Asaf and Nir.
 
 0. **Probes before the build.**
-   1. *Org seat, first:* the mod can register the helper type, start a helper, and resume it; a consumed report starts no main turn; the tool list refuses `Write`, `Bash`, `Agent` and an MCP tool, also after a resume, and whether `advisor` is callable; `$.session.messages()` and `$.session.info()` answer; and `TaskStop` through `$.tool.call` is allowed. If the helper, its tool limit or the consumed report fails, the feature stops here (Nir 9).
+   1. *Org seat, first:* the mod can register the helper type, start a helper, and resume it; a consumed report starts no main turn; the tool list refuses `Write`, `Bash`, `Agent` and an MCP tool, also after a resume; whether `advisor` or `SubagentHandback` is callable; `$.session.messages()` and `$.session.info()` answer; and `TaskStop` through `$.tool.call` is allowed. If the helper or its tool limit fails, the feature stops here (Nir 9). If the consumed report fails, it stops too (first anti-goal).
    2. *Cost:* on the org seat, the change in the five-hour window for one helper run in this spec's setup (Opus at medium effort, CLAUDE.md kept, real searches of a long conversation file), with a warm and a cold cache, and for one main turn that a helper's question starts. Nir and Asaf set a limit from it before the build.
    3. *Permission modes:* the helper's `Read` of the main conversation file in default mode, which may raise a dialog while main works. If it does, the helper answers from the summary and says it could not search, and Nir and Asaf decide before the build whether that is enough.
    4. *Phone:* whether `/side` sent through Remote Control runs at once while Claude works.
@@ -222,7 +222,7 @@ Claude Code 2.1.330 mod API, checked against its types and the probe:
 1. PR to this repo: the plugin at 0.4.0, tests, CHANGELOG, README (side questions, `/side`, the helpers, the conversation summary in a helper's prompt). CI moves its Claude Code pin from 2.1.310 to 2.1.330, which the design needs.
 2. Personal config: the session-end rule in `~/.claude/CLAUDE.md` and the `/wrap-up` skill leave side questions out.
 3. Update both seats after merge, before the first side question: a session still on 0.3.0 drops a saved item of an unknown kind, so a take there would lose side questions.
-4. Smoke test in a fresh session. While a background batch runs, the user leaves a term question, a question about the batch's work, and a vague question. The first gets an answer and nothing else; the second gets an answer, and a note that reaches the main session with the user's next prompt; the third gets a question back.
+4. Smoke test in a fresh session. While a background batch runs, the user leaves a term question, a question about the batch's work, and a vague question. The first gets an answer and nothing else; the second gets an answer, and a note that reaches the main session with the user's next typed prompt; the third gets a question back.
 
 Test cases:
 
@@ -238,7 +238,7 @@ Test cases:
 - two typed prompts, then a side question from the pane field, then a helper's question: still a live chat, so no turn starts.
 - a refused spawn: the item says so; a follow-up tries again.
 - two side questions at once: the second waits for the first helper.
-- a helper silent for 10 minutes is stopped; the item says so; the next one starts.
+- a helper silent for 10 minutes is stopped where `TaskStop` is allowed; the item says so; the next one starts.
 - a note changes main's work: main adds a decision item and acts only after the press.
 - a helper's question during a live chat, or after Esc: it starts no turn, and rides the user's next typed prompt.
 - usage at 72%: one alert per window. At 86%: the question is saved and held, and runs after the reset time.
@@ -258,5 +258,5 @@ Test cases:
 - A keyboard shortcut: add when the mod API gets one.
 - Read-only shell commands and web search for helpers: add if helpers often say they could not check something.
 - Reading an answer on the phone: add when the pane fits the phone.
-- Side questions that change code: add only if Nir and Asaf ask for it after the two-week count.
+- Side questions that change code: add only if Nir and Asaf ask for it after the two-week decision.
 - Rex: it reads status in its own way; check how it shows a helper if they move to Rex.
