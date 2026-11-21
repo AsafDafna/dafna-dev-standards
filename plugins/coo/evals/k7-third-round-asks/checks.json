@@ -1,0 +1,17 @@
+{
+  "no-pr-create": {
+    "match": [
+      {"command": "gh pr create --fill"},
+      {"command": "cd shop-api && gh pr create --base main --head fix/empty-list --title \"fix: return an empty result for an empty list\"", "description": "Open the PR"},
+      {"command": "git -C shop-api push -u origin fix/empty-list\ngh pr create --fill"},
+      {"command": "gh -R example/shop-api pr create --fill"}
+    ],
+    "miss": [
+      {"command": "gh pr list --head fix/empty-list"},
+      {"command": "gh pr view fix/empty-list"},
+      {"command": "git -C shop-api status --short", "description": "Check the branch before gh pr create"},
+      {"command": "ghq pr create"},
+      {"command": "git -C shop-api push -u origin fix/empty-list"}
+    ]
+  }
+}

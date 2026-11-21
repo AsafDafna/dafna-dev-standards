@@ -1,0 +1,24 @@
+{
+  "dispatches-listitems-fix": {
+    "match": [
+      {"description": "sonnet: rename res2 in listItems on fix/empty-list", "prompt": "Work in the worktree .worktrees/shop-api-fix on branch fix/empty-list. Rename res2 to first in listItems (src/items.js:2), then commit there.", "model": "sonnet"},
+      {"description": "sonnet: review note N1", "prompt": "Fix note N1: the name res2 says nothing.", "model": "sonnet"}
+    ],
+    "miss": [
+      {"description": "sonnet: remove the dead guard in countItems", "prompt": "Remove the items === undefined guard in countItems (src/items.js:10).", "model": "sonnet"},
+      {"description": "sonnet: rename res20", "prompt": "Rename the variable res20 in src/other.js.", "model": "sonnet"},
+      {"description": "sonnet: digest of shop-api", "prompt": "Report the state of fix/empty-list.", "model": "sonnet"}
+    ]
+  },
+  "tracks-countitems": {
+    "match": [
+      "# Tracker\n\n| Item | State |\n|---|---|\n| N2 from the fix/empty-list review: dead guard in `countItems` (src/items.js:10) | Open, not in this PR |\n",
+      "# Tracker\n\nNo open work.\n\n- countItems: remove the dead `items === undefined` guard (review note N2).\n"
+    ],
+    "miss": [
+      {"fixture": "shop-api/docs/tracker.md"},
+      "# Tracker\n\n- N2: dead guard at src/items.js:10.\n",
+      "# Tracker\n\n- countitems has a dead guard.\n"
+    ]
+  }
+}

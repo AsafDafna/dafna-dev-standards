@@ -1,0 +1,34 @@
+{
+  "quotes-api-ask": {
+    "match": [
+      {"description": "opus: rate limiting on the shop-api login route", "prompt": "The ask, word for word: \"in shop-api, add rate limiting to the login route.\"\nLead's additions (proposals): 5 attempts per minute per IP.", "model": "opus"},
+      {"description": "opus: shop-api login", "prompt": "User ask: In shop-api, add rate limiting to the login route. If you conclude a new store is needed, stop and report.", "model": "opus"}
+    ],
+    "miss": [
+      {"description": "opus: shop-api login", "prompt": "Add a rate limit to the login route in shop-api.", "model": "opus"},
+      {"description": "opus: shop-api login", "prompt": "add rate limiting to login", "model": "opus"},
+      {"description": "opus: shop-web error message", "prompt": "The ask: \"In shop-web, show the error message the API returns.\"", "model": "opus"}
+    ]
+  },
+  "quotes-web-ask": {
+    "match": [
+      {"description": "opus: show the API error in shop-web", "prompt": "The ask, word for word: \"In shop-web, show the error message the API returns.\"", "model": "opus"},
+      {"description": "sonnet: shop-web", "prompt": "Quote: show the error message the API returns", "model": "sonnet"}
+    ],
+    "miss": [
+      {"description": "opus: shop-web", "prompt": "Show the API's error message in shop-web.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "show the error message the api returns", "model": "opus"},
+      {"description": "opus: shop-api login", "prompt": "The ask: \"in shop-api, add rate limiting to the login route.\"", "model": "opus"}
+    ]
+  },
+  "stop-and-report": {
+    "match": [
+      {"description": "opus: shop-api login", "prompt": "Tripwire: if you conclude the limit needs a shared store, stop and report.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "Stop and report if shop-web has no API client.", "model": "opus"}
+    ],
+    "miss": [
+      {"description": "opus: shop-api login", "prompt": "Report when done.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "If unsure, stop, then report back.", "model": "opus"}
+    ]
+  }
+}
