@@ -491,3 +491,74 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
 function footRowsOf(view: PaneView, width: number, buttons: readonly string[]): number {
   return rowsOf(hintOf(view), Math.max(1, width - buttons.reduce((cells, label) => cells + BUTTON_GAP + cellsOf(label), 0)))
 }
+
+const HTTPS = /^<?https:/i
+const LINK = /\[([^\]]*)\]\(\s*([^)]*?)\s*\)/g
+const AUTOLINK = /<([a-z][a-z0-9+.-]*:[^\s<>]*)>/gi
+const DEFINITION = /^( {0,3})\[([^\]]+)\]:\s*(\S.*)$/
+
+function unlinkedText(text: string): string {
+  return text
+    .replace(LINK, (whole, label: string, inner: string) =>
+      !HTTPS.test(inner) ? `${label} (${inner.replace(/^<([^>]*)>/, '$1')})` : whole,
+    )
+    .replace(AUTOLINK, (whole, target: string) => (/^https:/i.test(target) ? whole : target))
+}
+
+function unlinkedLine(line: string): string {
+  const definition = DEFINITION.exec(line)
+  if (definition && !HTTPS.test(definition[3]!)) line = `${definition[1]}${definition[2]}: ${definition[3]}`
+  let out = ''
+  let plainFrom = 0
+  let i = 0
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      i++
+      continue
+    }
+    let run = i
+    while (line[run] === '`') run++
+    const ticks = line.slice(i, run)
+    let close = -1
+    for (let at = line.indexOf(ticks, run); at !== -1; at = line.indexOf(ticks, at + 1)) {
+      let end = at + ticks.length
+      while (line[end] === '`') end++
+      if (end - at === ticks.length && line[at - 1] !== '`') {
+        close = end
+        break
+      }
+      at = end - 1
+    }
+    if (close === -1) {
+      i = run
+      continue
+    }
+    out += unlinkedText(line.slice(plainFrom, i)) + line.slice(i, close)
+    plainFrom = i = close
+  }
+  return out + unlinkedText(line.slice(plainFrom))
+}
+
+/**
+ * Claude's Markdown with every link that is not `https:` drawn as plain
+ * text: the pane must not show a clickable `file:` or `http:` target under
+ * words that hide it. Fenced blocks and inline code stay as written.
+ */
+export function safeLinksOf(markdown: string): string {
+  let fence: string | undefined
+  return markdown
+    .split('\n')
+    .map((line) => {
+      const start = line.trimStart().slice(0, 3)
+      if (fence) {
+        if (start === fence) fence = undefined
+        return line
+      }
+      if (start === '```' || start === '~~~') {
+        fence = start
+        return line
+      }
+      return unlinkedLine(line)
+    })
+    .join('\n')
+}
