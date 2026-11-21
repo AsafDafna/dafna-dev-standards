@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { safeLinksOf } from '../hooks/pane'
+import { actionsOf, entriesOf, rowsFor, safeLinksOf } from '../hooks/pane'
+import type { PaneView } from '../hooks/pane'
+import type { Message, Task } from '../types'
 
 const T = '`'
 const F = T + T + T
@@ -170,5 +172,83 @@ describe('safeLinksOf', () => {
     for (const text of [...REVIEWED, ...LIVE_FORMS, ...MADE_LIVE_BY_A_REWRITE]) {
       expect(hasLiveLink(safeLinksOf(text))).toBe(false)
     }
+  })
+})
+
+const NOW = 1_000_000
+
+const DETAIL: Message = { from: 'claude', text: 'I lean towards cursor: the feed is append-only.', atMs: NOW - 240_000 }
+
+function item(fields: Partial<Task> = {}): Task {
+  return {
+    id: 1,
+    kind: 'question',
+    title: 'Pick a pagination strategy for /feed',
+    askLine: 'Which pagination should /feed use?',
+    thread: [DETAIL],
+    isMarkdown: true,
+    state: 'open',
+    isWaitingForClaude: false,
+    hasNewReply: false,
+    update: 'none',
+    createdMs: NOW - 240_000,
+    updatedMs: NOW - 240_000,
+    ...fields,
+  }
+}
+
+const PAGING = item({
+  kind: 'decision',
+  options: ['Cursor', 'Offset, capped at 10k'],
+  optionNotes: ['Pages stay stable while new posts arrive.', 'Simple, but pages shift as posts arrive.'],
+  recommended: 'Cursor',
+})
+
+function itemView(task: Task): PaneView {
+  return { shown: [task], screen: { kind: 'item', id: task.id }, held: null, draft: '', nowMs: NOW, canType: true, isFocused: true, isTyping: false }
+}
+
+describe('the item screen helpers', () => {
+  test("a decision's option boxes take two border rows, a label row and a note row each, after one empty row", () => {
+    expect(rowsFor(itemView(PAGING), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(9)
+  })
+
+  test('on a 0.3 item, Claude writes Markdown and the detail has no head; the user writes plain text, and a press is an event', () => {
+    const task = item({
+      thread: [
+        DETAIL,
+        { from: 'user', text: 'Is the feed ordered by time?', atMs: NOW - 120_000 },
+        { from: 'claude', text: 'Yes, **newest first**.', atMs: NOW - 60_000 },
+        { from: 'user', text: '', event: 'later', atMs: NOW },
+      ],
+    })
+
+    expect(entriesOf(task, NOW).entries).toStrictEqual([
+      { i: 0, text: DETAIL.text, look: 'markdown' },
+      { i: 1, head: 'You · 2m', text: 'Is the feed ordered by time?', look: 'plain' },
+      { i: 2, head: 'Claude · 1m', text: 'Yes, **newest first**.', look: 'markdown' },
+      { i: 3, text: 'You pressed Later · now', look: 'event' },
+    ])
+  })
+
+  test('on an item saved before 0.3, Claude writes plain text', () => {
+    const older = item({ isMarkdown: undefined, thread: [DETAIL, { from: 'claude', text: 'Yes, **newest first**.', atMs: NOW - 60_000 }] })
+
+    expect(entriesOf(older, NOW).entries.map(entry => entry.look)).toEqual(['plain', 'plain'])
+  })
+
+  test("Claude's Markdown keeps no link that is not https, joined by a zero-width character or not; plain text is not rewritten", () => {
+    const detail: Message = { from: 'claude', text: '[click]\u200b(http://evil)', atMs: NOW }
+    const reply: Message = { from: 'user', text: '[x](http://a)', atMs: NOW }
+    const marked = item({ thread: [detail, reply] })
+    const older = item({ isMarkdown: undefined, thread: [detail, reply] })
+
+    expect(entriesOf(marked, NOW).entries.map(entry => entry.text)).toEqual(['click (http://evil)', '[x](http://a)'])
+    // The zero-width character is gone before the rule runs, as `printableLines` drops it from every text.
+    expect(entriesOf(older, NOW).entries.map(entry => entry.text)).toEqual(['[click](http://evil)', '[x](http://a)'])
+  })
+
+  test('the recommended option is labeled with its plain text: its box marks it', () => {
+    expect(actionsOf(PAGING).map(action => action.label)).toEqual(['Cursor', 'Offset, capped at 10k', 'Later'])
   })
 })

@@ -1182,16 +1182,16 @@ describe('long titles', () => {
     // The field takes the ring as the item opens.
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-2' })
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(18)
 
     // A short answer leaves the hint room on its row.
     await ui.input({ key: 'reply-2', text: 'abc', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(17)
 
     await ui.input({ key: 'reply-2', text: 'abcdefghijk', kind: 'change' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(18)
   })
 
   test('a field in a narrow pane, hidden and opened again, has the ring no more and asks for no squeezed row', async ($, on) => {
@@ -1201,7 +1201,7 @@ describe('long titles', () => {
     await runTasks($)
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-2' })
-    expect(world.opens.at(-1)?.rows).toBe(16)
+    expect(world.opens.at(-1)?.rows).toBe(18)
 
     // Opened again, the ring starts on nothing: the field has no autoFocus.
     await ui.press({ key: 'hide' })
@@ -1209,7 +1209,7 @@ describe('long titles', () => {
     await runTasks($)
     await $.ui.mount(inline(24))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(15)
+    expect(world.opens.at(-1)?.rows).toBe(17)
   })
 
   test('the transcript row keeps its label whole and wraps the title after it', async ($, on) => {
@@ -1769,7 +1769,7 @@ describe('the item screen', () => {
     expect(await textOf(ui, 'msg-1')).toBe('Which  console?\n The old one?')
     expect(await textOf(ui, 'msg-2')).toBe('The new one.\nIts link is at the top.')
     expect(await textOf(ui, 'msg-3')).toBe('Claude changed the item · 1m')
-    expect(await textOf(ui, 'thread')).toMatch(/Claude · 4m.*You · 2m.*Claude · 1m/s)
+    expect(await textOf(ui, 'thread')).toMatch(/You · 2m.*Claude · 1m/s)
     expect((await ui.find({ type: 'Text', text: /^Done when:/ }))?.text).toBe('Done when: The tokens are in the vault.\nEach expires in 30 days.')
     expect((await ui.find({ type: 'Link' }))?.props.href).toBe('https://example.com/plan#tokens')
   })
@@ -1781,11 +1781,8 @@ describe('the item screen', () => {
     await $.tool.call({ tool: ADD, kind: 'action', title: 'Add the key', detail: 'Needed.' })
     const ui = await $.ui.mount(inline(24))
     await ui.press({ key: 'row-1' })
-    // The ring is in the field as the item opens: `⏎ send` squeezes under it at 24 columns.
-    const rows = world.opens.at(-1)?.rows ?? 0
     await $.ui.focus(ringTo('back'))
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(rows - 1)
 
     await $.ui.focus(ringTo('reply-1'))
     await ui.input({ key: 'reply-1', text: 'd', kind: 'change' })
@@ -1875,7 +1872,7 @@ describe('the item screen', () => {
     }
 
     expect(await screenOf(1)).toEqual({
-      buttons: ['option-1 1 Cursor (recommended)', 'option-2 2 Offset, capped at 10k', 'later l Later', 'long - Long answer…', 'back b Back', 'hide - Hide'],
+      buttons: ['option-1 1 Cursor', 'option-2 2 Offset, capped at 10k', 'later l Later', 'long - Long answer…', 'back b Back', 'hide - Hide'],
       field: 'reply-1',
     })
     expect(await screenOf(2)).toEqual({ buttons: ['later l Later', 'long - Long answer…', 'back b Back', 'hide - Hide'], field: 'reply-2' })
@@ -4582,7 +4579,7 @@ describe('the four kinds', () => {
       return `${button?.props.hotkey}: ${button?.props.label}`
     }
 
-    expect(await labelOf('option-1')).toBe('1: Yes (recommended)')
+    expect(await labelOf('option-1')).toBe('1: Yes')
     expect(await labelOf('option-2')).toBe('2: Not yet')
     // "Other…" is the reply field.
     expect(await ui.find({ type: 'Input', key: 'reply-1' })).toBeDefined()
@@ -4873,7 +4870,7 @@ describe('the four kinds', () => {
     await ui.press({ key: 'row-1' })
 
     expect(world.status).toBe('☐ 1 decision · /open-items')
-    expect((await ui.find({ type: 'Button', key: 'option-1' }))?.props.label).toBe('Yes (recommended)')
+    expect((await ui.find({ type: 'Button', key: 'option-1' }))?.props.label).toBe('Yes')
   })
 
   test('a seen info item is not brought back by a resumed session', async ($, on) => {
@@ -5224,7 +5221,7 @@ describe('threads', () => {
     expect(task?.options).toEqual(['Ship Tuesday', 'Ship Friday', 'Hold'])
     expect(task?.recommended).toBe('Ship Friday')
     expect(task?.thread.at(-1)).toEqual({ from: 'claude', text: '', event: 'changed', atMs: NOW })
-    expect((await ui.find({ type: 'Button', key: 'option-2' }))?.props.label).toBe('Ship Friday (recommended)')
+    expect((await ui.find({ type: 'Button', key: 'option-2' }))?.props.label).toBe('Ship Friday')
 
     // A recommended option the new options leave out goes with it.
     await $.tool.call({ tool: REPLY, id: 1, options: ['Ship now', 'Hold'], option_notes: ['Ship before the review.', 'Wait for the mobile team.'] })

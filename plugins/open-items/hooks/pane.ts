@@ -1,5 +1,7 @@
+import type { ThemeKey } from 'claude-code'
+
 import type { Held, Message, Screen, Task, TaskKind } from '../types'
-import { DONE, LATER, MAX_DETAIL, MAX_OPTION, PRESSED, SEEN, choseOf, isActive, waitingOf } from './tasks'
+import { DONE, LATER, MAX_ASK, MAX_DETAIL, MAX_OPTION, MAX_OPTION_NOTE, PRESSED, SEEN, choseOf, isActive, waitingOf } from './tasks'
 import type { Move } from './tasks'
 import { ago, cellsOf, clip, clipCells, linesRowsOf, plural, printable, printableLines, rowsOf } from './text'
 
@@ -12,9 +14,6 @@ export const MAX_SHOWN_TITLE = 300
 
 /** The columns between two buttons in a row of them. */
 export const BUTTON_GAP = 3
-
-/** The cells before a task's text: its glyph, `☐ `. */
-const GLYPH_CELLS = 2
 
 /** The cells a list row is indented under its section's label. */
 export const ROW_INDENT = 2
@@ -195,22 +194,43 @@ function rowTextOf(task: Task, numberCells: number, columns: number): string {
   return `${rowTitleOf(task, numberCells, columns)}${newReply}${waiting}`
 }
 
-/** A thread entry as the item screen draws it: a message, line breaks kept, under its `head` (`Claude · 4m`); an event on one line. */
-export function entryOf(message: Message, nowMs: number): { head?: string; text: string } {
+export const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO' }
+
+/** The background of an item's kind label and the color of its ask. */
+export const KIND_COLOR: Record<TaskKind, ThemeKey> = { decision: 'warning', question: 'suggestion', action: 'permission', info: 'success' }
+
+/** The background of the option box with the focus or under the mouse: the theme has no key for one. */
+export const FOCUS_BACKGROUND: ThemeKey = 'subtle'
+
+/** Drawn after the recommended option's button, in its box. */
+export const RECOMMENDED_MARK = '  ★ recommended'
+
+/** The cells a box with a round border and `paddingX={1}` takes from its text: two on each side. */
+const BOX_CELLS = 4
+
+/** The rows a box's round border takes: its top and its bottom. */
+const BOX_ROWS = 2
+
+/**
+ * A thread entry as the item screen draws it: a message, line breaks kept,
+ * under its `head` (`Claude · 4m`), Markdown when Claude wrote it on an item
+ * `isMarkdown`; an event on one line.
+ */
+export function entryOf(message: Message, nowMs: number, isMarkdown: boolean): Omit<Entry, 'i'> {
   const who = message.from === 'claude' ? 'Claude' : 'You'
   const age = ago(nowMs - message.atMs)
 
   switch (message.event) {
     case undefined:
-      return { head: `${who} · ${age}`, text: printableLines(message.text, MAX_DETAIL) }
+      return { head: `${who} · ${age}`, text: printableLines(message.text, MAX_DETAIL), look: isMarkdown && message.from === 'claude' ? 'markdown' : 'plain' }
     case 'chose':
-      return { text: `${who} chose "${printable(message.text, MAX_OPTION)}" · ${age}` }
+      return { text: `${who} chose "${printable(message.text, MAX_OPTION)}" · ${age}`, look: 'event' }
     case 'changed':
-      return { text: `${who} changed the item · ${age}` }
+      return { text: `${who} changed the item · ${age}`, look: 'event' }
     case 'took':
-      return { text: `The item moved here from an earlier session · ${age}` }
+      return { text: `The item moved here from an earlier session · ${age}`, look: 'event' }
     default:
-      return { text: `${who} pressed ${PRESSED[message.event]} · ${age}` }
+      return { text: `${who} pressed ${PRESSED[message.event]} · ${age}`, look: 'event' }
   }
 }
 
@@ -220,14 +240,20 @@ export function entryOf(message: Message, nowMs: number): { head?: string; text:
  */
 const THREAD_CHARS = 80_000
 
-export type Entry = { i: number; head?: string; text: string }
+export type Entry = { i: number; head?: string; text: string; look: 'markdown' | 'plain' | 'event' }
 
 /**
- * The entries of `task`'s thread the item screen draws: the detail, then the
- * newest that fit in THREAD_CHARS; `hidden` counts those left out between.
+ * The entries of `task`'s thread the item screen draws: the detail, with no
+ * head as the header shows its age, then the newest that fit in
+ * THREAD_CHARS; `hidden` counts those left out between.
  */
 export function entriesOf(task: Task, nowMs: number): { entries: Entry[]; hidden: number } {
-  const [detail, ...rest] = task.thread.map((message, i): Entry => ({ i, ...entryOf(message, nowMs) }))
+  const [detail, ...rest] = task.thread.map((message, i): Entry => {
+    const { head, text, look } = entryOf(message, nowMs, task.isMarkdown === true)
+
+    // After `printableLines`, which drops the zero-width characters that could join `]` and `(` into a link.
+    return { i, ...(i === 0 || head === undefined ? {} : { head }), text: look === 'markdown' ? safeLinksOf(text) : text, look }
+  })
   const size = (entry: Entry) => (entry.head?.length ?? 0) + entry.text.length
 
   if (detail === undefined) {
@@ -279,7 +305,7 @@ export function actionsOf(task: Task): { key: string; hotkey: string; label: str
     const choices = task.options.map((option, i) => ({
       key: `option-${i + 1}`,
       hotkey: String(i + 1),
-      label: `${printable(option, MAX_OPTION)}${option === task.recommended ? ' (recommended)' : ''}`,
+      label: printable(option, MAX_OPTION),
       move: choseOf(option),
     }))
 
@@ -414,7 +440,10 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
  * The rows the Open items pane's body takes at `columns` cells across, each
  * text wrapped as the pane draws it, at most `max`. The list: the head, each
  * section's label and a row for each of its items, and the foot. An item:
- * its title, thread, link, done-when, buttons and reply field, and the foot.
+ * its header box, ask, thread, link, done-when, option boxes, buttons and
+ * reply field, and the foot, an empty row after the header and the ask and
+ * before the boxes and the buttons. Markdown counts as its lines, though it
+ * can draw more: the body scrolls.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
@@ -465,23 +494,39 @@ function savedRowsOf(view: PaneView, width: number): number {
 }
 
 function itemRowsOf(task: Task, view: PaneView, width: number): number {
-  const inner = Math.max(1, width - GLYPH_CELLS)
+  const boxed = Math.max(1, width - BOX_CELLS)
+  const header = BOX_ROWS + 1 + rowsOf(nameOf(task), boxed)
+  const ask = task.askLine === undefined ? 0 : rowsOf(printable(task.askLine, MAX_ASK), width) + 1
   const { entries, hidden } = entriesOf(task, view.nowMs)
-  const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, inner)) + linesRowsOf(text, inner), 0)
+  const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, width)) + linesRowsOf(text, width), 0)
   const link = linkOf(task)
   const doneWhen = doneWhenOf(task)
   const isField = hasReplyField(task, view)
-  const buttons = [...actionsOf(task).map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
+  const actions = actionsOf(task)
+  const choices = actions.filter(action => action.key.startsWith('option-'))
+  const boxes = choices.reduce((rows, action, i) => {
+    const mark = task.options?.[i] === task.recommended ? RECOMMENDED_MARK : ''
+    const note = task.optionNotes?.[i]
+
+    return rows + BOX_ROWS + rowsOf(`${action.hotkey}: ${action.label}${mark}`, boxed) + (note === undefined ? 0 : rowsOf(printable(note, MAX_OPTION_NOTE), boxed))
+  }, 0)
+  const buttons = [
+    ...actions.filter(action => !choices.includes(action)).map(action => `${action.hotkey}: ${action.label}`),
+    ...(isField ? [LONG_ANSWER.label] : []),
+  ]
 
   return (
     savedRowsOf(view, width) +
-    rowsOf(`${titleOf(task)}${ageOf(task, view)}`, inner) +
+    header +
+    1 +
+    ask +
     thread +
-    (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), inner)) +
-    (link === undefined ? 0 : rowsOf(link, Math.max(1, inner - cellsOf(LINK_LABEL)))) +
-    (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, inner)) +
-    (buttons.length === 0 ? 0 : buttonRowsOf(buttons, inner)) +
-    (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), inner) + buttonRowsOf(HELD_BUTTONS, inner)) +
+    (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), width)) +
+    (link === undefined ? 0 : rowsOf(link, Math.max(1, width - cellsOf(LINK_LABEL)))) +
+    (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, width)) +
+    (choices.length === 0 ? 0 : 1 + boxes) +
+    (buttons.length === 0 ? 0 : 1 + buttonRowsOf(buttons, width)) +
+    (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), width) + buttonRowsOf(HELD_BUTTONS, width)) +
     (isField ? fieldRowsOf(REPLY_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) : 0) +
     footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])
   )
