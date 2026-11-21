@@ -70,7 +70,9 @@ function isItem(value: unknown): value is Task {
     typeof value['hasNewReply'] === 'boolean' &&
     Array.isArray(value['thread']) &&
     value['thread'].every(isMessage) &&
-    ['link', 'note'].every(key => isOptional(value[key], isText)) &&
+    ['link', 'note', 'askLine'].every(key => isOptional(value[key], isText)) &&
+    isOptional(value['optionNotes'], isTexts) &&
+    isOptional(value['isMarkdown'], (is): is is true => is === true) &&
     isOptional(value['heardMs'], isNumber)
   )
 }
@@ -196,7 +198,7 @@ export function isExpired(saved: Saved, nowMs: number): boolean {
 /**
  * `saved` as its key keeps it: open, later and handing-off items whole. A
  * closed item Claude has heard of keeps no thread, `doneWhen`, options,
- * `recommended`, link or note, and is gone 7 days after its last change. One
+ * `recommended`, ask line, option notes, link or note, and is gone 7 days after its last change. One
  * Claude has not heard of yet stays whole.
  */
 export function trimmed(saved: Saved, nowMs: number): Saved {
@@ -205,7 +207,7 @@ export function trimmed(saved: Saved, nowMs: number): Saved {
       return [task]
     }
 
-    const { doneWhen, options, recommended, link, note, ...kept } = task
+    const { doneWhen, options, recommended, link, note, askLine, optionNotes, ...kept } = task
 
     return nowMs - task.updatedMs > KEEP_CLOSED_MS ? [] : [{ ...kept, thread: [] }]
   })

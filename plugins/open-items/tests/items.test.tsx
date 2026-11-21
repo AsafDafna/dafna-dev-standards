@@ -157,6 +157,15 @@ describe('the item model', () => {
     expect(savedIn(raw)).toEqual({ ...saved([item()]), taken: [good] })
   })
 
+  test('savedIn keeps an item with an ask line, option notes and Markdown, and drops one with malformed ones', () => {
+    const rich = item({ askLine: 'Pick?', optionNotes: ['a', 'b'], isMarkdown: true })
+
+    expect(savedIn(saved([rich]))?.tasks).toEqual([rich])
+    expect(savedIn(saved([item({ optionNotes: [1, 2] as unknown as string[] })]))?.tasks).toEqual([])
+    expect(savedIn(saved([item({ isMarkdown: false as unknown as true })]))?.tasks).toEqual([])
+    expect(savedIn(saved([item({ askLine: 5 as unknown as string })]))?.tasks).toEqual([])
+  })
+
   test('leftoversIn offers the items of an ended or stale session in the folder, and a hand-off nobody took in 30 minutes, never an item another key took', () => {
     const MINUTE = 60_000
     const at = (fields: Partial<Saved>, tasks: readonly Task[] = [item({ id: 1 })]): Saved => ({ ...saved(tasks), ...fields })
@@ -203,6 +212,9 @@ describe('the item model', () => {
     const bare = (one: Task) => item({ id: one.id, kind: one.kind, state: one.state, update: one.update, thread: [] })
 
     expect(trimmed(saved([open, delivered, withdrawn]), NOW).tasks).toEqual([open, bare(delivered), bare(withdrawn)])
+    const noted = { ...delivered, askLine: 'Pick?', optionNotes: ['a', 'b'], isMarkdown: true as const }
+
+    expect(trimmed(saved([noted]), NOW).tasks).toEqual([{ ...bare(noted), isMarkdown: true }])
     expect(trimmed(saved([open, later, delivered, withdrawn]), NOW + 7 * DAY_MS + 1).tasks).toEqual([open, later])
   })
 
