@@ -75,6 +75,7 @@ Nir's routing table (decision 2 of his draft) is replaced by Asaf's decisions 5 
 6. **The helper can send the main session a question** when only the main session can answer. The question waits until the main session's current turn ends, not until all its background work ends.
 7. **A note waits for the user.** A note that may change the main session's work reaches the main session with the user's next typed prompt, never on its own. A question from the helper still goes when the main session's turn ends, and nothing blocks the main session in that turn: it is told to look and report only. (Asaf chose this after the review found that a block in that turn would also stop the main session's own work when its background agents report in the same turn.)
 8. **Each speaker in a thread is easy to tell apart**, in every kind of item, not only side questions. Asaf found that a short reply such as "ok" gets lost between long messages: 0.3.0 draws each head as one dim line, right under the message before it. So a blank row separates the messages, and the name in each head is bold in its own theme color: "You" in `ide` (blue), "Claude" in `claude` (orange), "Helper" in `planMode` (teal). The age stays dim and the message text keeps the normal text color. None of the three is a kind color.
+9. **A reply shows that it went out**, in every kind of item. Asaf found that a reply typed in the pane while the main session is busy shows no sign that it was sent. So a dim line under the user's newest message tracks it: "Waiting to send" while it waits (a quota hold, a store failure), "Sent · Claude reads it at its next step" once the mod hands it to a running turn, and "✓ Claude has it" once a step of that turn read it or it went in as a prompt. The mod already knows both moments: the hand-over, and the next `turn.step`. In a side question the line names the helper.
 
 ## Claude's calls
 
@@ -109,6 +110,7 @@ Each row changes a decision of Asaf's. Asaf approved them on 2026-11-21.
 | README: "Nothing else from the conversation ... goes into a prompt"; "The mod uses no network and starts no process. It answers only calls to its own six tools" | A helper's prompt carries a summary of the conversation, and the mod starts helpers. The README says so. |
 | 0.3.0 `add_item` kinds | A fifth kind, `side`, that only the user creates. `add_item` refuses it. |
 | 0.3.0 Cards thread: each head is one dim line, with no gap between messages | A blank row between messages, and each name bold in its own color (Asaf 8). |
+| 0.3.0 item screen: no sign that a reply was sent | A dim line under the user's newest message: waiting, sent, or Claude has it (Asaf 9). |
 
 ## The design
 
@@ -246,6 +248,7 @@ Test cases:
 - usage at 72%: one alert per window. At 86%: the question is saved and held, and runs after the reset time.
 - Done closes a side question; `close_item` and `add_item` refuse the kind.
 - a helper's `Edit`, `Bash` and `Agent` calls are refused, also after a resume; its `Read` and `Grep` are not.
+- a pane reply while a long tool call runs: "Sent · Claude reads it at its next step", then "✓ Claude has it" once the call returns.
 - hand-off: an open side question moves; a follow-up in the new session starts a new helper that can search the old conversation file.
 
 ## Left to the builder
