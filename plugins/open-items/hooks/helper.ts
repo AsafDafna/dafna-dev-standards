@@ -90,6 +90,7 @@ export async function askNew($: EngineInterface, text: string): Promise<boolean>
 
   await change($, list => [...list, newSideOf(id, text, nowMs, transcript)])
   $.ui.toast(`Side question #${id} sent`)
+  await writeLog($)
   void pump($)
 
   return true

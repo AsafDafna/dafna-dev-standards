@@ -223,8 +223,12 @@ export function helperPromptOf(args: { task: Task; summary: string; current: str
   ].join('\n\n')
 }
 
+/** Every follow-up since the helper's last run, oldest first: more than one queues behind a working helper. */
 export function followUpOf(task: Task, since: string): string {
-  return `Follow-up on side question #${task.id}: ${newestUserOf(task)?.text ?? ''}\n\nThe main conversation since your last answer:\n${since === '' ? 'nothing new' : since}`
+  const sentMs = task.side?.sentMs
+  const asked = task.thread.filter(message => message.from === 'user' && !message.event && (sentMs === undefined || message.atMs > sentMs))
+
+  return `Follow-up on side question #${task.id}: ${asked.map(message => message.text).join('\n\n')}\n\nThe main conversation since your last answer:\n${since === '' ? 'nothing new' : since}`
 }
 
 export function logOf(tasks: readonly Task[]): string {

@@ -187,20 +187,22 @@ describe('the helper', () => {
     expect(world.spawns[0]?.prompt).toContain('/s/pad/open-items-side-questions.md')
   })
 
-  test('a follow-up sent while its own helper works waits for its answer', async ($, on) => {
+  test('follow-ups sent while their own helper works wait for its answer, and all of them reach it', async ($, on) => {
     const { world, clock } = seat(on, earlierItems([WORKING]))
     world.agents = [RUNNING]
     world.helpers = ['a1']
     await start($)
 
-    await side($, '#1 more')
+    await side($, '#1 first')
+    await side($, '#1 second')
     await clock.settle()
     expect(world.sends).toEqual([])
 
     await report($)
     await clock.settle()
     expect(world.sends.map(send => send.to)).toEqual(['a1'])
-    expect(world.sends[0]?.text).toContain('more')
+    expect(world.sends[0]?.text).toMatch(/first\n[\s\S]*second/)
+    expect(world.sends[0]?.text).not.toContain(QUESTION.text)
     expect(world.spawns).toEqual([])
   })
 
@@ -285,6 +287,24 @@ describe('the helper', () => {
       await side($, 'next')
       await clock.settle()
       expect(world.spawns[0]?.prompt.includes('## #1')).toBe(!isWritten)
+      expect(world.files['/s/pad/open-items-side-questions.md']?.includes('## #3 next') ?? false).toBe(isWritten)
+    })
+  }
+
+  for (const [status, text, notice] of [
+    ['completed', '', 'The helper gave no answer.'],
+    ['failed', 'Reading the file was refused.\nIt went on to guess.', 'The helper could not answer: Reading the file was refused.'],
+    ['stopped', 'Half of an answer', 'The helper stopped before it answered.'],
+  ] as const) {
+    test(`a ${status} report with ${text === '' ? 'no text' : 'text'} says so in the item`, async ($, on) => {
+      const { world, clock } = seat(on, earlierItems([WORKING]))
+      world.agents = [RUNNING]
+      await start($)
+
+      await report($, { status, text })
+      await clock.settle()
+
+      expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', event: 'notice', text: notice }))
     })
   }
 })
