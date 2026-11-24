@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { Message, Side, Task, ToMain } from '../types'
-import { ADD, CLOSE, DONE, LIST, NOW, OWN, PANE, REPLY, answerOf, itemOf, keyed, savedItem, seat, start, textOf, typed } from './world'
+import { ADD, CLOSE, CODE, DONE, LIST, NOW, OWN, PANE, REPLY, answerOf, itemOf, keyed, savedItem, seat, start, textOf, typed } from './world'
 
 const QUESTION: Message = { from: 'user', text: 'Which branch holds the feed fix?', atMs: NOW - 60_000 }
 const ASKS_MAIN: Message = { from: 'claude', author: 'helper', text: 'The log does not name it.\nQuestion for the session: Which branch holds the feed fix?', atMs: NOW - 50_000 }
@@ -176,6 +176,48 @@ describe("Claude's tools on side questions", () => {
     expect(answer.drop).toBeUndefined()
     expect(itemOf(world, 2)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true }))
     expect(itemOf(world, 2)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'user', text: 'the log' }))
+  })
+
+  test('↳ Answer to #N on a side question closed with Done, handing off or moved drops with its reason and changes nothing', async ($, on) => {
+    const AWAY = [answered(6, NOTES_MAIN, {}, { state: 'handing-off' }), answered(7, NOTES_MAIN, {}, { state: 'moved' })]
+    const { world, clock } = seat(on, { [OWN]: keyed([DONE_SIDE, ...AWAY], { handoff: { code: CODE, atMs: NOW } }) })
+    await start($)
+    const ids = [5, 6, 7]
+    const before = ids.map(id => itemOf(world, id))
+
+    expect(before.map(item => item?.state)).toEqual(['resolved', 'handing-off', 'moved'])
+
+    const drops: (string | undefined)[] = []
+
+    for (const id of ids) {
+      drops.push((await $.prompt.submit(typed(`↳ Answer to #${id}: more`))).drop)
+    }
+
+    await clock.settle()
+
+    expect(drops).toEqual([
+      '#5 is a closed side question: ask a new one with /side.',
+      "Item #6 moved to a new session, so your response wasn't saved.",
+      "Item #7 moved to a new session, so your response wasn't saved.",
+    ])
+    expect(ids.map(id => itemOf(world, id))).toEqual(before)
+    expect(world.submitted).toEqual([])
+  })
+
+  test('a bridge answer dropped for a side question is no input for the live-chat gate; one that answers a question item is', async ($, on) => {
+    seat(on, { [OWN]: keyed([ASKING, savedItem(2, { kind: 'question', title: 'Which log shows the failure?' })]) })
+    await start($)
+    const add = () => $.tool.call({ tool: ADD, kind: 'question', title: 'Pick a name for the CLI', detail: 'Three short ones.' })
+
+    await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
+    await $.prompt.submit(typed('I like the short ones'))
+    await $.prompt.submit(typed('↳ Answer to #1: more'))
+
+    expect(answerOf(await add()).deny).toBe('live chat: ask in the chat')
+
+    await $.prompt.submit(typed('↳ Answer to #2: the log'))
+
+    expect(answerOf(await add()).result).toContain('Added item #3')
   })
 
   test('the tool text leaves side questions out of the session-end rule and tells Claude how to answer one', async ($, on) => {

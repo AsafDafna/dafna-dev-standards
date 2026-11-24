@@ -683,10 +683,6 @@ export const register: Register = on => {
 
     if (isPerson) {
       live.lastPersonMs = await $.clock.now()
-
-      if (isTyped) {
-        noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
-      }
     }
 
     if (e.origin.kind === 'task-notification') {
@@ -694,10 +690,22 @@ export const register: Register = on => {
     }
 
     const items = bridged === null ? [] : await read($, tasks)
+    const side = bridged === null ? undefined : items.find(one => one.id === bridged.id && isSide(one))
 
-    // An answer meant for a helper would reach Claude in the user's words, as their consent.
-    if (bridged !== null && items.some(one => one.id === bridged.id && isActive(one) && isSide(one))) {
-      return { drop: `#${bridged.id} is a side question: use /side #${bridged.id} <text>, or its field in /open-items.` }
+    // An answer meant for a helper would reach Claude in the user's words, as their consent. Dropped, it
+    // reached no one, so the live-chat gate does not count it either.
+    if (side !== undefined) {
+      const drop = isActive(side)
+        ? `#${side.id} is a side question: use /side #${side.id} <text>, or its field in /open-items.`
+        : isAway(side)
+          ? `Item #${side.id} moved to a new session, so your response wasn't saved.`
+          : `#${side.id} is a closed side question: ask a new one with /side.`
+
+      return { drop }
+    }
+
+    if (isTyped) {
+      noteInput(bridged === null ? 'typed' : 'bridge', live.lastPersonMs)
     }
 
     const task = bridged === null ? undefined : items.find(one => one.id === bridged.id && isOpenAsk(one))
