@@ -3,7 +3,7 @@ import type { EngineInterface, RenderSurface, StateValue, Timer } from 'claude-c
 
 import type { Header, Held, Offer, Saved, Screen, Task } from '../types'
 import { isActive, isAway, isShown, statusOf, toldOf } from './tasks'
-import { hasReplyField, openTaskOf, replyKeyOf, rowsFor } from './pane'
+import { NEW_SIDE, hasReplyField, openTaskOf, replyKeyOf, rowsFor } from './pane'
 import type { PaneView } from './pane'
 import { isExpired, isSavedKey, keyOf, savedIn, trimmed, withTaken } from './saved'
 import { clockOf } from './side'
@@ -168,6 +168,8 @@ export const live = {
   quotaTimer: null as Timer | null,
   /** The five-hour windows alerted, by their reset time ('' for a window with none). */
   alertedWindows: new Set<string>(),
+  /** The user opened the pane (/open-items, /side): it stays open with nothing in it, until Hide. */
+  isKeptOpen: false,
 }
 
 export type QuotaHold = { percent: number; resetsAtMs?: number }
@@ -422,7 +424,8 @@ export async function present($: EngineInterface, task: Task, nowMs: number, wor
 
 /**
  * Keeps the status line in step with the items, and closes the pane once
- * nothing is left in it, no item and no offer. Resolves whether anything is shown.
+ * nothing is left in it, no item and no offer, unless the user opened it.
+ * Resolves whether anything is shown.
  */
 export async function refresh($: EngineInterface): Promise<boolean> {
   const list = await read($, tasks)
@@ -430,7 +433,7 @@ export async function refresh($: EngineInterface): Promise<boolean> {
 
   $.ui.status(statusOf(list.filter(isShown), await read($, saveFailing)))
 
-  if (!isShowing) {
+  if (!isShowing && !live.isKeptOpen) {
     await closePane($).catch(() => undefined)
   }
 
@@ -451,6 +454,7 @@ export function movedOf(list: readonly Task[]): Task[] {
 
 /** The user's Hide: the pane closes, and the line naming the items just moved here goes. */
 export async function hidePane($: EngineInterface) {
+  live.isKeptOpen = false
   await update($, arrived, () => [])
   await closePane($)
 }
@@ -480,6 +484,14 @@ export async function show($: EngineInterface, isAsked: boolean): Promise<boolea
   }
 
   return openAt($, await rowsWanted($), isAsked)
+}
+
+/** Only the list draws the new-question field, so `/side` with nothing after it opens the pane there. */
+export async function showField($: EngineInterface) {
+  live.isKeptOpen = true
+  await update($, screen, () => LIST_SCREEN)
+  await show($, true)
+  void $.ui.focus({ requestId: PANE, key: NEW_SIDE.key }).catch(() => undefined)
 }
 
 /** Opens the Open items pane `rows` tall, or re-sizes it; resolves whether the surface seated it. */
@@ -514,7 +526,7 @@ export async function paneView($: EngineInterface, surface: Pick<PaneView, 'canT
   return seated(
     {
       ...state,
-      draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? ''),
+      draft: live.drafts.get(task === undefined ? NEW_SIDE.key : replyKeyOf(task.id)) ?? '',
       unreadIds: [...live.unreadAppend.keys()],
       ...(live.quotaHold !== null && { quota: quotaOf(live.quotaHold) }),
     },
@@ -533,13 +545,13 @@ export function offeredOf(entries: Offer, ownKey: string): Pick<PaneView, 'offer
 /** The pane's `view` as a surface that `canType`, and holds the keys or not, draws it. */
 export function seated(view: Omit<PaneView, 'canType' | 'isFocused' | 'isTyping'>, surface: Pick<PaneView, 'canType' | 'isFocused'>): PaneView {
   const task = openTaskOf(view)
-  const isField = task !== undefined && hasReplyField(task, { ...view, canType: surface.canType })
+  const field = task === undefined ? NEW_SIDE.key : hasReplyField(task, { ...view, canType: surface.canType }) ? replyKeyOf(task.id) : undefined
 
   return {
     ...view,
     canType: surface.canType,
     isFocused: surface.isFocused,
-    isTyping: surface.isFocused && isField && live.ring === replyKeyOf(task.id),
+    isTyping: surface.isFocused && surface.canType && field !== undefined && live.ring === field,
   }
 }
 

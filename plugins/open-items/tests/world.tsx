@@ -1,4 +1,4 @@
-import type { AgentInfo, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
+import type { AgentInfo, CommandSpec, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -156,6 +156,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     info: { transcriptPath: '/t/main.jsonl', scratchpadDir: '/s/pad' } as SessionInfo,
     /** The rate-limit windows `$.session.usage()` answers with: none off a subscription. */
     rateLimits: [] as SessionRateLimit[],
+    /** The slash commands the plugin registered, as it described them. */
+    commands: [] as CommandSpec[],
   }
 
   const clock = mock.clock(on, { now: NOW })
@@ -311,7 +313,10 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     world.files[e.path] = e.text
     return { value: undefined }
   })
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('command.register', ($, e) => {
+    world.commands.push(e)
+    return { value: { command: e.name } }
+  })
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)
     return { value: undefined }

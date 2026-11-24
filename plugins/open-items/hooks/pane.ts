@@ -1,7 +1,8 @@
 import type { ThemeKey } from 'claude-code'
 
 import type { Held, Message, Screen, Task, TaskKind } from '../types'
-import { DONE, LATER, MAX_ASK, MAX_DETAIL, MAX_OPTION, MAX_OPTION_NOTE, PRESSED, SEEN, choseOf, isActive, optionNotesOf, waitingOf } from './tasks'
+import { isPending, isWorking, reportOf } from './side'
+import { DONE, LATER, MAX_ASK, MAX_DETAIL, MAX_OPTION, MAX_OPTION_NOTE, PRESSED, SEEN, choseOf, isActive, isSide, optionNotesOf, waitingOf } from './tasks'
 import type { Move } from './tasks'
 import { ago, cellsOf, clip, clipCells, linesRowsOf, plural, printable, printableLines, rowsOf } from './text'
 
@@ -61,15 +62,32 @@ const KIND_SECTIONS: readonly { kind: TaskKind; label: string }[] = [
 ]
 
 /**
- * The list's sections: the open items of `shown` by kind, then LATER, the
- * empty ones left out, each oldest first. Each item is in one section only.
+ * The list's sections: the open items of `shown` by kind, then LATER, then
+ * SIDE QUESTIONS, the empty ones left out, each oldest first. Each item is in
+ * one section only.
  */
 export function groupsOf(shown: readonly Task[]): { label: string; tasks: Task[] }[] {
   return [
     ...KIND_SECTIONS.map(({ kind, label }) => ({ label, tasks: shown.filter(task => task.state === 'open' && task.kind === kind) })),
     { label: 'LATER', tasks: shown.filter(task => task.state === 'later') },
+    { label: 'SIDE QUESTIONS', tasks: shown.filter(task => task.state === 'open' && isSide(task)) },
   ].filter(group => group.tasks.length > 0)
 }
+
+/** The head line counts no side question, so a list of only those draws none. */
+export function hasHead(shown: readonly Task[]): boolean {
+  return shown.some(task => isActive(task) && !isSide(task))
+}
+
+export const EMPTY_LINE = 'No items for you right now.'
+
+/** Whether the list has nothing to draw but `EMPTY_LINE` and the new-question field. */
+export function isEmptyList(view: Pick<PaneView, 'shown' | 'offered' | 'moved'>): boolean {
+  return view.shown.length === 0 && offerOf(view) === undefined && (view.moved ?? []).length === 0
+}
+
+/** The list's field for a new side question. The terminal draws its label as `Side question: `. */
+export const NEW_SIDE = { key: 'side-new', label: 'Side question', placeholder: 'Enter asks a helper; Claude goes on', submitLabel: 'ask' } as const
 
 /** The items `handing-off`, oldest first: drawn read-only, as no press there could reach the Claude they go to. */
 export function movingOf(shown: readonly Task[]): Task[] {
@@ -170,9 +188,36 @@ function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
 const NEW_REPLY_MARK = '  ●'
 const WAITING_MARK = '  ⋯ waiting for Claude'
 
-/** What a list row draws after its title: a reply of Claude's the user has not opened, and whether the item waits for Claude. */
-export function marksOf(task: Task): { newReply: string; waiting: string } {
+/** What a list row draws after its title, `newReply` in yellow and `waiting` dim: a side question's one mark goes in the slot of its color. */
+export function marksOf(task: Task, view: Pick<PaneView, 'quota'>): { newReply: string; waiting: string } {
+  if (isSide(task)) {
+    return sideMarksOf(task, view)
+  }
+
   return { newReply: task.hasNewReply ? NEW_REPLY_MARK : '', waiting: task.isWaitingForClaude ? WAITING_MARK : '' }
+}
+
+function sideMarksOf(task: Task, view: Pick<PaneView, 'quota'>): { newReply: string; waiting: string } {
+  const newest = task.thread.at(-1)
+  const none = { newReply: '', waiting: '' }
+
+  if (isPending(task) && view.quota !== undefined) {
+    return { ...none, waiting: '  ⏸ held' }
+  }
+
+  if (isWorking(task)) {
+    return { ...none, waiting: '  ⋯ helper working' }
+  }
+
+  if (newest?.author === 'helper' && newest.event === undefined && reportOf(newest.text).asksUser) {
+    return { ...none, newReply: '  ? helper asks you' }
+  }
+
+  if (task.side?.toMain?.kind === 'question') {
+    return { ...none, waiting: '  ⋯ waiting for the session' }
+  }
+
+  return { ...none, newReply: task.hasNewReply ? '  ● answered' : '' }
 }
 
 /** The cells the widest number of the list's rows takes: each row's number is padded to it. */
@@ -184,18 +229,18 @@ export function numberCellsOf(shown: readonly Task[]): number {
  * `#5  Merge #787…`: a list row's number, padded to `numberCells`, and its
  * title cut so the row, marks and all, takes one line of `columns`.
  */
-export function rowTitleOf(task: Task, numberCells: number, columns: number): string {
+export function rowTitleOf(task: Task, numberCells: number, columns: number, view: Pick<PaneView, 'quota'>): string {
   const number = `#${task.id}`.padEnd(numberCells)
-  const { newReply, waiting } = marksOf(task)
+  const { newReply, waiting } = marksOf(task, view)
   const room = columns - ROW_INDENT - cellsOf(`${number} `) - cellsOf(newReply) - cellsOf(waiting)
 
   return `${number} ${clipCells(nameOf(task), Math.max(1, room))}`
 }
 
-function rowTextOf(task: Task, numberCells: number, columns: number): string {
-  const { newReply, waiting } = marksOf(task)
+function rowTextOf(task: Task, numberCells: number, columns: number, view: Pick<PaneView, 'quota'>): string {
+  const { newReply, waiting } = marksOf(task, view)
 
-  return `${rowTitleOf(task, numberCells, columns)}${newReply}${waiting}`
+  return `${rowTitleOf(task, numberCells, columns, view)}${newReply}${waiting}`
 }
 
 const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO', side: 'SIDE QUESTION' }
@@ -386,15 +431,15 @@ export const SUBMIT_LABEL = 'send'
 
 export const LONG_ANSWER = { key: 'long', label: 'Long answer…' } as const
 
-/** What the user does with an item in place of pasting a secret into it, the item named when `isNamed`: an action has Done, the others a reply. */
-export function insteadOf(task: Pick<Task, 'id' | 'kind'>, isNamed = false): string {
-  const on = isNamed ? ` on #${task.id}` : ''
+/** What the user does with an item of `kind` in place of pasting a secret into it, item `id` named when given: an action has Done, the others a reply. */
+export function insteadOf(kind: TaskKind, id?: number): string {
+  const on = id === undefined ? '' : ` on #${id}`
 
-  return task.kind === 'action' ? `press Done${on}` : `reply${on} without it`
+  return kind === 'action' ? `press Done${on}` : `reply${on} without it`
 }
 
-export function heldNoticeOf(task: Task): string {
-  return `This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and ${insteadOf(task)} instead.`
+export function heldNoticeOf(task: Pick<Task, 'kind'>): string {
+  return `This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and ${insteadOf(task.kind)} instead.`
 }
 
 export const HELD_BUTTONS = ['Edit', 'Send anyway'] as const
@@ -404,10 +449,13 @@ export function replyKeyOf(id: number): string {
   return `reply-${id}`
 }
 
-/** The reply to `task` held back for looking like a secret, on a surface that draws fields. */
-export function heldOf(task: Task, view: Pick<PaneView, 'canType' | 'held'>): string | undefined {
+/** The reply to `task`, or the new side question (`{ id: 'new' }`), held back for looking like a secret, on a surface that draws fields. */
+export function heldOf(task: Pick<Held, 'id'>, view: Pick<PaneView, 'canType' | 'held'>): string | undefined {
   return view.canType && view.held?.id === task.id ? view.held.text : undefined
 }
+
+/** The new side question held back: the notice under the field names no item, as none is made yet. */
+export const NEW_HELD = { id: 'new', kind: 'side' } as const
 
 /** Whether `task`'s screen draws its reply field: on a surface that draws one, for an item that asks something, no reply held in its place. */
 export function hasReplyField(task: Task, view: Pick<PaneView, 'canType' | 'held'>): boolean {
@@ -525,11 +573,15 @@ function listRowsOf(view: PaneView, width: number): number {
   const numberCells = numberCellsOf(view.shown)
   let rows = savedRowsOf(view, width) + (arrived === undefined ? 0 : rowsOf(arrived, width))
 
+  if (isEmptyList(view)) {
+    rows += rowsOf(EMPTY_LINE, width)
+  }
+
   if (offer !== undefined) {
     rows += rowsOf(offer, width) + buttonRowsOf(OFFER_BUTTONS.map(button => button.label), width)
   }
 
-  if (view.shown.some(isActive)) {
+  if (hasHead(view.shown)) {
     rows += rowsOf(`${head.glyph}${head.headline}`, width)
   }
 
@@ -537,8 +589,16 @@ function listRowsOf(view: PaneView, width: number): number {
     rows += 1
 
     for (const task of group.tasks) {
-      rows += rowsOf(rowTextOf(task, numberCells, width), indented)
+      rows += rowsOf(rowTextOf(task, numberCells, width, view), indented)
     }
+  }
+
+  if (view.canType) {
+    rows += fieldRowsOf(NEW_SIDE.label, NEW_SIDE.submitLabel, view.draft, view.isTyping, width)
+  }
+
+  if (heldOf(NEW_HELD, view) !== undefined) {
+    rows += rowsOf(heldNoticeOf(NEW_HELD), width) + buttonRowsOf(HELD_BUTTONS, width)
   }
 
   if (moving.length > 0) {

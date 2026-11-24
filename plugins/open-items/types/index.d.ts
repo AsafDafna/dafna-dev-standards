@@ -107,8 +107,8 @@ export type Header = Pick<Saved, 'lastActiveMs' | 'endedMs' | 'handoff' | 'taken
  */
 export type Offer = readonly { key: string; ids: readonly number[] }[]
 
-/** A reply to item `id` the pane holds back in place of its field, as it looks like a secret. */
-export type Held = { id: number; text: string }
+/** A reply to item `id`, or a new side question (`'new'`), the pane holds back, as it looks like a secret. */
+export type Held = { id: number | 'new'; text: string }
 
 /** What the Open items pane shows: the list of items, or one item. */
 export type Screen = { kind: 'list' } | { kind: 'item'; id: number }

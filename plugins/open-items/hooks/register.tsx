@@ -44,6 +44,7 @@ import {
   ASK_BAR,
   BACK,
   BUTTON_GAP,
+  EMPTY_LINE,
   FOCUS_BACKGROUND,
   HELD_BUTTONS,
   HIDE,
@@ -53,6 +54,8 @@ import {
   MAX_SHOWN_TITLE,
   MOVED_LABEL,
   MOVING_LABEL,
+  NEW_HELD,
+  NEW_SIDE,
   OFFER_BUTTONS,
   RECOMMENDED_MARK,
   REPLY_LABEL,
@@ -69,6 +72,7 @@ import {
   entriesOf,
   focusOrderOf,
   groupsOf,
+  hasHead,
   hasReplyField,
   headerLineOf,
   heldNoticeOf,
@@ -76,6 +80,7 @@ import {
   hiddenOf,
   hintOf,
   insteadOf,
+  isEmptyList,
   itemButtonsOf,
   linkOf,
   marksOf,
@@ -115,7 +120,6 @@ import {
   edit,
   fit,
   forget,
-  hasPane,
   hidePane,
   isOpenNow,
   live,
@@ -138,7 +142,7 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
-import { helperHooks, registerHelper, revive, sendQuestions, takeRiding } from './helper'
+import { askNew, helperHooks, refusalOf, registerHelper, revive, sendQuestions, takeRiding } from './helper'
 
 const PLUGIN = 'open-items'
 
@@ -366,7 +370,7 @@ export const register: Register = on => {
       await $.tool.register(tool)
     }
 
-    await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
+    await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you', immediate: true })
     await $.command.register({ name: 'side', description: 'Leave a side question for a helper; Claude goes on', argumentHint: '[#N] <question>', immediate: true })
     await registerHelper($)
     await update($, folder, known => known ?? e.cwd)
@@ -410,10 +414,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'open-items' }, async $ => {
-    if (!(await hasPane($))) {
-      return { text: 'No items for you right now.' }
-    }
-
+    live.isKeptOpen = true
     await show($, true)
 
     return {}
@@ -693,7 +694,7 @@ export const register: Register = on => {
     if (bridged !== null && task !== undefined) {
       if (looksSecret(bridged.answer)) {
         return {
-          drop: `This looks like a secret, so it wasn't sent. Put it where it belongs, then ${insteadOf(task, true)}.`,
+          drop: `This looks like a secret, so it wasn't sent. Put it where it belongs, then ${insteadOf(task.kind, task.id)}.`,
         }
       }
 
@@ -902,8 +903,8 @@ export const register: Register = on => {
     const { shown, moved = [] } = view
 
     // The pane is closing: it asks for no rows, which would open it again.
-    if (shown.length === 0 && offerOf(view) === undefined && moved.length === 0) {
-      return <Text dimColor>No items for you right now.</Text>
+    if (!live.isKeptOpen && isEmptyList(view)) {
+      return <Text dimColor>{EMPTY_LINE}</Text>
     }
 
     if (seat.isInline || wasInline) {
@@ -1109,13 +1110,14 @@ export const register: Register = on => {
         </Box>
       ))
 
+    const heldNew = heldOf(NEW_HELD, view)
     // A row is one line, its title cut to fit: the item screen draws it whole.
     const row = (one: Task) => {
-      const { newReply, waiting } = marksOf(one)
+      const { newReply, waiting } = marksOf(one, view)
 
       return (
         <Button key={`row-${one.id}`} plain onPress={() => openItem($, one.id, view.canType)}>
-          {rowTitleOf(one, numberCells, columns)}
+          {rowTitleOf(one, numberCells, columns, view)}
           {newReply === '' ? '' : <Text color="yellow">{newReply}</Text>}
           {waiting === '' ? '' : <Text dimColor>{waiting}</Text>}
         </Button>
@@ -1147,7 +1149,14 @@ export const register: Register = on => {
             </Box>
           </Box>
         )}
-        {!shown.some(isActive) ? null : (
+        {!isEmptyList(view) ? null : (
+          <Box key="empty" flexShrink={0}>
+            <Text dimColor wrap="wrap">
+              {EMPTY_LINE}
+            </Text>
+          </Box>
+        )}
+        {!hasHead(shown) ? null : (
           <Box key="head" flexDirection="row" flexShrink={0}>
             <Text wrap="wrap">
               <Text color={shown.some(waitsOnUser) ? 'yellow' : 'gray'}>{head.glyph}</Text>
@@ -1165,6 +1174,28 @@ export const register: Register = on => {
             </Box>
           </Box>
         ))}
+        {Input === undefined ? null : (
+          <Input
+            key={NEW_SIDE.key}
+            label={NEW_SIDE.label}
+            placeholder={placeholderOf(NEW_SIDE.placeholder, NEW_SIDE.label, NEW_SIDE.submitLabel, columns)}
+            value={fieldValueOf(e.surface, NEW_SIDE.key)}
+            submitLabel={NEW_SIDE.submitLabel}
+            onInput={value => typed($, NEW_SIDE.key, value)}
+            onSubmit={value => askTyped($, value)}
+          />
+        )}
+        {heldNew === undefined ? null : (
+          <Box key="held" flexDirection="column">
+            <Text color="yellow" wrap="wrap">
+              {heldNoticeOf(NEW_HELD)}
+            </Text>
+            <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+              <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editNew($)} />
+              <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => askHeld($)} />
+            </Box>
+          </Box>
+        )}
         {moving.length === 0 ? null : (
           <Box key="moving" flexDirection="column" flexShrink={0}>
             <Text bold color="yellow">
@@ -1411,7 +1442,9 @@ async function openItem($: EngineInterface, id: number, canType: boolean) {
     return
   }
 
+  // The list's field goes from the screen: back on the list, it is drawn again with its draft.
   forget(replyKeyOf(id))
+  forget(NEW_SIDE.key)
   await update($, arrived, ids => (ids.includes(id) ? [] : ids))
   await update($, screen, (): Screen => ({ kind: 'item', id }))
   const kept = await update($, held, now => (now?.id === id ? now : null))
@@ -1573,6 +1606,53 @@ async function editHeld($: EngineInterface, id: number) {
 
   // A field the pane can't focus (it doesn't hold the keyboard) is still a click away.
   void $.ui.focus({ requestId: PANE, key }).then(undefined, () => undefined)
+}
+
+async function askTyped($: EngineInterface, value: string) {
+  const text = value.trim()
+
+  // v0.2's order: a refused question stays in the field, and a held one can always be sent.
+  if (refusalOf(text) === undefined && looksSecret(text)) {
+    await update($, held, (): Held => ({ id: 'new', text }))
+  } else if (!(await askNew($, text))) {
+    return
+  }
+
+  live.drafts.delete(NEW_SIDE.key)
+  forget(NEW_SIDE.key)
+}
+
+/** Takes the new side question held back out of hold, once: a second press on an older drawing finds none. */
+async function unheldNew($: EngineInterface): Promise<string | undefined> {
+  let text: string | undefined
+
+  await update($, held, now => {
+    text = now?.id === 'new' ? now.text : undefined
+    return text === undefined ? now : null
+  })
+
+  return text
+}
+
+async function editNew($: EngineInterface) {
+  const text = await unheldNew($)
+
+  if (text === undefined) {
+    return
+  }
+
+  live.drafts.set(NEW_SIDE.key, text)
+  forget(NEW_SIDE.key)
+  await fit($)
+  void $.ui.focus({ requestId: PANE, key: NEW_SIDE.key }).then(undefined, () => undefined)
+}
+
+async function askHeld($: EngineInterface) {
+  const text = await unheldNew($)
+
+  if (text !== undefined) {
+    await askNew($, text)
+  }
 }
 
 /**

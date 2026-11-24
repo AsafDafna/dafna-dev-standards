@@ -4,7 +4,7 @@ import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, 
 import type { Task, ToMain } from '../types'
 import { AT_WORK, isLiveChat } from './gate'
 import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
-import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, show } from './state'
+import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField } from './state'
 import type { QuotaHold } from './state'
 import { MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
 
@@ -41,7 +41,7 @@ export function helperHooks(on: On): void {
     const text = e.args.trim()
 
     if (text === '') {
-      await show($, true)
+      await showField($)
       return {}
     }
 
@@ -74,7 +74,7 @@ export function helperHooks(on: On): void {
   })
 }
 
-function refusalOf(text: string): string | undefined {
+export function refusalOf(text: string): string | undefined {
   if (text.trim() === '') {
     return 'Type a question first.'
   }

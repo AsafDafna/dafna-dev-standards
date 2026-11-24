@@ -118,9 +118,9 @@ function folderOf(world: ReturnType<typeof seat>['world'], sessionId: string): s
   return (world.store[`session:${sessionId}`] as { folder?: string } | undefined)?.folder
 }
 
-/** The list's rows: the head, a label and a row for each section, and the foot. */
-const ROWS_THREE_KINDS = 8
-const ROWS_ONE_KIND = 4
+/** The list's rows: the head, a label and a row for each section, the new-question field, and the foot. */
+const ROWS_THREE_KINDS = 9
+const ROWS_ONE_KIND = 5
 
 describe('adding', () => {
   test('an item opens the Open items pane, with its detail and its buttons, and the status line counts it', async ($, on) => {
@@ -294,11 +294,12 @@ describe('long titles', () => {
       isTyping: false,
     } as const
 
-    // The head, two section labels, a row for each item, and the foot: the foot wraps below 50 columns, the head below 24.
-    expect(rowsFor(view, 60, 99)).toBe(6)
-    expect(rowsFor(view, 32, 99)).toBe(7)
-    expect(rowsFor(view, 20, 99)).toBe(10)
-    expect(rowsFor({ ...view, shown: asItems([INSTRUMENTS]) }, 60, 99)).toBe(4)
+    // The head, two section labels, a row for each item, the new-question field, and the foot: the foot wraps below
+    // 50 columns, the field's label below 27, the head below 24.
+    expect(rowsFor(view, 60, 99)).toBe(7)
+    expect(rowsFor(view, 32, 99)).toBe(8)
+    expect(rowsFor(view, 20, 99)).toBe(12)
+    expect(rowsFor({ ...view, shown: asItems([INSTRUMENTS]) }, 60, 99)).toBe(5)
     expect(rowsFor(view, 20, 8)).toBe(8)
   })
 
@@ -308,11 +309,11 @@ describe('long titles', () => {
 
     await runTasks($)
     const ui = await $.ui.mount(inline(60))
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
 
     // The terminal narrows: the foot takes more rows, and the pane asks for them.
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(7)
+    expect(world.opens.at(-1)?.rows).toBe(8)
   })
 
   test('drawn on two surfaces at once, the pane asks for the rows the narrower takes, and keeps them', async ($, on) => {
@@ -335,7 +336,7 @@ describe('long titles', () => {
     await phone.unmount()
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test('a surface that docks the pane it drew inline leaves it as tall as the surfaces still drawing it inline', async ($, on) => {
@@ -346,7 +347,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(32))
     await $.ui.mount({ ...inline(60), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(7)
+    expect(world.opens.at(-1)?.rows).toBe(8)
 
     // The terminal widens and docks the pane: the phone's rows are the pane's.
     await terminal.redraw(PANE.props)
@@ -415,7 +416,7 @@ describe('long titles', () => {
     // The phone leaves, and the tablet draws the pane again: the pane fits it and the terminal.
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test('a client of three leaving, the two left draw the pane again, and it fits them', async ($, on) => {
@@ -461,7 +462,7 @@ describe('long titles', () => {
     await clock.advance(500)
     await leaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test("clients leaving as the roster's write answers late, the pane still fits those left", async ($, on) => {
@@ -495,7 +496,7 @@ describe('long titles', () => {
     await clock.advance(100)
     await phoneLeaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
 
     await mobile.unmount()
 
@@ -506,7 +507,7 @@ describe('long titles', () => {
     }
 
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test("a client leaving and attaching again as the roster's write answers late keeps the rows it draws", async ($, on) => {
@@ -606,7 +607,7 @@ describe('long titles', () => {
 
     await terminal.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test('a client is counted before it first draws the pane', async ($, on) => {
@@ -655,7 +656,7 @@ describe('long titles', () => {
     const ui = await $.ui.mount(inline(60))
     world.tasksRead = 0
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(7)
+    expect(world.opens.at(-1)?.rows).toBe(8)
     expect(world.tasksRead).toBe(1)
 
     await ui.redraw(inline(100).props)
@@ -894,11 +895,12 @@ describe('long titles', () => {
 })
 
 describe('the pane and /open-items', () => {
-  test('/open-items opens the pane with the keyboard, or says there is nothing', async ($, on) => {
+  test('/open-items opens the pane with the keyboard, also when nothing is in it', async ($, on) => {
     const { world } = seat(on)
     await start($)
 
-    expect((await runTasks($)).text).toBe('No items for you right now.')
+    await runTasks($)
+    expect(world.opens.at(-1)?.focus).toBe(true)
 
     await $.tool.call(KEY_TASK)
     await runTasks($)
@@ -1021,8 +1023,8 @@ describe('the list screen', () => {
 
     await runTasks($)
     await $.ui.mount(inline(60))
-    // The head, ACTIONS, a row for each item, and the foot.
-    expect(world.opens.at(-1)?.rows).toBe(5)
+    // The head, ACTIONS, a row for each item, the new-question field, and the foot.
+    expect(world.opens.at(-1)?.rows).toBe(6)
 
     for (const item of LONG_LIST.slice(2)) {
       await $.tool.call({ ...KEY_TASK, title: item.title })
@@ -1606,7 +1608,7 @@ describe('the item screen', () => {
 
     await runTasks($)
     const ui = await $.ui.mount(inline(60))
-    expect(world.opens.at(-1)?.rows).toBe(5)
+    expect(world.opens.at(-1)?.rows).toBe(6)
 
     await ui.press({ key: 'row-1' })
     const back = await ui.find({ type: 'Button', key: 'back' })
@@ -3835,8 +3837,8 @@ describe('hand-off', () => {
     expect(await textOf(ui, 'moved')).toContain(PAGING_TASK.title)
     expect(await buttonsOf(ui)).toEqual(['hide'])
     expect(world.status).toBeUndefined()
-    // The label, a row each and the foot.
-    expect(world.opens.at(-1)?.rows).toBe(4)
+    // The label, a row each, the new-question field and the foot.
+    expect(world.opens.at(-1)?.rows).toBe(5)
   })
 
   test('a take of part of a re-handed-off hand-off leaves the rest open in the old session', async ($, on) => {

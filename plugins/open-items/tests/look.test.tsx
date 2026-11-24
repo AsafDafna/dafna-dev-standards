@@ -316,3 +316,20 @@ describe('the item screen helpers', () => {
     expect(actionsOf(PAGING).map(action => action.label)).toEqual(['Cursor', 'Offset, capped at 10k', 'Later'])
   })
 })
+
+describe('the list screen helpers', () => {
+  test('a list of a decision and a side question takes the head, two labels, two rows, the new-question field and the foot', () => {
+    const asked = item({
+      id: 2,
+      kind: 'side',
+      title: 'What does the feed page by?',
+      askLine: undefined,
+      thread: [{ from: 'user', text: 'What does the feed page by?', atMs: NOW - 60_000 }],
+      isWaitingForClaude: true,
+      side: { transcripts: [], helperId: 'a1', sentMs: NOW - 60_000 },
+    })
+    const view: PaneView = { shown: [PAGING, asked], screen: { kind: 'list' }, held: null, draft: '', nowMs: NOW, canType: true, isFocused: true, isTyping: false }
+
+    expect(rowsFor(view, 76, 99)).toBe(7)
+  })
+})
