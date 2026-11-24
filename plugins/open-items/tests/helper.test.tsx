@@ -369,6 +369,20 @@ describe('the 10-minute limit', () => {
     })
   }
 
+  test('after a stop whose report never came, the next answer from that helper is still written', async ($, on) => {
+    const { world, clock } = await oneWaiting($, on)
+
+    await clock.advance(600_000)
+    await side($, '#1 again?')
+    await clock.settle()
+    expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
+
+    await report($, { text: 'More of the feed.' })
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', text: 'More of the feed.' }))
+  })
+
   test('where TaskStop is refused and the helper is gone, the item says so at 10 minutes and the next side question starts', async ($, on) => {
     const { world, clock } = await oneWaiting($, on, world => {
       world.agents = [{ ...RUNNING, status: 'completed' }, { ...RUNNING, id: 'a2' }] as AgentInfo[]
