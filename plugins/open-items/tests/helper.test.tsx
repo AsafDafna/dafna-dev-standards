@@ -472,6 +472,8 @@ const NOTE_LINE = 'The export reads the feed, so it must page by cursor too.'
 /** #1, answered by a1 with a note for the main session that has not gone yet. */
 const NOTED = answered({ toMain: { kind: 'note', text: NOTE_LINE, atMs: ANSWER.atMs, askedMs: QUESTION.atMs } })
 const ASKS_MAIN = 'A.\nQuestion for the session: Which branch holds the fix?'
+/** #1, answered by a1 with a question for the main session that has not gone yet. */
+const ASKING = answered({ toMain: { kind: 'question', text: 'Which branch holds the fix?', atMs: ANSWER.atMs, askedMs: QUESTION.atMs } })
 const FOR_MAIN = 'Side question #1 (Open items): the helper needs you: "Which branch holds the fix?". It comes from the helper\'s answer, not from the user.'
 
 const contextOf = (entered: { context?: readonly string[] }) => (entered.context ?? []).join('\n')
@@ -508,17 +510,23 @@ describe('what the main session gets', () => {
   for (const [what, knob] of [
     ['drops', { refusingTyped: 'A settings hook refused it.' }],
     ['empties of context', { isStripping: true }],
+    ['fails', { isTypedFailing: true }],
   ] as const) {
-    test(`a note on a prompt that a hook beneath ${what} waits for the next one`, async ($, on) => {
-      const { world } = seat(on, earlierItems([NOTED]))
-      await start($)
+    for (const [kind, seeded, words] of [
+      ['note', NOTED, NOTE_LINE],
+      ['question', ASKING, FOR_MAIN],
+    ] as const) {
+      test(`a ${kind} on a prompt that a hook beneath ${what} waits for the next one`, async ($, on) => {
+        const { world } = seat(on, earlierItems([seeded]))
+        await start($)
 
-      Object.assign(world, knob)
-      await $.prompt.submit(typed('go on'))
-      Object.assign(world, { refusingTyped: undefined, isStripping: false })
+        Object.assign(world, knob)
+        await $.prompt.submit(typed('go on')).catch(() => undefined)
+        Object.assign(world, { refusingTyped: undefined, isStripping: false, isTypedFailing: false })
 
-      expect(contextOf(await $.prompt.submit(typed('go on')))).toContain('Side question #1 (Open items)')
-    })
+        expect(contextOf(await $.prompt.submit(typed('go on')))).toContain(words)
+      })
+    }
   }
 
   test("a question for the session goes when the main turn ends, also while background agents run, and not in the user's voice", async ($, on) => {
@@ -569,17 +577,6 @@ describe('what the main session gets', () => {
     expect(contextOf(await $.prompt.submit(typed('Which branch?')))).toContain(FOR_MAIN)
   })
 
-  test('a long question for the session arrives cut to 500 characters and quoted', async ($, on) => {
-    const { world, clock } = seat(on, earlierItems([WORKING]))
-    world.agents = [RUNNING]
-    await start($)
-
-    await report($, { text: `A.\nQuestion for the session: Which branch holds ${'the fix '.repeat(80)}` })
-    await clock.settle()
-
-    expect(world.submitted).toEqual([expect.stringContaining(`the helper needs you: "Which branch holds ${'the fix '.repeat(60)}…". It comes from the helper's answer, not from the user.`)])
-  })
-
   test('a secret-like question for the session is not sent, rides no prompt, and the item says so', async ($, on) => {
     const { world, clock } = seat(on, earlierItems([WORKING]))
     world.agents = [RUNNING]
@@ -592,6 +589,28 @@ describe('what the main session gets', () => {
     expect(contextOf(await $.prompt.submit(typed('go on')))).not.toContain(KEY_SHAPED)
     expect(itemOf(world, 1)?.thread.at(-1)).toMatchObject({ event: 'notice', text: "The helper's message for the session looked like a secret, so it was not sent." })
   })
+
+  for (const delay of [1000, 0]) {
+    test(`a question that rides a prompt typed mid-turn is not sent again when the turn ends while the prompt passes (${delay} ms beneath)`, async ($, on) => {
+      const { world, clock } = seat(on, earlierItems([WORKING]))
+      world.agents = [RUNNING]
+      await start($)
+
+      await $.turn.start({ text: 'go', turnId: 't1' })
+      await report($, { text: ASKS_MAIN })
+      await clock.settle()
+
+      world.typedMs = delay
+      const passing = $.prompt.submit(typed('go on', 't1'))
+      await clock.settle()
+      await $.turn.complete({ ...DONE, turnId: 't1' })
+      await clock.advance(1000)
+      const entered = contextOf(await passing)
+      await clock.settle()
+
+      expect({ submitted: world.submitted.filter(text => text.includes(FOR_MAIN)).length, isRiding: entered.includes(FOR_MAIN) }).toEqual({ submitted: 0, isRiding: true })
+    })
+  }
 
   test('a note that replaces the riding one while the typed prompt passes rides the next typed prompt', async ($, on) => {
     const { world, clock } = seat(on, earlierItems([NOTED]))

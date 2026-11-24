@@ -278,8 +278,8 @@ export function noteForMain(task: Task): string {
   const before = at >= 0 ? task.thread.slice(0, at) : task.thread
   const asked = before.findLast(message => message.from === 'user' && !message.event && message.atMs === toMain?.askedMs)
   const question = asked ?? before.findLast(message => message.from === 'user' && !message.event)
-  const answer = withoutMarkers(helper?.text ?? '')
-  const shown = answer.length > MAX_ANSWER ? `"${unquoted(answer.slice(0, MAX_ANSWER))}" (cut: list_items with id ${task.id} gives it whole)` : `"${unquoted(answer)}"`
+  const answer = unquoted(oneLine(withoutMarkers(helper?.text ?? '')))
+  const shown = answer.length > MAX_ANSWER ? `"${answer.slice(0, MAX_ANSWER)}" (cut: list_items with id ${task.id} gives it whole)` : `"${answer}"`
 
   return `Side question #${task.id} (Open items): ${question?.text ?? ''}. The helper answered: ${shown}. Why it may matter: ${quotedOf(toMain?.text ?? '')} If it changes your work, ask the user before you act: add a decision with \`add_item\`, or in a live chat ask in the chat.`
 }

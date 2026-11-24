@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
-import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, EngineInterface, On } from 'claude-code'
+import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, EngineInterface, On, PromptSubmitResult } from 'claude-code'
 
 import type { Task, ToMain } from '../types'
 import { AT_WORK, isLiveChat } from './gate'
-import { HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, rowsTextOf, sentOf, summaryOf } from './side'
+import { HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, settle, show } from './state'
 import { MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
 
@@ -315,12 +315,36 @@ function noticeOf(status: AgentReportInput['status'], text: string): string {
 
 const isAskingMain = (task: Task) => isOpenSide(task) && task.side?.toMain?.kind === 'question' && task.side.toMain.sentMs === undefined
 
+const isNoting = (task: Task) => isOpenSide(task) && task.side?.toMain?.kind === 'note'
+
 /** `task` with its message for the main session as `fn` makes it: none when `fn` gives undefined. */
 function withToMain(task: Task, fn: (toMain: ToMain) => ToMain | undefined): Task {
   const { toMain, ...side } = task.side ?? { transcripts: [] }
   const made = toMain === undefined ? undefined : fn(toMain)
 
   return { ...task, side: made === undefined ? side : { ...side, toMain: made } }
+}
+
+/** Marks the questions that wait for the main session sent at `sentMs`, as `claim` marks, and resolves them as they stood: no other path takes them meanwhile. */
+async function claimQuestions($: EngineInterface, sentMs: number): Promise<readonly Task[]> {
+  let due: readonly Task[] = []
+
+  await change($, list => {
+    due = list.filter(isAskingMain)
+
+    return due.length === 0 ? list : list.map(task => (isAskingMain(task) ? withToMain(task, toMain => ({ ...toMain, sentMs })) : task))
+  })
+
+  return due
+}
+
+/** Gives back the questions of the claim at `sentMs` that never reached the main session: those that still hold its mark. */
+async function unclaim($: EngineInterface, lost: readonly Task[], sentMs: number) {
+  const isMarked = (task: Task) => lost.some(one => one.id === task.id) && task.side?.toMain?.sentMs === sentMs
+
+  if (lost.length > 0) {
+    await change($, list => list.map(task => (isMarked(task) ? withToMain(task, ({ sentMs: was, ...toMain }) => toMain) : task)))
+  }
 }
 
 /**
@@ -335,14 +359,7 @@ export async function sendQuestions($: EngineInterface): Promise<void> {
     }
 
     const sentMs = await $.clock.now()
-    let due: readonly Task[] = []
-
-    // Marked before the send, as `claim` marks: a send or a typed prompt meanwhile finds none of them waiting.
-    await change($, list => {
-      due = list.filter(isAskingMain)
-
-      return due.length === 0 ? list : list.map(task => (isAskingMain(task) ? withToMain(task, toMain => ({ ...toMain, sentMs })) : task))
-    })
+    const due = await claimQuestions($, sentMs)
 
     if (due.length === 0) {
       return
@@ -351,25 +368,57 @@ export async function sendQuestions($: EngineInterface): Promise<void> {
     const sent = await $.prompt.submit({ text: due.map(questionForMain).join('\n\n') }).catch(() => undefined)
 
     if (sent === undefined || sent.drop !== undefined) {
-      const isMarked = (task: Task) => due.some(one => one.id === task.id) && task.side?.toMain?.sentMs === sentMs
-
-      await change($, list => list.map(task => (isMarked(task) ? withToMain(task, ({ sentMs: was, ...toMain }) => toMain) : task)))
+      await unclaim($, due, sentMs)
     }
   } catch {
     // A question left unmarked goes at the next turn's end, or rides the next typed prompt.
   }
 }
 
-/** After the user's typed prompt carried `messages` to the main session: those notes are gone, those questions sent. One that replaced them meanwhile waits. */
-export async function rode($: EngineInterface, messages: readonly { id: number; atMs: number }[]): Promise<void> {
-  if (messages.length === 0) {
-    return
+/**
+ * What rides the user's typed prompt: each note and question that waits for
+ * the main session. Its questions are claimed now, so no send takes them
+ * while the prompt passes; `carry` passes the prompt on, then drops the notes
+ * it carried and gives back the questions it did not.
+ */
+export async function takeRiding($: EngineInterface): Promise<{ context: string; carry: <R extends PromptSubmitResult>(pass: () => Promise<R>) => Promise<R> } | undefined> {
+  const sentMs = await $.clock.now()
+  const questions = await claimQuestions($, sentMs)
+  const notes = (await read($, tasks)).filter(isNoting)
+  const riding = ridingOf([...notes, ...questions].sort((one, other) => one.id - other.id))
+
+  if (riding === undefined) {
+    return undefined
   }
 
-  const nowMs = await $.clock.now()
-  const isRiding = (task: Task) => messages.some(one => one.id === task.id && one.atMs === task.side?.toMain?.atMs) && task.side?.toMain?.sentMs === undefined
+  const { context, messages } = riding
 
-  await change($, list => list.map(task => (isRiding(task) ? withToMain(task, toMain => (toMain.kind === 'note' ? undefined : { ...toMain, sentMs: nowMs })) : task)))
+  async function carry<R extends PromptSubmitResult>(pass: () => Promise<R>): Promise<R> {
+    let carried: readonly string[] = []
+
+    try {
+      const result = await pass()
+      carried = result.drop === undefined ? (result.context ?? []) : []
+
+      return result
+    } finally {
+      const isCarried = (id: number) => carried.some(block => block.includes(`Side question #${id} (Open items)`))
+
+      await rode($, messages.filter(({ id }) => isCarried(id))).catch(() => undefined)
+      await unclaim($, questions.filter(task => !isCarried(task.id)), sentMs).catch(() => undefined)
+    }
+  }
+
+  return { context, carry }
+}
+
+/** Drops the notes a typed prompt carried, by their `atMs`: a note that replaced one meanwhile waits for the next. */
+async function rode($: EngineInterface, carried: readonly { id: number; atMs: number }[]) {
+  const isCarried = (task: Task) => isNoting(task) && carried.some(one => one.id === task.id && one.atMs === task.side?.toMain?.atMs)
+
+  if (carried.length > 0) {
+    await change($, list => list.map(task => (isCarried(task) ? withToMain(task, () => undefined) : task)))
+  }
 }
 
 export async function writeLog($: EngineInterface): Promise<void> {

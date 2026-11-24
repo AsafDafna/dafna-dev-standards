@@ -138,8 +138,7 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
-import { helperHooks, registerHelper, revive, rode, sendQuestions } from './helper'
-import { ridingOf } from './side'
+import { helperHooks, registerHelper, revive, sendQuestions, takeRiding } from './helper'
 
 const PLUGIN = 'open-items'
 
@@ -759,7 +758,7 @@ export const register: Register = on => {
     const list = await read($, tasks)
     const reminder = reminderOf(list.filter(one => !isAway(one)), isHeld)
     // A helper's note, or its question held back, goes to the main session only beside the user's own words.
-    const riding = isTyped ? ridingOf(list) : undefined
+    const riding = isTyped ? await takeRiding($).catch(() => undefined) : undefined
     const context = [
       ...(e.context ?? []),
       ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []),
@@ -767,17 +766,10 @@ export const register: Register = on => {
       ...(reminder === undefined ? [] : [reminder]),
     ]
     const entered = { ...e, ...(isAnswer ? { text: messageOf(due) } : {}), ...(context.length > 0 ? { context } : {}) }
-    const result =
-      due.length === 0 ? await next(entered) : await (isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered)))
+    const pass = () => (due.length === 0 ? next(entered) : isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered)))
 
-    // One that a hook beneath dropped, or took out of the context, waits for the next typed prompt.
-    if (riding !== undefined && result.drop === undefined) {
-      const blocks = result.context ?? []
-
-      await rode($, riding.messages.filter(({ id }) => blocks.some(block => block.includes(`Side question #${id} (Open items)`)))).catch(() => undefined)
-    }
-
-    return result
+    // One that a hook beneath dropped or took out of the context, or a prompt that failed, leaves it for the next typed prompt.
+    return riding === undefined ? pass() : riding.carry(pass)
   })
 
   on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {
