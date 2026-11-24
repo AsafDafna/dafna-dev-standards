@@ -1,9 +1,9 @@
-import type { AgentInfo, SessionRateLimit } from 'claude-code'
+import type { AgentInfo, AgentReportInput, SessionRateLimit } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import type { Message, Side, Task } from '../types'
-import { ADD, CLOSE, DONE, HOUR_MS, KEY_SHAPED, NOW, OWN, PANE, itemOf, keyed, runTasks, savedItem, seat, start, textOf } from './world'
+import { ADD, CLOSE, DONE, HOUR_MS, KEY_SHAPED, NOW, OWN, PANE, answerOf, itemOf, keyed, runTasks, savedItem, seat, start, textOf, typed } from './world'
 
 const QUESTION: Message = { from: 'user', text: 'What does the feed page by?', atMs: NOW - 60_000 }
 const RUNNING = { id: 'a1', type: 'open-items:helper', status: 'running' } as AgentInfo
@@ -27,6 +27,10 @@ const fiveHour = (percentUsed: number, resetsInMs?: number): SessionRateLimit =>
 
 function side($: Engine, args: string) {
   return $.command.run({ command: 'side', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+}
+
+function report($: Engine, agentId: string, fields: Partial<AgentReportInput> = {}) {
+  return $.agent.report({ agentId, subagentType: 'open-items:helper', provider: { plugin: 'open-items', tier: 'user' }, status: 'completed', text: 'A pointer into the feed.', ...fields })
 }
 
 async function fieldValueIn(ui: Pick<Mounted<'terminal', 'Pane'>, 'find'>): Promise<unknown> {
@@ -254,4 +258,157 @@ describe('opening the pane and the new-question field', () => {
       ]),
     )
   })
+})
+
+describe('the side question screen', () => {
+  const FOLLOW_UP = 'And the app feed?'
+  const SECOND: Message = { from: 'user', text: 'What sorts the feed?', atMs: NOW - 20_000 }
+  /** #1, whose helper a1 works on its question. */
+  const WORKING = sideItem(1, [QUESTION], { helperId: 'a1', sentMs: QUESTION.atMs })
+
+  test("a side question's screen shows its kind, the question as plain text, the helper's head, Done and the follow-up field, and no Later", async ($, on) => {
+    seat(on, { [OWN]: keyed([answered(1, 'By a cursor, in pages of twenty.')]) })
+    await start($)
+    const ui = await $.ui.mount(PANE)
+
+    await ui.press({ key: 'row-1' })
+
+    expect(await textOf(ui, 'header')).toContain('SIDE QUESTION')
+    expect(await textOf(ui, 'header')).toContain('#1')
+    expect((await ui.find({ key: 'msg-0' }))?.children[0]).toMatchObject({ type: 'Text', children: [QUESTION.text] })
+    expect((await ui.find({ key: 'head-1' }))?.children[0]).toMatchObject({ children: [{ type: 'Text', props: { bold: true, color: 'planMode' }, children: ['Helper'] }, expect.anything()] })
+    expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['done', 'back', 'hide'])
+    expect((await ui.find({ type: 'Input' }))?.props.label).toBe('Follow up')
+    expect(await ui.find({ key: 'sent' })).toBeUndefined()
+  })
+
+  test('a follow-up from the item reaches its helper and Done closes it, and neither reaches the main session by any path', async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor, in pages of twenty.')]) })
+    world.helpers = ['a1']
+    await start($)
+    // A running turn would take a batch's row; an idle one, its prompt.
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+
+    await ui.input({ key: 'reply-1', text: FOLLOW_UP })
+    await clock.advance(1000)
+    expect(world.sends).toEqual([{ to: 'a1', text: expect.stringContaining(FOLLOW_UP) }])
+    expect(itemOf(world, 1)?.update).toBe('none')
+
+    await ui.press({ key: 'done' })
+    await clock.advance(1000)
+    expect(itemOf(world, 1)?.state).toBe('resolved')
+    expect(itemOf(world, 1)?.update).toBe('none')
+
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+    const entered = await $.prompt.submit(typed('go on'))
+
+    expect(world.submitted).toEqual([])
+    expect(world.appended).toEqual([])
+    expect((entered.context ?? []).filter(block => block.includes('#1'))).toEqual([])
+    expect(itemOf(world, 1)?.update).toBe('none')
+  })
+
+  test('Done on a side question whose helper works stops it, and the next one starts', async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([WORKING, sideItem(2, [SECOND], {}, { title: SECOND.text })]) })
+    world.agents = [RUNNING]
+    await start($)
+    await clock.settle()
+    expect(world.spawns).toEqual([])
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+
+    await ui.press({ key: 'done' })
+    await clock.settle()
+
+    expect(world.stops).toEqual(['a1'])
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #2'])
+  })
+
+  test('the stopped report after Done does not cancel the 10-minute stop of a later run of the same helper', async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor.'), answered(2, 'By date.')]) })
+    world.helpers = ['a1']
+    await start($)
+    // #1's run arms its timer; #2 waits behind it.
+    await side($, '#1 more?')
+    await side($, '#2 more?')
+    await clock.settle()
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+
+    await ui.press({ key: 'done' })
+    await clock.settle()
+    expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
+    await report($, 'a1', { status: 'stopped', text: 'Running the 14 searches.' })
+    await clock.advance(600_000)
+
+    expect(world.stops).toEqual(['a1', 'a1'])
+    expect(itemOf(world, 2)?.thread.at(-1)).toMatchObject({ event: 'notice', text: 'The helper did not answer in 10 minutes.' })
+  })
+
+  test('the sent line on a side question names the helper', async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([WORKING, answered(2, 'By a cursor, in pages of twenty.', { helperId: 'a2' })]) })
+    world.agents = [RUNNING]
+    world.helpers = ['a2']
+    await start($)
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-2' })
+
+    await ui.input({ key: 'reply-2', text: FOLLOW_UP })
+    await clock.settle()
+    expect(await textOf(ui, 'sent')).toBe('Waiting to send')
+
+    await report($, 'a1')
+    await clock.settle()
+    expect(world.sends.map(send => send.to)).toEqual(['a2'])
+    expect(await textOf(ui, 'sent')).toBe('✓ The helper has it')
+    expect(await textOf(ui, 'header')).not.toContain('waiting for Claude')
+  })
+
+  for (const [label, limit, line] of [
+    ['with a reset time', fiveHour(86.5, HOUR_MS), /^Waiting to send · usage at 86%, resumes at \d\d:\d\d$/],
+    ['with no reset time', fiveHour(86.5), /^Waiting to send · usage at 86%$/],
+  ] as const) {
+    test(`the sent line on a side question held by the quota gives the usage, ${label}`, async ($, on) => {
+      const { world, clock } = seat(on, { [OWN]: keyed([sideItem(1, [QUESTION])]) })
+      world.rateLimits = [limit]
+      await start($)
+      await clock.settle()
+      const ui = await $.ui.mount(PANE)
+
+      await ui.press({ key: 'row-1' })
+
+      expect(await textOf(ui, 'sent')).toMatch(line)
+    })
+  }
+
+  for (const [label, seeded, act] of [
+    ['a new side question', [], async (ui: Mounted<'terminal', 'Pane'>) => ui.input({ key: 'side-new', text: 'what is a cursor?' })],
+    [
+      'a look, a follow-up and Done on a side question',
+      [answered(1, 'By a cursor, in pages of twenty.')],
+      async (ui: Mounted<'terminal', 'Pane'>) => {
+        await ui.press({ key: 'row-1' })
+        await ui.input({ key: 'reply-1', text: FOLLOW_UP })
+        await ui.press({ key: 'done' })
+      },
+    ],
+  ] as const) {
+    test(`a side question from the pane does not count as a press for the live-chat gate: ${label}`, async ($, on) => {
+      const { world, clock } = seat(on, { [OWN]: keyed([...seeded]) })
+      world.helpers = ['a1']
+      await start($)
+      await runTasks($)
+      const ui = await $.ui.mount(PANE)
+      await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
+      await $.prompt.submit(typed('I like the short ones'))
+
+      await act(ui)
+      await clock.settle()
+
+      expect(answerOf(await $.tool.call({ tool: ADD, title: 'Rotate the deploy key', detail: 'Needed before the release.', kind: 'action' })).deny).toBe('live chat: ask in the chat')
+    })
+  }
 })

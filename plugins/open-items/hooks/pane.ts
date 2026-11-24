@@ -180,9 +180,9 @@ function titleOf(task: Task): string {
   return `#${task.id} ${nameOf(task)}`
 }
 
-/** `  3m`, an open item's age, and `· waiting for Claude` once the user replied. */
+/** `  3m`, an open item's age, and `· waiting for Claude` once the user replied: a helper, not Claude, answers a side question. */
 function ageOf(task: Task, view: Pick<PaneView, 'nowMs'>): string {
-  return `  ${ago(view.nowMs - task.createdMs)}${task.isWaitingForClaude ? ' · waiting for Claude' : ''}`
+  return `  ${ago(view.nowMs - task.createdMs)}${task.isWaitingForClaude && !isSide(task) ? ' · waiting for Claude' : ''}`
 }
 
 const NEW_REPLY_MARK = '  ●'
@@ -344,10 +344,17 @@ export function hiddenOf(hidden: number): string {
   return `${hidden} earlier ${hidden === 1 ? 'message is' : 'messages are'} not shown: the thread is too long for the pane.`
 }
 
-/** The line under the user's newest reply while it waits for Claude: whether it went out, and whether Claude read it. */
-export function sentLineOf(task: Task, view: Pick<PaneView, 'unreadIds'>): string | undefined {
+/** The line under the user's newest reply while it waits for Claude, or a side question's helper: whether it went out, and whether Claude read it. */
+export function sentLineOf(task: Task, view: Pick<PaneView, 'unreadIds' | 'quota'>): string | undefined {
   if (!task.isWaitingForClaude) {
     return undefined
+  }
+
+  if (isSide(task)) {
+    const { quota } = view
+    const usage = quota === undefined ? '' : ` · usage at ${quota.percent}%${quota.resumesAt === undefined ? '' : `, resumes at ${quota.resumesAt}`}`
+
+    return isPending(task) ? `Waiting to send${usage}` : '✓ The helper has it'
   }
 
   if (task.update === 'pending') {
@@ -425,6 +432,13 @@ export function itemButtonsOf(task: Task): { choices: { action: Action; note: st
 // The terminal draws a field's label as `Reply: `.
 export const REPLY_LABEL = 'Reply'
 export const REPLY_PLACEHOLDER = 'Enter sends it to Claude'
+
+export const FOLLOW_UP = { label: 'Follow up', placeholder: 'Enter sends it to the helper' } as const
+
+/** The label and placeholder of `task`'s reply field: a side question's goes to its helper. */
+export function replyFieldOf(task: Task): { label: string; placeholder: string } {
+  return isSide(task) ? FOLLOW_UP : { label: REPLY_LABEL, placeholder: REPLY_PLACEHOLDER }
+}
 
 /** What Enter does in the reply field, drawn beside it while it has the keys. */
 export const SUBMIT_LABEL = 'send'
@@ -635,7 +649,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
 
     return rows + BOX_ROWS + rowsOf(button, boxed) + markRows + (note === undefined ? 0 : rowsOf(note, boxed))
   }, 0)
-  const row = [...buttons.map(action => `${action.hotkey}: ${action.label}`), ...(isField ? [LONG_ANSWER.label] : [])]
+  const row = [...buttons.map(action => `${action.hotkey}: ${action.label}`), ...(isField && !isSide(task) ? [LONG_ANSWER.label] : [])]
 
   return (
     savedRowsOf(view, width) +
@@ -650,7 +664,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
     (choices.length === 0 ? 0 : 1 + boxes) +
     (row.length === 0 ? 0 : 1 + buttonRowsOf(row, width)) +
     (heldOf(task, view) === undefined ? 0 : rowsOf(heldNoticeOf(task), width) + buttonRowsOf(HELD_BUTTONS, width)) +
-    (isField ? fieldRowsOf(REPLY_LABEL, SUBMIT_LABEL, view.draft, view.isTyping, width) : 0) +
+    (isField ? fieldRowsOf(replyFieldOf(task).label, SUBMIT_LABEL, view.draft, view.isTyping, width) : 0) +
     footRowsOf(view, width, [`${BACK.hotkey}: ${BACK.label}`, HIDE])
   )
 }

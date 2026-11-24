@@ -1,11 +1,12 @@
 import type { EngineInterface, PromptSubmitResult } from 'claude-code'
 
 import type { Task } from '../types'
-import { hasNewsIn, isActive, isRepeatOf, isStale, messageOf, movedBy, newsHeadOf, ownHeadOf } from './tasks'
+import { hasNewsIn, isActive, isRepeatOf, isSide, isStale, messageOf, movedBy, newsHeadOf, ownHeadOf } from './tasks'
 import type { Move } from './tasks'
 import { numbersOf, printable } from './text'
 import { change, claim, edit, live, settle } from './state'
 import type { DropNote, Entered } from './state'
+import { pump } from './helper'
 
 /** Resolutions pressed this close together go to Claude as one message. */
 export const BATCH_MS = 800
@@ -116,8 +117,9 @@ export async function undelivered($: EngineInterface, lost: readonly Task[]) {
 }
 
 /**
- * The user's `move` on a task, which the batch sends Claude. Resolves the
- * task as it stood, as `edit` does: one no longer open stays as it is.
+ * The user's `move` on a task, which the batch sends Claude, or a helper on
+ * a side question. Resolves the task as it stood, as `edit` does: one no
+ * longer open stays as it is.
  */
 export async function resolve($: EngineInterface, id: number, move: Move) {
   // Pending from the edit on, it is held until the batch holds it: else a
@@ -135,7 +137,9 @@ export async function resolve($: EngineInterface, id: number, move: Move) {
     await settle($, id)
 
     // A move that changes nothing sends nothing new, and holds back no batch under way.
-    if (isNew) {
+    if (isNew && isSide(was)) {
+      void pump($)
+    } else if (isNew) {
       sendSoon($, id)
     }
 

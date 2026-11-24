@@ -20,6 +20,7 @@ import {
   isOpenAsk,
   isRepeatOf,
   isShown,
+  isSide,
   isStale,
   listOf,
   looksSecret,
@@ -58,8 +59,6 @@ import {
   NEW_SIDE,
   OFFER_BUTTONS,
   RECOMMENDED_MARK,
-  REPLY_LABEL,
-  REPLY_PLACEHOLDER,
   ROW_INDENT,
   SAVE_FAILED,
   SPEAKER_COLOR,
@@ -91,6 +90,7 @@ import {
   openTaskOf,
   placeholderOf,
   readOnlyRowOf,
+  replyFieldOf,
   replyKeyOf,
   rowBackTo,
   rowTitleOf,
@@ -142,7 +142,7 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
-import { askNew, helperHooks, refusalOf, registerHelper, revive, sendQuestions, takeRiding } from './helper'
+import { askNew, doneSide, helperHooks, refusalOf, registerHelper, revive, sendQuestions, takeRiding } from './helper'
 
 const PLUGIN = 'open-items'
 
@@ -649,20 +649,9 @@ export const register: Register = on => {
     return result
   })
 
-  // Before the press acts: an item another session took meanwhile takes no answer here.
-  on('ui.press', { plugin: PLUGIN }, async ($, e, next) => {
-    await pressed($)
+  on('ui.press', { plugin: PLUGIN }, ($, e, next) => pressedOn($, e.element, () => next(e)))
 
-    return next(e)
-  })
-
-  on('ui.input', { plugin: PLUGIN }, async ($, e, next) => {
-    if (e.kind === 'submit') {
-      await pressed($)
-    }
-
-    return next(e)
-  })
+  on('ui.input', { plugin: PLUGIN }, ($, e, next) => (e.kind === 'submit' ? pressedOn($, e.element, () => next(e)) : next(e)))
 
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind === 'plugin' && e.origin.name === PLUGIN) {
@@ -960,8 +949,15 @@ export const register: Register = on => {
       const drawn = focusOrderOf(shown)
       const color = KIND_COLOR[task.kind]
       const headerLine = headerLineOf(task, view)
+      const field = replyFieldOf(task)
       const button = (action: Action) => (
-        <Button key={action.key} plain hotkey={action.hotkey} label={action.label} onPress={() => pressOn($, task.id, action.move, drawn)} />
+        <Button
+          key={action.key}
+          plain
+          hotkey={action.hotkey}
+          label={action.label}
+          onPress={() => (isSide(task) ? closeSide($, task.id, drawn) : pressOn($, task.id, action.move, drawn))}
+        />
       )
 
       // A Text keeps no key: each entry's Box holds it.
@@ -1069,7 +1065,8 @@ export const register: Register = on => {
             {buttons.length === 0 && !isField ? null : (
               <Box key="options" flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP} marginTop={1}>
                 {buttons.map(button)}
-                {isField ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
+                {/* A long answer goes by the prompt box's bridge, which no side question takes. */}
+                {isField && !isSide(task) ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
               </Box>
             )}
             {heldText === undefined ? null : (
@@ -1086,8 +1083,8 @@ export const register: Register = on => {
             {!isField || Input === undefined ? null : (
               <Input
                 key={key}
-                label={REPLY_LABEL}
-                placeholder={placeholderOf(REPLY_PLACEHOLDER, REPLY_LABEL, SUBMIT_LABEL, columns)}
+                label={field.label}
+                placeholder={placeholderOf(field.placeholder, field.label, SUBMIT_LABEL, columns)}
                 value={fieldValueOf(e.surface, key)}
                 submitLabel={SUBMIT_LABEL}
                 onInput={value => typed($, key, value)}
@@ -1517,6 +1514,12 @@ async function pressOn($: EngineInterface, id: number, move: Move, drawn: readon
   await toList($, id, drawn)
 }
 
+/** Done on side question `id`'s screen, then the list. */
+async function closeSide($: EngineInterface, id: number, drawn: readonly string[]) {
+  await doneSide($, id)
+  await toList($, id, drawn)
+}
+
 /**
  * A press on the pane makes the user's `move` on item `id`, as `resolve`
  * does. One Claude withdrew, or the user answered otherwise (on another
@@ -1699,10 +1702,34 @@ async function longAnswer($: EngineInterface, id: number) {
   })
 }
 
-/** A press or a reply in the pane: the user is here, and what other sessions did is read before it acts. */
-async function pressed($: EngineInterface) {
+/**
+ * A press or a reply on pane element `element`, which `act` carries out: the
+ * user is here, and what other sessions did is read before it acts, so an
+ * item another session took meanwhile takes no answer here. The live-chat
+ * gate counts it, unless it asks or answers a side question: no Claude is in
+ * that exchange.
+ */
+async function pressedOn<R>($: EngineInterface, element: string, act: () => Promise<R>): Promise<R> {
+  // The screen before the press, which may leave it; the items only after, so no read of them holds the press back while the pane is drawn anew.
+  const pressedOnScreen = await read($, screen)
   live.lastPersonMs = await $.clock.now()
-  noteInput('press', live.lastPersonMs)
   await noteActive($)
   await awaited($, scan($))
+
+  try {
+    return await act()
+  } finally {
+    if (!(await isSideElement($, element, pressedOnScreen))) {
+      noteInput('press', live.lastPersonMs)
+    }
+  }
+}
+
+/** Whether `element`, pressed on `onScreen`, is the field for a new side question, a side question's row or reply field, or anything on its screen. */
+async function isSideElement($: EngineInterface, element: string, onScreen: Screen): Promise<boolean> {
+  const list = await read($, tasks)
+  const isSideId = (id: number) => list.some(task => task.id === id && isSide(task))
+  const own = /^(?:row|reply)-(\d+)$/.exec(element)
+
+  return element === NEW_SIDE.key || (own !== null && isSideId(Number(own[1]))) || (onScreen.kind === 'item' && isSideId(onScreen.id))
 }

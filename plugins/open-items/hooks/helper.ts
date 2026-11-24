@@ -6,7 +6,7 @@ import { AT_WORK, isLiveChat } from './gate'
 import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField } from './state'
 import type { QuotaHold } from './state'
-import { MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
+import { DONE, MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, NEXT_ID_INITIAL)
@@ -129,6 +129,22 @@ export async function followUp($: EngineInterface, id: number, text: string): Pr
   return true
 }
 
+/** The user's Done on side question `id`: a helper at work on it is stopped first, and the next side question goes. */
+export async function doneSide($: EngineInterface, id: number): Promise<void> {
+  const task = (await read($, tasks)).find(found => found.id === id)
+  const helperId = task?.side?.helperId
+
+  if (task !== undefined && isWorking(task) && helperId !== undefined) {
+    disarm(helperId)
+    await stopHelper($, helperId)
+  }
+
+  await edit($, id, (found, nowMs) => movedBy(found, DONE, nowMs))
+  await settle($, id)
+  await writeLog($)
+  void pump($)
+}
+
 /** One run at a time, in the order asked. It never rejects, so a caller may leave it unawaited. */
 export function pump($: EngineInterface): Promise<void> {
   const done = live.pumpQueue.then(() => pumpNow($)).catch(() => undefined)
@@ -181,7 +197,7 @@ function arm($: EngineInterface, helperId: string) {
   live.helperTimers.set(helperId, $.clock.after(HELPER_LIMIT_MS, () => void timedOut($, helperId).catch(() => undefined)))
 }
 
-function disarm(helperId: string) {
+export function disarm(helperId: string) {
   live.helperTimers.get(helperId)?.cancel()
   live.helperTimers.delete(helperId)
 }
