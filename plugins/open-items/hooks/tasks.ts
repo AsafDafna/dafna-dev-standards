@@ -375,6 +375,10 @@ export function replyErrorOf(task: Task, reply: Reply): string | undefined {
     return `Item #${task.id} is already ${task.state}; add a new item if you need more from the user.`
   }
 
+  if (isSide(task) && reply.change !== undefined) {
+    return 'A side question takes only text: answer the user in it.'
+  }
+
   if (task.kind !== 'decision' && (change.options !== undefined || change.recommended !== undefined)) {
     return 'options and recommended are for a decision only.'
   }
@@ -401,7 +405,8 @@ export function replyErrorOf(task: Task, reply: Reply): string | undefined {
 /**
  * `task` after Claude's `reply` at `atMs`: the change and the message in its
  * thread, the user's turn again, and a recommended option kept only while it
- * is one of the options.
+ * is one of the options. A side question's helper still owes the user what
+ * it owed, and its question for Claude is answered.
  */
 export function repliedBy(task: Task, reply: Reply, atMs: number): Task {
   const { recommended, ...changed } = { ...task, ...reply.change }
@@ -413,10 +418,17 @@ export function repliedBy(task: Task, reply: Reply, atMs: number): Task {
   return {
     ...changed,
     ...(recommended !== undefined && changed.options?.includes(recommended) ? { recommended } : {}),
+    ...(task.side !== undefined && { side: withoutQuestion(task.side) }),
     thread: [...task.thread, ...entries],
-    isWaitingForClaude: false,
+    isWaitingForClaude: isSide(task) && task.isWaitingForClaude,
     hasNewReply: true,
   }
+}
+
+function withoutQuestion(side: Side): Side {
+  const { toMain, ...rest } = side
+
+  return toMain?.kind === 'question' ? rest : side
 }
 
 /** Reads `close_item`'s arguments, or says what is wrong with them. */
@@ -684,7 +696,7 @@ function listedOf(task: Task, nowMs: number, isWhole: boolean): string {
   const notes = optionNotesOf(task)
   const lines = [
     task.isWaitingForClaude && !isSide(task) ? 'The user replied and waits for you: answer in the item with reply_item, or close it with close_item.' : '',
-    task.hasNewReply ? 'The user has not opened your last reply yet.' : '',
+    task.hasNewReply && !isSide(task) ? 'The user has not opened your last reply yet.' : '',
     task.askLine ? `Ask: ${task.askLine}` : '',
     task.options && notes ? ['Options:', ...task.options.map((option, at) => `- ${option}: ${notes[at]}`)].join('\n') : '',
     task.options && !notes ? `Options: ${task.options.join(' | ')}` : '',

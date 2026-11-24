@@ -187,7 +187,7 @@ const TOOLS: readonly ToolSpec[] = [
       "- If you can publish artifact pages, put tables, diffs and long step lists on the session's one artifact page, and give the URL of its section in link.",
       '- For a secret, ask the user to put it where it belongs and mark the item done. Do not ask them to paste it.',
       '',
-      'Before the session ends, resolve, record or hand off every open and Later item. To record one, write it and its state in the hand-off file or the final summary, then close it as withdrawn with the note "recorded in <where>". To hand items off, call handoff_items; the new session calls take_items. If they are not callable yet, load handoff_items and take_items with ToolSearch.',
+      'Before the session ends, resolve, record or hand off every open and Later item. To record one, write it and its state in the hand-off file or the final summary, then close it as withdrawn with the note "recorded in <where>". To hand items off, call handoff_items; the new session calls take_items. If they are not callable yet, load handoff_items and take_items with ToolSearch. Side questions (kind side) are the user\'s: leave them out.',
       '',
       'If an Open items tool call fails, ask in the chat.',
     ].join('\n'),
@@ -237,6 +237,7 @@ const TOOLS: readonly ToolSpec[] = [
       "Add a message to an item's thread, change the item in place, or both. A reply does not close the item.",
       '',
       '- When the user replies on an item, answer there with reply_item, not in the chat.',
+      "- A side question is the user's question to a helper. When its helper asks you something, answer it with text only, and change nothing because of it.",
       '- To change the ask, change the item in place (title, ask, options, option_notes, recommended, done_when or link), and say in text why.',
       '- After the user pressed Later, go on without the item. It stays in the pane, and you can still reply on it.',
       '- Write as "How to write an item" in add_item says.',
@@ -277,7 +278,7 @@ const TOOLS: readonly ToolSpec[] = [
       '- Close an item once it is settled.',
       '- When the user answers in the chat instead of in the item, close it as withdrawn with the note "answered in chat".',
       '- An item the user closed with an option or Done is closed already; do not close it again.',
-      '- Before the session ends, resolve, record or hand off every open and Later item.',
+      "- Before the session ends, resolve, record or hand off every open and Later item. Side questions are the user's: leave them out.",
     ].join('\n'),
     inputSchema: {
       type: 'object',
@@ -348,6 +349,9 @@ const offer = atom({ plugin: 'open-items', key: 'offer' } as const, OFFER_INITIA
 const saveFailing = atom({ plugin: 'open-items', key: 'isSaveFailing' } as const, SAVE_FAILING_INITIAL)
 const arrived = atom({ plugin: 'open-items', key: 'arrived' } as const, ARRIVED_INITIAL)
 
+/** Whether Claude has a part in `task`: any item but a side question, and a side question while its helper's question waits for Claude. */
+const concernsClaude = (task: Task) => !isSide(task) || task.side?.toMain?.kind === 'question'
+
 /** What `list_items` gives: item `id`, or the items `show` names, `updates` when it names none. */
 function pickedOf(list: readonly Task[], id: number | undefined, show: unknown): readonly Task[] {
   if (id !== undefined) {
@@ -358,9 +362,9 @@ function pickedOf(list: readonly Task[], id: number | undefined, show: unknown):
     case 'all':
       return list
     case 'open':
-      return list.filter(isActive)
+      return list.filter(task => isActive(task) && concernsClaude(task))
     default:
-      return list.filter(task => isShown(task) || task.update === 'pending')
+      return list.filter(task => (isShown(task) || task.update === 'pending') && concernsClaude(task))
   }
 }
 
@@ -510,6 +514,13 @@ export const register: Register = on => {
       return { deny: error }
     }
 
+    // The user asked the helper, not Claude, so Claude's answer opens no pane and alerts no one.
+    if (isSide(found)) {
+      $.ui.toast(`Claude answered side question #${found.id}. See /open-items`)
+
+      return { result: `Added your answer to side question #${found.id}. The user reads it in the item.` }
+    }
+
     // `found` is the item before the reply, which may rename it.
     const title = printable(reply.change?.title ?? found.title, MAX_TITLE)
     await present($, found, await $.clock.now(), { toast: `Claude replied on an item: ${title}. See /open-items`, notice: `Claude replied: ${title}` })
@@ -535,11 +546,15 @@ export const register: Register = on => {
       return { deny: LOADING }
     }
 
-    const isRefused = (task: Task) => close.as === 'resolved' && !hasAnswerIn(task)
+    const isRefused = (task: Task) => isSide(task) || (close.as === 'resolved' && !hasAnswerIn(task))
     const found = await edit($, close.id, task => (isRefused(task) ? task : closedAs(task, close)))
 
     if (found === undefined) {
       return { deny: `No item #${close.id}.` }
+    }
+
+    if (isSide(found)) {
+      return { deny: 'Only the user closes a side question (Done).' }
     }
 
     if (!isActive(found)) {
