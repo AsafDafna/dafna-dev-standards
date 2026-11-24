@@ -217,7 +217,8 @@ export async function handOver(
     return
   }
 
-  if (live.mainTurn === true) {
+  // A turn the user stopped while the row went in leaves it unread for the next prompt.
+  if (live.mainTurn === true || live.wasStopped) {
     for (const id of ids) {
       if (!live.unreadAppend.has(id)) {
         live.unreadAppend.set(id, due.find(task => task.id === id))
@@ -225,7 +226,7 @@ export async function handOver(
     }
 
     $.ui.invalidate('ui.render')
-  } else if (!live.wasStopped) {
+  } else {
     // The turn ended while the row went in.
     wakeUp($)
   }

@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { NOW, PANE, REPLY, earlierItems, savedItem, seat, start, step, textOf } from './world'
+import { DONE, NOW, PANE, REPLY, earlierItems, savedItem, seat, start, step, textOf } from './world'
 
 type Drawn = { type: string; props: Record<string, unknown>; children: unknown[] }
 
@@ -50,8 +50,9 @@ describe('the sent line', () => {
       await clock.settle()
     }
 
-    return { world, ui, reply }
+    return { world, clock, ui, reply }
   }
+  const STOPPED = { ...DONE, turnId: 't1', reason: 'aborted', isAborted: true } as const
 
   test('a reply sent while Claude is idle shows that Claude has it', async ($, on) => {
     const { ui, reply } = await opened($, on)
@@ -70,6 +71,40 @@ describe('the sent line', () => {
     expect(await textOf(ui, 'sent')).toBe('Sent · Claude reads it at its next step')
 
     await step($, 't1')
+
+    expect(await textOf(ui, 'sent')).toBe('✓ Claude has it')
+  })
+
+  test('a reply that joins a turn the user stops stays sent until the next turn starts', async ($, on) => {
+    const { ui, reply } = await opened($, on)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await reply('Two failures')
+    await $.turn.complete(STOPPED)
+
+    expect(await textOf(ui, 'sent')).toBe('Sent · Claude reads it at its next step')
+
+    await $.turn.start({ text: 'go on', turnId: 't2' })
+
+    expect(await textOf(ui, 'sent')).toBe('✓ Claude has it')
+  })
+
+  test('a reply that goes in as the user stops the turn stays sent until the next turn starts', async ($, on) => {
+    const { world, clock, ui } = await opened($, on)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    // The row takes a moment to join the conversation, and the user stops the turn meanwhile.
+    world.appendMs = 500
+    await ui.input({ key: 'reply-1', text: 'Two failures' })
+    await clock.advance(800)
+    await $.turn.complete(STOPPED)
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect(world.appended[0]?.type).toBe('user')
+    expect(await textOf(ui, 'sent')).toBe('Sent · Claude reads it at its next step')
+
+    await $.turn.start({ text: 'go on', turnId: 't2' })
 
     expect(await textOf(ui, 'sent')).toBe('✓ Claude has it')
   })

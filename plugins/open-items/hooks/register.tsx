@@ -629,12 +629,10 @@ export const register: Register = on => {
       live.wasStopped = e.reason === 'aborted'
 
       // A row that joined the turn during its last request has no step left to read it. After the
-      // user's Esc the next prompt reads it: a wake-up would start the turn they just stopped.
+      // user's Esc it stays unread until the next prompt reads it: a wake-up would start the turn they just stopped.
       if (live.unreadAppend.size > 0 && !live.wasStopped) {
         wakeUp($)
       }
-
-      clearUnread($)
     }
 
     return result
