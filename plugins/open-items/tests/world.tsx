@@ -140,6 +140,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     helpers: [] as string[],
     /** Every message the plugin sent to an agent. */
     sends: [] as { to: string; text: string }[],
+    /** How long the engine takes to answer a send. */
+    sendMs: 0,
     /** The task ids of every `TaskStop` the plugin made that went through. */
     stops: [] as string[],
     /** Set, the plugin's `TaskStop` calls are refused. */
@@ -282,8 +284,12 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
   })
   on('agent.offer', () => ({ isOffered: true }))
   on('agent.report', ($, e) => ({ text: e.text }))
-  on('session.send', ($, e) => {
+  on('session.send', async ($, e) => {
     world.sends.push({ to: e.to, text: e.text })
+
+    if (world.sendMs > 0) {
+      await clock.sleep(world.sendMs)
+    }
 
     return world.helpers.includes(e.to) ? { isDelivered: true } : { isDelivered: false, reason: 'No agent by that id.' }
   })

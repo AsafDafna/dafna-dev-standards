@@ -6,7 +6,7 @@ import { AT_WORK, isLiveChat } from './gate'
 import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField } from './state'
 import type { QuotaHold } from './state'
-import { DONE, MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
+import { DONE, MAX_DETAIL, isActive, isSide, looksSecret, movedBy, replyOf } from './tasks'
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, NEXT_ID_INITIAL)
@@ -131,26 +131,46 @@ export async function followUp($: EngineInterface, id: number, text: string): Pr
 
 /** The user's Done on side question `id`: a helper at work on it is stopped first, and the next side question goes. */
 export async function doneSide($: EngineInterface, id: number): Promise<void> {
-  const task = (await read($, tasks)).find(found => found.id === id)
-  const helperId = task?.side?.helperId
+  await afterHelpers(async () => {
+    const task = (await tasksNow($)).find(found => found.id === id)
+    const helperId = task?.side?.helperId
 
-  if (task !== undefined && isWorking(task) && helperId !== undefined) {
-    disarm(helperId)
-    await stopHelper($, helperId)
-  }
+    if (task !== undefined && isWorking(task) && helperId !== undefined) {
+      disarm(helperId)
+      await stopHelper($, helperId)
+    }
 
-  await edit($, id, (found, nowMs) => movedBy(found, DONE, nowMs))
+    await edit($, id, (found, nowMs) => movedBy(found, DONE, nowMs))
+  })
   await settle($, id)
   await writeLog($)
   void pump($)
 }
 
-/** One run at a time, in the order asked. It never rejects, so a caller may leave it unawaited. */
-export function pump($: EngineInterface): Promise<void> {
-  const done = live.pumpQueue.then(() => pumpNow($)).catch(() => undefined)
-  live.pumpQueue = done
+/**
+ * Runs `work` once the helper starts and resumes asked before it are done,
+ * and starts none while it runs: a stop it makes sees each helper in flight.
+ * `work` must not await `pump`, which waits for it.
+ */
+export function afterHelpers<T>(work: () => Promise<T>): Promise<T> {
+  const done = live.pumpQueue.then(work)
+  live.pumpQueue = done.catch(() => undefined)
 
   return done
+}
+
+/**
+ * The task list as it stands now, which a `read` after a wait may not give:
+ * a dispatch's reads keep one moment until it writes, and `update` reads
+ * again when its write misses.
+ */
+export function tasksNow($: EngineInterface): Promise<readonly Task[]> {
+  return update($, tasks, list => list)
+}
+
+/** One run at a time, in the order asked. It never rejects, so a caller may leave it unawaited. */
+export function pump($: EngineInterface): Promise<void> {
+  return afterHelpers(() => pumpNow($)).catch(() => undefined)
 }
 
 async function pumpNow($: EngineInterface) {
@@ -532,10 +552,16 @@ export async function revive($: EngineInterface): Promise<void> {
   const isGone = (task: Task) => isWorking(task) && !atWorkIn(agents, task.side?.helperId)
 
   await change($, list => (list.some(isGone) ? list.map(task => (isGone(task) ? unsentOf(task) : task)) : list))
+
+  // A resumed session may have a new scratchpad folder.
+  if ((await read($, tasks)).some(isSide)) {
+    await writeLog($)
+  }
+
   await pump($)
 }
 
-function unsentOf(task: Task): Task {
+export function unsentOf(task: Task): Task {
   const { sentMs, ...side } = task.side ?? { transcripts: [] }
 
   return { ...task, side }

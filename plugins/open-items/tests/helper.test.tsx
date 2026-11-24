@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { isPending, isWorking } from '../hooks/side'
 import type { Message, Side, Task } from '../types'
-import { ADD, DONE, HOUR_MS, KEY_SHAPED, NOW, answerOf, earlierItems, itemOf, savedItem, seat, start, typed } from './world'
+import { ADD, CODE, DONE, HANDOFF, HOUR_MS, KEY_SHAPED, NOW, OLD, PANE, TAKE, answerOf, earlierItems, itemOf, keyed, savedItem, seat, start, typed } from './world'
 
 type World = ReturnType<typeof seat>['world']
 
@@ -252,13 +252,14 @@ describe('the helper', () => {
     ['still runs waits', [RUNNING], []],
     ['is gone asks again', [], ['Side question #1']],
   ] as const) {
-    test(`after a restart, a side question whose helper ${label}`, async ($, on) => {
+    test(`after a restart, the log is written and a side question whose helper ${label}`, async ($, on) => {
       const { world, clock } = seat(on, earlierItems([WORKING]))
       world.agents = [...agents]
       await start($)
       await clock.settle()
 
       expect(world.spawns.map(spawn => spawn.description)).toEqual(spawned)
+      expect(world.files['/s/pad/open-items-side-questions.md']).toContain('## #1')
     })
   }
 
@@ -815,6 +816,101 @@ describe('the quota guard', () => {
 
       expect(world.spawns).toHaveLength(1)
       expect(world.notices).toEqual([])
+    })
+  }
+})
+
+describe('hand-off', () => {
+  test('a hand-off stops a working helper and hands its side question off with the rest', async ($, on) => {
+    const { world } = seat(on, earlierItems([WORKING, savedItem(2)]))
+    world.agents = [RUNNING]
+    await start($)
+
+    const handed = answerOf(await $.tool.call({ tool: HANDOFF }))
+
+    expect(world.stops).toEqual(['a1'])
+    expect(handed.result).toContain('Marked 2 items for the next session.')
+    expect([1, 2].map(id => itemOf(world, id)?.state)).toEqual(['handing-off', 'handing-off'])
+  })
+
+  test('a hand-off while a follow-up is on its way to the helper stops that helper too', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([answered()]))
+    world.helpers = ['a1']
+    world.sendMs = 1000
+    await start($)
+
+    await side($, '#1 more?')
+    await clock.settle()
+    const handing = $.tool.call({ tool: HANDOFF })
+    await clock.advance(1000)
+    await handing
+
+    expect(world.stops).toEqual(['a1'])
+    expect(itemOf(world, 1)?.state).toBe('handing-off')
+  })
+
+  test('taken in a new session, a side question adds the new conversation file, and its unanswered question gets a new helper that can search both files', async ($, on) => {
+    const handing: Task = { ...sideItem([QUESTION], { transcripts: ['/t/old.jsonl'], sentMs: QUESTION.atMs }), state: 'handing-off' }
+    const { world, clock } = seat(on, { [OLD]: keyed([handing], { handoff: { code: CODE, atMs: NOW - 60_000 } }) })
+    world.info = { transcriptPath: '/t/new.jsonl', scratchpadDir: '/s/pad' }
+    await start($)
+
+    const taken = answerOf(await $.tool.call({ tool: TAKE, code: CODE }))
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.side?.transcripts).toEqual(['/t/old.jsonl', '/t/new.jsonl'])
+    expect(itemOf(world, 1)?.side?.helperId).toBeUndefined()
+    expect(world.spawns).toHaveLength(1)
+
+    for (const path of ['/t/old.jsonl', '/t/new.jsonl']) {
+      expect(world.spawns[0]?.prompt).toContain(path)
+    }
+
+    expect(world.files['/s/pad/open-items-side-questions.md']).toContain('## #')
+    expect(taken.result).toContain("1 side question of the user's came too")
+    expect(taken.result).not.toContain(QUESTION.text)
+  })
+
+  test('a Take of a leftover side question and an action tells Claude of the action only, with no word of the side question', async ($, on) => {
+    const { world, clock } = seat(on, { [OLD]: keyed([sideItem([QUESTION], {}), savedItem(2)], { endedMs: NOW - HOUR_MS, lastActiveMs: NOW - HOUR_MS }) })
+    await start($)
+
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'take' })
+    await clock.settle()
+
+    expect(world.submitted).toHaveLength(1)
+    expect(world.submitted[0]).toContain('I took 1 item left by an earlier session')
+    expect(world.submitted[0]).not.toContain('side question')
+    expect(world.submitted[0]).not.toContain(QUESTION.text)
+  })
+
+  for (const [label, store, before, key] of [
+    ['Take on a leftover', { [OLD]: keyed([sideItem([QUESTION], { sentMs: QUESTION.atMs })], { endedMs: NOW - HOUR_MS, lastActiveMs: NOW - HOUR_MS }) }, async () => undefined, 'take'],
+    [
+      'Take back after a hand-off that stopped a1',
+      earlierItems([WORKING]),
+      async ($: Engine, world: World, clock: ReturnType<typeof seat>['clock']) => {
+        await $.tool.call({ tool: HANDOFF })
+        expect(world.stops).toEqual(['a1'])
+        await clock.advance(30 * 60_000)
+        await turn($, 't1')
+      },
+      'take-back',
+    ],
+  ] as const) {
+    test(`a Take of a leftover side question, or a Take back of the session's own hand-off, asks a helper again (${label})`, async ($, on) => {
+      const { world, clock } = seat(on, store)
+      world.agents = [RUNNING]
+      await start($)
+      await before($, world, clock)
+
+      const ui = await $.ui.mount(PANE)
+      await ui.press({ key })
+      await clock.settle()
+
+      expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #1'])
+      expect(world.submitted).toEqual([])
     })
   }
 })

@@ -1,4 +1,4 @@
-import type { Message, Task, TaskKind, ThreadEvent } from '../types'
+import type { Message, Side, Task, TaskKind, ThreadEvent } from '../types'
 import { ago, oneLine, plural, sizeOf } from './text'
 
 export const MAX_TITLE = 80
@@ -86,9 +86,26 @@ export function numbersFor(held: readonly number[], nextId: number, incoming: re
   })
 }
 
-/** `task` as it arrives in this session as #`id` at `atMs`: open or Later as it was before the hand-off, its old number noted when it changed. */
-export function arrivedAs(task: Task, id: number, atMs: number): Task {
-  return { ...task, id, state: stateBefore(task), updatedMs: atMs, ...(id === task.id ? {} : { note: `was #${task.id} in the session it moved from` }) }
+/** `task` as it arrives in this session as #`id` at `atMs`: open or Later as it was before the hand-off, its old number noted when it changed; a side item as `arrivedSideOf` has it. */
+export function arrivedAs(task: Task, id: number, atMs: number, transcript = ''): Task {
+  const arrived: Task = { ...task, id, state: stateBefore(task), updatedMs: atMs, ...(id === task.id ? {} : { note: `was #${task.id} in the session it moved from` }) }
+
+  return isSide(task) ? { ...arrived, side: arrivedSideOf(task, transcript) } : arrived
+}
+
+/**
+ * A side item's record once it arrives where the main conversation file is
+ * `transcript`: no helper moves with it, and a question no helper entry
+ * follows is asked again. The thread tells, as the item arrives handing-off,
+ * which `isWorking` does not count.
+ */
+function arrivedSideOf(task: Task, transcript: string): Side {
+  const { helperId, seenUuid, sentMs, ...side } = task.side ?? { transcripts: [] }
+  const newest = task.thread.findLastIndex(message => message.from === 'user' && !message.event)
+  const isAnswered = task.thread.slice(newest + 1).some(message => message.author === 'helper')
+  const transcripts = transcript === '' || side.transcripts.includes(transcript) ? side.transcripts : [...side.transcripts, transcript]
+
+  return { ...side, transcripts, ...(isAnswered && sentMs !== undefined && { sentMs }) }
 }
 
 /** `task` with the event that it moved here at `atMs`, by Claude's take (`claude`) or the user's. */
@@ -680,9 +697,14 @@ export function listOf(tasks: readonly Task[], nowMs: number, isWhole = false): 
 /** What tells Claude what to do with items it takes from another session. */
 const YOURS = 'answer in each with reply_item, and close each with close_item once it is resolved.'
 
+type Took = readonly { task: Task; was: number }[]
+
+/** The items of a take that are Claude's: a side question stays the user's and its helper's. */
+const claudesOf = (items: Took) => items.filter(({ task }) => !isSide(task))
+
 /** `take_items`'s answer: the items taken by hand-off code `code`, as `tookOf` gives them. */
-export function takenByCodeOf(code: string, items: readonly { task: Task; was: number }[], nowMs: number): string {
-  return tookOf(`Took ${plural(items.length, 'item')} from the previous session (hand-off code ${code}). They are yours now: ${YOURS}`, items, nowMs)
+export function takenByCodeOf(code: string, items: Took, nowMs: number): string {
+  return tookOf(`Took ${plural(claudesOf(items).length, 'item')} from the previous session (hand-off code ${code}). They are yours now: ${YOURS}`, items, nowMs)
 }
 
 /**
@@ -690,33 +712,37 @@ export function takenByCodeOf(code: string, items: readonly { task: Task; was: n
  * `tookOf` gives them. It goes as the user's prompt, so a frame line marks the
  * threads as the pane's record, not as new words of the user's.
  */
-export function leftTakenOf(items: readonly { task: Task; was: number }[], nowMs: number): string {
+export function leftTakenOf(items: Took, nowMs: number): string {
   return tookOf(
-    `I took ${plural(items.length, 'item')} left by an earlier session (Open items). They are yours now: ${YOURS}\n\nTheir threads, as the pane recorded them:`,
+    `I took ${plural(claudesOf(items).length, 'item')} left by an earlier session (Open items). They are yours now: ${YOURS}\n\nTheir threads, as the pane recorded them:`,
     items,
     nowMs,
   )
 }
 
 /** What the user's Take sends Claude for the items it handed off that no session took. */
-export function takenBackOf(items: readonly { task: Task; was: number }[], nowMs: number): string {
-  return tookOf(`No new session took ${plural(items.length, 'item')} you handed off, so I took them back (Open items). They are yours again: ${YOURS}`, items, nowMs)
+export function takenBackOf(items: Took, nowMs: number): string {
+  return tookOf(`No new session took ${plural(claudesOf(items).length, 'item')} you handed off, so I took them back (Open items). They are yours again: ${YOURS}`, items, nowMs)
 }
 
 /**
- * `head`, then each item taken whole, as `list_items` gives one, with its
- * number in the session it came from where that differs (`was`), and what the
- * user did that Claude has not heard.
+ * `head`, then each of Claude's items taken whole, as `list_items` gives one,
+ * with its number in the session it came from where that differs (`was`),
+ * and what the user did that Claude has not heard; side questions only
+ * counted.
  */
-function tookOf(head: string, items: readonly { task: Task; was: number }[], nowMs: number): string {
-  const each = items.map(({ task, was }) => {
+function tookOf(head: string, items: Took, nowMs: number): string {
+  const claudes = claudesOf(items)
+  const sides = items.length - claudes.length
+  const each = claudes.map(({ task, was }) => {
     const listed = listedOf(task, nowMs, true)
     const numbered = was === task.id ? listed : listed.replace(`#${task.id} `, `#${task.id} (was #${was}) `)
 
     return hasNewsIn(task) ? `${numbered}\n  Not heard yet: ${newsOf(task).split('\n').join('\n  ')}` : numbered
   })
+  const came = sides === 0 ? [] : [`${plural(sides, 'side question')} of the user's came too: their helpers answer them, and they are not yours to close.`]
 
-  return [head, ...each].join('\n\n')
+  return [head, ...each, ...came].join('\n\n')
 }
 
 /** `add_item`'s answer. */

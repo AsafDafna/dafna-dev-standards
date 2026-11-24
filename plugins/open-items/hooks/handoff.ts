@@ -2,7 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { Offer, Taken, Task } from '../types'
-import { arrivedAs, isActive, isShown, leftTakenOf, numbersFor, stateBefore, takenBackOf, takenByCodeOf, toldOf, tookBy } from './tasks'
+import { arrivedAs, isActive, isShown, isSide, leftTakenOf, numbersFor, stateBefore, takenBackOf, takenByCodeOf, toldOf, tookBy } from './tasks'
+import { isWorking } from './side'
+import { afterHelpers, disarm, pump, stopHelper, tasksNow, unsentOf, writeLog } from './helper'
 import { offerOf } from './pane'
 import { handedOffIn, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom } from './saved'
 import { plural } from './text'
@@ -42,6 +44,8 @@ const header = atom({ plugin: 'open-items', key: 'header' } as const, HEADER_INI
 const offer = atom({ plugin: 'open-items', key: 'offer' } as const, OFFER_INITIAL)
 const arrived = atom({ plugin: 'open-items', key: 'arrived' } as const, ARRIVED_INITIAL)
 
+const isRunning = (task: Task) => isWorking(task) && task.side?.helperId !== undefined
+
 export async function handOffItems($: EngineInterface, e: { agentId?: string }): Promise<ToolCallResult> {
   if (e.agentId !== undefined) {
     return { deny: 'Only the main agent hands items off.' }
@@ -67,14 +71,24 @@ export async function handOffItems($: EngineInterface, e: { agentId?: string }):
   const { handoff } = await read($, header)
   // A second call keeps the code a successor may hold already.
   const code = handoff !== undefined && !takenCodes(all).has(handoff.code) ? handoff.code : newCode(all)
-  const unread = new Map(live.unreadAppend)
   let handed: number[] = []
 
-  await update($, header, now => ({ ...now, handoff: { code, atMs: nowMs } }))
-  await change($, list => {
-    handed = list.filter(isActive).map(task => task.id)
+  // A helper whose start is in flight is stopped too, and none starts before the items are marked.
+  await afterHelpers(async () => {
+    for (const helperId of (await tasksNow($)).filter(isRunning).flatMap(task => task.side?.helperId ?? [])) {
+      disarm(helperId)
+      await stopHelper($, helperId)
+    }
 
-    return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(task, unread, nowMs) : task))
+    const unread = new Map(live.unreadAppend)
+
+    await update($, header, now => ({ ...now, handoff: { code, atMs: nowMs } }))
+    await change($, list => {
+      handed = list.filter(isActive).map(task => task.id)
+
+      // A stopped helper's question is asked again where the item goes, or here after a Take back.
+      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(isRunning(task) ? unsentOf(task) : task, unread, nowMs) : task))
+    })
   })
 
   if (handed.length === 0) {
@@ -132,6 +146,8 @@ export async function takeItems($: EngineInterface, e: { agentId?: string }): Pr
 
   await dropOffered($, [source])
   await update($, arrived, () => came.map(({ task }) => task.id))
+  await writeLog($)
+  void pump($)
 
   if (!(await show($, false))) {
     $.ui.toast(`${plural(came.length, 'item')} moved from the previous session. See /open-items`)
@@ -291,6 +307,7 @@ export function handedOff(task: Task, unread: ReadonlyMap<number, Task | undefin
  */
 export async function takeIn($: EngineInterface, sources: readonly Source[], make: (arrived: Task) => Task): Promise<{ arrived: Task; task: Task; was: number }[]> {
   const nowMs = await $.clock.now()
+  const transcript = (await $.session.info().catch(() => undefined))?.transcriptPath ?? ''
   const incoming = sources.flatMap(source => source.tasks)
   const held = (await read($, tasks)).map(task => task.id)
   let numbers: readonly { was: number; now: number }[] = []
@@ -302,7 +319,7 @@ export async function takeIn($: EngineInterface, sources: readonly Source[], mak
   })
 
   const came = incoming.map((task, i) => {
-    const arrived = arrivedAs(task, numbers[i]?.now ?? task.id, nowMs)
+    const arrived = arrivedAs(task, numbers[i]?.now ?? task.id, nowMs, transcript)
 
     return { arrived, task: make(arrived), was: task.id }
   })
@@ -360,7 +377,7 @@ export async function stillOffered($: EngineInterface, drawn: Offer): Promise<So
   return sources
 }
 
-/** The user's Take on items other sessions left: they move here, and Claude is told of them. */
+/** The user's Take on items other sessions left: they move here, and Claude is told of those that are not side questions. */
 export async function takeLeft($: EngineInterface, drawn: Offer) {
   const sources = await stillOffered($, drawn)
 
@@ -370,11 +387,21 @@ export async function takeLeft($: EngineInterface, drawn: Offer) {
 
   const nowMs = await $.clock.now()
   const came = await takeIn($, sources, arrived => tookBy(arrived, 'user', nowMs))
-  const ids = came.map(({ task }) => task.id)
 
   await dropOffered($, sources)
+  await writeLog($)
+  void pump($)
+
+  // The text goes in the user's voice: no word of a side question may ride it.
+  const claudes = came.filter(({ task }) => !isSide(task))
+  const ids = claudes.map(({ task }) => task.id)
+
+  if (ids.length === 0) {
+    return
+  }
+
   const due = await claim($, task => ids.includes(task.id))
-  await handOver($, leftTakenOf(came, nowMs), due, ids, inNews)
+  await handOver($, leftTakenOf(claudes, nowMs), due, ids, inNews)
 }
 
 /** The user's Dismiss on items other sessions left: they close here, as no other session is offered them again, and Claude hears nothing. */
@@ -421,7 +448,16 @@ export async function takeBack($: EngineInterface) {
     return
   }
 
-  const items = (await read($, tasks)).filter(task => back.includes(task.id))
-  const due = await claim($, task => back.includes(task.id))
-  await handOver($, takenBackOf(items.map(task => ({ task, was: task.id })), nowMs), due, back, inNews)
+  await writeLog($)
+  void pump($)
+
+  const items = (await read($, tasks)).filter(task => back.includes(task.id) && !isSide(task))
+  const ids = items.map(task => task.id)
+
+  if (ids.length === 0) {
+    return
+  }
+
+  const due = await claim($, task => ids.includes(task.id))
+  await handOver($, takenBackOf(items.map(task => ({ task, was: task.id })), nowMs), due, ids, inNews)
 }

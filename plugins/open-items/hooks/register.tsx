@@ -1309,6 +1309,10 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.unreadAppend.clear()
   live.moved.clear()
   live.inputs = []
+  // The old session's helpers are gone with it; the quota state stays, as the window is the account's.
+  live.helperTimers.forEach(timer => timer.cancel())
+  live.helperTimers.clear()
+  live.stoppedHelpers.clear()
   const cwd = await $.session.cwd().catch(() => undefined)
   const nowMs = await $.clock.now()
   await update($, folder, known => cwd ?? known)
