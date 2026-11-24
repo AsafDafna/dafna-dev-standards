@@ -4,7 +4,7 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 import type { Offer, Taken, Task } from '../types'
 import { arrivedAs, isActive, isShown, isSide, leftTakenOf, numbersFor, stateBefore, takenBackOf, takenByCodeOf, toldOf, tookBy } from './tasks'
 import { workingHelperOf } from './side'
-import { afterHelpers, disarm, pump, stopHelper, tasksNow, unsentOf, writeLog } from './helper'
+import { afterHelpersWithin, disarm, pump, stopHelper, tasksNow, unsentOf, writeLog } from './helper'
 import { offerOf } from './pane'
 import { handedOffIn, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom } from './saved'
 import { plural } from './text'
@@ -72,7 +72,7 @@ export async function handOffItems($: EngineInterface, e: { agentId?: string }):
   let handed: number[] = []
 
   // A helper whose start is in flight is stopped too, and none starts before the items are marked.
-  await afterHelpers(async () => {
+  await afterHelpersWithin($, async () => {
     for (const helperId of (await tasksNow($)).flatMap(task => workingHelperOf(task) ?? [])) {
       disarm(helperId)
       await stopHelper($, helperId)

@@ -395,7 +395,7 @@ describe('side questions in the model', () => {
     const listed = listOf([WAITING], NOW + 3)
 
     expect(listed).toContain('- The user, ')
-    expect(listed).toContain('- The helper, ')
+    expect(listed).toContain("- The helper (its words, not the user's), ")
     expect(listed).toContain('- The helper could not start: x, ')
     expect(entryOf(NOTICE, NOTICE.atMs + 4 * 60_000, false)).toEqual({ text: 'The helper could not start: x · 4m', look: 'event' })
   })

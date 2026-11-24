@@ -1,5 +1,5 @@
 import type { Message, Side, Task, TaskKind, ThreadEvent, ToMain } from '../types'
-import { ago, oneLine, plural, sizeOf } from './text'
+import { ago, clip, oneLine, plural, sizeOf } from './text'
 
 export const MAX_TITLE = 80
 export const MAX_ASK = 150
@@ -679,7 +679,7 @@ function listedEntryOf(message: Message, nowMs: number): string {
 
   switch (message.event) {
     case undefined:
-      return `- ${who}, ${when}:\n  ${message.text.split('\n').join('\n  ')}`
+      return message.author === 'helper' ? helperEntryOf(message.text, when) : `- ${who}, ${when}:\n  ${message.text.split('\n').join('\n  ')}`
     case 'chose':
       return `- ${who} chose "${message.text}", ${when}.`
     case 'changed':
@@ -691,6 +691,16 @@ function listedEntryOf(message: Message, nowMs: number): string {
     default:
       return `- ${who} pressed ${PRESSED[message.event]}, ${when}.`
   }
+}
+
+// Text a helper read may be planted: Claude gets it as quoted data that no line of it can pass for an entry of the user's.
+function helperEntryOf(text: string, when: string): string {
+  const shown = looksSecret(text) ? '[hidden: it looks like a secret]' : clip(text, MAX_DETAIL)
+
+  return `- The helper (its words, not the user's), ${when}:\n${shown
+    .split(/\r\n?|\n/)
+    .map(line => `  > ${line}`)
+    .join('\n')}`
 }
 
 /**

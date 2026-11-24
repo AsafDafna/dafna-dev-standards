@@ -421,7 +421,7 @@ class Seat(Claude):
 
     def close(self):
         self.stop()
-        run(self.claude, 'purge', self.project, '-y', check=False)
+        purged = run(self.claude, 'purge', self.project, '-y', check=False)
         path = self.store_file()
         try:
             with open(path) as f:
@@ -435,6 +435,9 @@ class Seat(Claude):
                 json.dump(kept, f)
         shutil.rmtree(self.scratchpads(), ignore_errors=True)
         shutil.rmtree(self.project, ignore_errors=True)
+        # Raised after the rest of the cleanup: a failed purge leaves the folder's trust entry in the seat's config.
+        if purged.returncode != 0:
+            raise AssertionError(f'claude purge {self.project} exited {purged.returncode}, so its trust entry may be left in the config: {purged.stderr.strip()}')
 
 
 TRUST = 'Yes, I trust this folder'

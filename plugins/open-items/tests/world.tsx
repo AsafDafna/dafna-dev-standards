@@ -1,4 +1,4 @@
-import type { AgentInfo, AgentReportInput, CommandSpec, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
+import type { AgentInfo, AgentReportInput, AgentReportReview, CommandSpec, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -136,6 +136,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     spawnDeny: undefined as string | undefined,
     /** How long the engine takes to answer a spawn. */
     spawnMs: 0,
+    /** Auto mode's review of each agent report, as `next` answers it; none when unset. */
+    review: undefined as AgentReportReview | undefined,
     /** The agent ids a send reaches. */
     helpers: [] as string[],
     /** Every message the plugin sent to an agent. */
@@ -283,7 +285,7 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     return world.spawnDeny === undefined ? { model: 'opus' } : { deny: world.spawnDeny }
   })
   on('agent.offer', () => ({ isOffered: true }))
-  on('agent.report', ($, e) => ({ text: e.text }))
+  on('agent.report', ($, e) => ({ text: e.text, ...(world.review === undefined ? {} : { review: world.review }) }))
   on('session.send', async ($, e) => {
     world.sends.push({ to: e.to, text: e.text })
 

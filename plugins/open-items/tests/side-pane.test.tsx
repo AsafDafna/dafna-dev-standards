@@ -319,23 +319,27 @@ describe('the side question screen', () => {
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #2'])
   })
 
-  test('Done while a follow-up is on its way to the helper stops that helper', async ($, on) => {
-    const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor.')]) })
-    world.helpers = ['a1']
-    world.sendMs = 1000
-    await start($)
-    await side($, '#1 more?')
-    await clock.settle()
-    const ui = await $.ui.mount(PANE)
-    await ui.press({ key: 'row-1' })
+  for (const [label, sendMs, waitMs, stops] of [
+    ['stops that helper', 1000, 1000, ['a1']],
+    ['closes the item without that helper once 5 seconds pass', 60_000, 5000, []],
+  ] as const) {
+    test(`Done while a follow-up is on its way to the helper ${label}`, async ($, on) => {
+      const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor.')]) })
+      world.helpers = ['a1']
+      world.sendMs = sendMs
+      await start($)
+      await side($, '#1 more?')
+      await clock.settle()
+      const ui = await $.ui.mount(PANE)
+      await ui.press({ key: 'row-1' })
 
-    const pressing = ui.press({ key: 'done' })
-    await clock.advance(1000)
-    await pressing
+      void ui.press({ key: 'done' })
+      await clock.advance(waitMs)
+      await clock.settle()
 
-    expect(world.stops).toEqual(['a1'])
-    expect(itemOf(world, 1)?.state).toBe('resolved')
-  })
+      expect({ stops: world.stops, state: itemOf(world, 1)?.state }).toEqual({ stops, state: 'resolved' })
+    })
+  }
 
   test('the stopped report after Done does not cancel the 10-minute stop of a later run of the same helper', async ($, on) => {
     const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor.'), answered(2, 'By date.')]) })

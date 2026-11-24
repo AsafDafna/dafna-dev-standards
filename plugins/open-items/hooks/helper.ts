@@ -1,12 +1,13 @@
 import { atom, read, update } from 'claude-code'
-import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, EngineInterface, On, PromptSubmitResult } from 'claude-code'
+import type { AgentInfo, AgentReportInput, AgentReportResult, AgentReportReview, AgentSpawnResult, EngineInterface, On, PromptSubmitResult } from 'claude-code'
 
 import type { Task, ToMain } from '../types'
 import { AT_WORK, isLiveChat } from './gate'
 import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isOpenSide, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf, workingHelperOf } from './side'
 import type { QuotaHold } from './side'
-import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField } from './state'
+import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField, within } from './state'
 import { DONE, MAX_DETAIL, isActive, isSide, looksSecret, movedBy, replyOf } from './tasks'
+import { printable } from './text'
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, NEXT_ID_INITIAL)
@@ -17,6 +18,11 @@ const TAKEN = 'A helper takes this side question (Open items); the main session 
 const CONSUMED: AgentReportResult = { consumed: 'open-items wrote the answer in its side question' }
 const FOLLOW_UP = /^#(\d+)(?:\s+([\s\S]*))?$/
 const TIMED_OUT = 'The helper did not answer in 10 minutes.'
+const MAX_REPORT = 20_000
+const CUT = '(The rest of the answer was cut: it ran past 20,000 characters.)'
+const MAX_REASON = 200
+// Auto mode's review gave no clearance: nothing from the answer may reach the main session.
+const UNCLEARED: readonly (AgentReportReview | undefined)[] = ['flagged', 'refused', 'unavailable']
 
 export async function registerHelper($: EngineInterface): Promise<void> {
   await $.agent
@@ -38,6 +44,11 @@ export function helperHooks(on: On): void {
   on('agent.offer', { agent: 'open-items:helper' }, ($, e, next) => (e.agentId === undefined ? { isOffered: false } : next(e))).catch(() => ({ isOffered: false }))
 
   on('command.run', { command: 'side' }, async ($, e) => {
+    // The command saves its text as the user's words, which may reach the main session.
+    if (e.origin.kind !== 'composer' && e.origin.kind !== 'bridge') {
+      return {}
+    }
+
     const text = e.args.trim()
 
     if (text === '') {
@@ -57,8 +68,9 @@ export function helperHooks(on: On): void {
   })
 
   // A hook that throws or overruns is skipped, and the report would start a main turn.
-  on('agent.report', { subagentType: 'open-items:helper' }, async ($, e) => {
-    await reported($, e).catch(() => undefined)
+  on('agent.report', { subagentType: 'open-items:helper' }, async ($, e, next) => {
+    const { review } = await next(e).catch(() => ({ review: 'unavailable' as const }))
+    await reported($, e, review).catch(() => undefined)
     // A spawn from a timer counts at depth 1; one made in this event would count one level under the helper (probe 0.9).
     $.clock.after(0, () => void pump($))
 
@@ -129,7 +141,7 @@ export async function followUp($: EngineInterface, id: number, text: string): Pr
 
 /** The user's Done on side question `id`: a helper at work on it is stopped first, and the next side question goes. */
 export async function doneSide($: EngineInterface, id: number): Promise<void> {
-  await afterHelpers(async () => {
+  await afterHelpersWithin($, async () => {
     const task = (await tasksNow($)).find(found => found.id === id)
     const helperId = task === undefined ? undefined : workingHelperOf(task)
 
@@ -146,15 +158,20 @@ export async function doneSide($: EngineInterface, id: number): Promise<void> {
 }
 
 /**
- * Runs `work` once the helper starts and resumes asked before it are done,
- * and starts none while it runs: a stop it makes sees each helper in flight.
- * `work` must not await `pump`, which waits for it.
+ * Runs `work` once the helper starts and resumes asked before it are done
+ * (once `wait` settles), and starts none while it runs: a stop it makes sees
+ * each helper in flight. `work` must not await `pump`, which waits for it.
  */
-export function afterHelpers<T>(work: () => Promise<T>): Promise<T> {
-  const done = live.pumpQueue.then(work)
-  live.pumpQueue = done.catch(() => undefined)
+function afterHelpers<T>(work: () => Promise<T>, wait: Promise<unknown> = live.pumpQueue): Promise<T> {
+  const done = wait.then(work)
+  live.pumpQueue = Promise.all([live.pumpQueue, done.catch(() => undefined)])
 
   return done
+}
+
+/** As `afterHelpers`, but it waits `STORE_WAIT_MS` at most for the helpers in flight, then runs as if none were. */
+export function afterHelpersWithin<T>($: EngineInterface, work: () => Promise<T>): Promise<T> {
+  return afterHelpers(work, within($, live.pumpQueue))
 }
 
 /**
@@ -314,7 +331,7 @@ async function promptOf($: EngineInterface, task: Task): Promise<string> {
   })
 }
 
-async function reported($: EngineInterface, e: AgentReportInput) {
+async function reported($: EngineInterface, e: AgentReportInput, review: AgentReportReview | undefined) {
   // After our stop, its stopped report ends no run: the stop ended it and owns its timer. Any other report clears the mark.
   if (live.stoppedHelpers.delete(e.agentId) && e.status === 'stopped') {
     return
@@ -327,11 +344,13 @@ async function reported($: EngineInterface, e: AgentReportInput) {
     return
   }
 
-  const text = e.text.trim()
+  const whole = e.text.trim()
+  const text = whole.length > MAX_REPORT ? `${whole.slice(0, MAX_REPORT)}\n\n${CUT}` : whole
   const isAnswer = e.status === 'completed' && text !== ''
   const rows = isAnswer ? await $.session.messages({ last: 1 }).catch(() => undefined) : undefined
   const seenUuid = Array.isArray(rows) ? rows[0]?.uuid : undefined
-  const found = await edit($, task.id, (current, nowMs) => (isAnswer ? answeredOf(current, text, nowMs, seenUuid) : noticedOf(current, noticeOf(e.status, text), nowMs)))
+  const isFlagged = UNCLEARED.includes(review)
+  const found = await edit($, task.id, (current, nowMs) => (isAnswer ? answeredOf(current, text, nowMs, seenUuid, isFlagged) : noticedOf(current, noticeOf(e.status, text), nowMs)))
 
   if (isAnswer && found !== undefined && isActive(found)) {
     $.ui.toast(`Side question #${task.id} has an answer. See /open-items`)
@@ -348,8 +367,12 @@ function noticeOf(status: AgentReportInput['status'], text: string): string {
   switch (status) {
     case 'completed':
       return 'The helper gave no answer.'
-    case 'failed':
-      return `The helper could not answer: ${text.split('\n')[0]?.trim() || 'no reason given'}`
+    case 'failed': {
+      const first = text.split('\n')[0] ?? ''
+      const reason = printable(first, MAX_REASON)
+
+      return `The helper could not answer: ${reason === '' || looksSecret(first) ? 'no reason given' : reason}`
+    }
     case 'stopped':
       return 'The helper stopped before it answered.'
   }
