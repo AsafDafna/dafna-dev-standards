@@ -369,20 +369,6 @@ describe('the 10-minute limit', () => {
     })
   }
 
-  test('after a stop whose report never came, the next answer from that helper is still written', async ($, on) => {
-    const { world, clock } = await oneWaiting($, on)
-
-    await clock.advance(600_000)
-    await side($, '#1 again?')
-    await clock.settle()
-    expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
-
-    await report($, { text: 'More of the feed.' })
-    await clock.settle()
-
-    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', text: 'More of the feed.' }))
-  })
-
   test('where TaskStop is refused and the helper is gone, the item says so at 10 minutes and the next side question starts', async ($, on) => {
     const { world, clock } = await oneWaiting($, on, world => {
       world.agents = [{ ...RUNNING, status: 'completed' }, { ...RUNNING, id: 'a2' }] as AgentInfo[]
@@ -429,32 +415,38 @@ describe('the 10-minute limit', () => {
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
   })
 
-  test("a stopped run's late report leaves the follow-up that resumed the same helper working, with its own timer, and starts no second helper", async ($, on) => {
-    const { world, clock } = seat(on, earlierItems([answered()]))
-    world.helpers = ['a1']
-    await start($)
+  for (const [label, prepare, status, stops] of [
+    ['a stop at 10 minutes', () => undefined, 'stopped', ['a1']],
+    ['a stop at 10 minutes', () => undefined, 'completed', ['a1']],
+    ['a refused stop of a helper no longer listed', (world: World) => void (world.isStopRefused = true), 'completed', []],
+  ] as const) {
+    test(`after ${label}, a queued follow-up starts a fresh helper once, and the old helper's late ${status} report changes nothing`, async ($, on) => {
+      const { world, clock } = seat(on, earlierItems([answered()]))
+      world.helpers = ['a1']
+      prepare(world)
+      await start($)
 
-    await side($, '#1 more?')
-    await clock.advance(1000)
-    await side($, '#1 also?')
-    await clock.advance(1000)
-    await side($, 'second')
-    await clock.advance(598_000)
+      await side($, '#1 more?')
+      await clock.advance(1000)
+      await side($, '#1 also?')
+      await clock.advance(1000)
+      await side($, 'second')
+      await clock.advance(598_000)
 
-    expect(world.stops).toEqual(['a1'])
-    expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
-    expect(world.spawns).toEqual([])
+      expect(world.stops).toEqual(stops)
+      expect(noticesOf(world, 1)?.[0]).toEqual(TIMED_OUT)
+      expect(world.sends.map(send => send.to)).toEqual(['a1'])
+      expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #1', 'Side question #3'])
+      expect(world.spawns[0]?.prompt).toContain('also?')
 
-    await report($, { status: 'stopped', text: 'Running the 14 searches.' })
-    await clock.settle()
+      const thread = itemOf(world, 1)?.thread
+      expect(await report($, { status, text: 'Running the 14 searches.' })).toEqual(CONSUMED)
+      await clock.settle()
 
-    expect(isWorking(itemOf(world, 1)!)).toBe(true)
-    expect(noticesOf(world, 1)).toEqual([TIMED_OUT])
-    expect(world.spawns).toEqual([])
-
-    await clock.advance(600_000)
-    expect(world.stops).toEqual(['a1', 'a1'])
-  })
+      expect(itemOf(world, 1)?.thread).toEqual(thread)
+      expect(world.spawns).toHaveLength(2)
+    })
+  }
 
   test("an answer before 10 minutes cancels the stop, and the follow-up's run gets 10 minutes of its own", async ($, on) => {
     const { world, clock } = seat(on, earlierItems([answered()]))

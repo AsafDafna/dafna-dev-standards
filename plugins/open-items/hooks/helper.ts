@@ -200,9 +200,17 @@ async function timedOut($: EngineInterface, helperId: string) {
     }
   }
 
-  await edit($, task.id, (found, nowMs) => (isRun(found) ? noticedOf(found, TIMED_OUT, nowMs) : found))
+  await edit($, task.id, (found, nowMs) => (isRun(found) ? timedOutOf(found, nowMs) : found))
   await writeLog($)
   await pump($)
+}
+
+// The old helper may still run: its late report then finds no item, and a follow-up starts a fresh helper.
+function timedOutOf(task: Task, nowMs: number): Task {
+  const noticed = noticedOf(task, TIMED_OUT, nowMs)
+  const { helperId, ...side } = noticed.side ?? { transcripts: [] }
+
+  return { ...noticed, side }
 }
 
 /** Resolves whether the helper's run is over: `TaskStop` stopped it, so its stopped report says nothing in the item, or its own report came while the call ran. */
@@ -264,7 +272,7 @@ async function promptOf($: EngineInterface, task: Task): Promise<string> {
 }
 
 async function reported($: EngineInterface, e: AgentReportInput) {
-  // A stopped report ends no run: what stopped the helper ended it and owns its timer. Any other report clears the mark.
+  // After our stop, its stopped report ends no run: the stop ended it and owns its timer. Any other report clears the mark.
   if (live.stoppedHelpers.delete(e.agentId) && e.status === 'stopped') {
     return
   }
