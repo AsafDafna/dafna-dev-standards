@@ -25,6 +25,7 @@ import re
 import sys
 import time
 import unittest
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 from renders import text_of  # noqa: E402
@@ -1299,9 +1300,15 @@ HAS_IT = '✓ Claude has it'
 
 
 def bash_calls(rows):
-    """The ids of the Bash calls in a conversation's rows, and the ids of the calls that have returned."""
+    """The ids of the Bash calls in a conversation's rows, and when each call that has returned did, in seconds since the epoch."""
     calls = [part['id'] for row in rows if row.get('type') == 'assistant' for part in row['message']['content'] if part.get('type') == 'tool_use' and part.get('name') == 'Bash']
-    returned = {part['tool_use_id'] for row in rows if row.get('type') == 'user' and isinstance(row['message']['content'], list) for part in row['message']['content'] if part.get('type') == 'tool_result'}
+    returned = {
+        part['tool_use_id']: datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00')).timestamp()
+        for row in rows
+        if row.get('type') == 'user' and isinstance(row['message']['content'], list)
+        for part in row['message']['content']
+        if part.get('type') == 'tool_result'
+    }
     return calls, returned
 
 
@@ -1320,18 +1327,18 @@ class Model(unittest.TestCase):
             wait_for(seat.session, lambda s: f'#1 {CURSOR}' in s, timeout=5)
             shown = time.time() - asked
             wait_for(seat.session, lambda s: '● answered' in s, timeout=120)
-            answered = time.time() - asked
-            rows = seat.rows()
+            # A main turn the answer started would write its rows after the answer shows.
+            time.sleep(3)
             seat.has_keys = False
             seat.press('Down', 'Enter')
             screen = seat.read(self._testMethodName)
+            rows = seat.rows()
         finally:
             seat.close()
         side = next((i for i, row in enumerate(rows) if '<command-name>/side</command-name>' in json.dumps(row)), None)
 
         self.assertIsNotNone(side, rows)
         self.assertLess(shown, 2, screen)
-        self.assertLess(answered, 120, screen)
         self.assertIn('Helper · ', screen, screen)
         self.assertEqual([row['type'] for row in rows[side + 1 :] if row.get('type') == 'assistant'], [], rows[side:])
         self.assertEqual([row for row in rows if CURSOR in json.dumps(row)], [])
@@ -1355,11 +1362,16 @@ class Model(unittest.TestCase):
             seat.has_keys = False
             seat.press('Down', 'Enter', 'Thanks')
             run('tmux', 'send-keys', '-t', seat.session, 'Enter')
-            end = time.time() + 60
-            while time.time() < end and not any(HAS_IT in screen for screen in samples[-1:]):
+            end, seen = time.time() + 60, None
+            while time.time() < end:
                 samples.append(capture(seat.session))
+                if HAS_IT in samples[-1]:
+                    # Read at once: what the file holds when the line first shows.
+                    seen, rows = time.time(), seat.rows()
+                    break
                 time.sleep(0.2)
-            rows = seat.rows()
+            else:
+                rows = seat.rows()
         finally:
             seat.close()
         sent = next((i for i, screen in enumerate(samples) if SENT in screen), None)
@@ -1370,7 +1382,9 @@ class Model(unittest.TestCase):
         self.assertIsNotNone(has_it, samples[-1])
         # Never the second line before the first, not even for one drawing.
         self.assertLess(sent, has_it, samples[has_it])
+        # The call had returned when the second line first showed.
         self.assertTrue(calls and calls[0] in returned, rows)
+        self.assertLessEqual(returned[calls[0]], seen, rows)
 
 
 if __name__ == '__main__':

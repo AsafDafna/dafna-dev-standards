@@ -376,8 +376,11 @@ class Seat(Claude):
     def __init__(self, plugin_dir, claude='claude'):
         self.plugin_dir = os.path.abspath(plugin_dir)
         self.claude = shutil.which(claude) or claude
-        # Unset, Claude Code reads a sign-in slot that may hold another account.
-        self.config = os.environ['CLAUDE_CONFIG_DIR']
+        # Only the person's own seat: unset, Claude Code reads a sign-in slot that may hold another account.
+        config, own = os.environ.get('CLAUDE_CONFIG_DIR', ''), os.path.expanduser('~/.claude')
+        if not config or os.path.realpath(config) != os.path.realpath(own):
+            raise RuntimeError(f'the model cases run only on the seat whose config is {own}; CLAUDE_CONFIG_DIR is {config or "unset"}')
+        self.config = config
         self.project = os.path.realpath(tempfile.mkdtemp(prefix='hitl-model-'))
         self.session = f'hitl-model-{os.getpid()}-{int(time.time() * 1000) % 100000}'
         self.session_id = str(uuid.uuid4())
