@@ -1,5 +1,52 @@
 # Changelog
 
+## open-items 0.4.0 — side questions
+
+- New: side questions. You leave a question for the session while Claude
+  works, and a helper answers it in its own item, so Claude goes on with its
+  task. Ask in the new Side question field at the end of the pane's list, or
+  with `/side <question>`. `/side #N <text>` follows up on side question #N,
+  and `/side` alone opens the pane on the field. `/side` and `/open-items` run
+  at once, also while Claude works, and `/open-items` opens the pane also when
+  it holds nothing.
+- The helper: the mod registers the agent type `open-items:helper` and starts
+  one helper for each side question, one at a time in a session. It has only
+  Read, Grep and Glob, runs on Opus at medium effort with a limit of 20 turns,
+  keeps CLAUDE.md, and is hidden from the main model. At 10 minutes the mod
+  stops it with `TaskStop` and says so in the item. A follow-up wakes the same
+  helper. A new helper's prompt holds a summary of the conversation (the first
+  prompt and the latest messages, text only) and the paths of the conversation
+  file and of a log of the session's side questions, which the mod writes in
+  the scratchpad.
+- Notes and questions for Claude: a helper's note rides your next typed prompt
+  and starts no turn. A helper's question goes when Claude's turn ends; in a
+  live chat or after Esc it rides your next typed prompt instead. Both reach
+  Claude as quoted data, marked as the helper's words. Claude answers in the
+  item with `reply_item`.
+- Side questions have their own section, SIDE QUESTIONS. Only Done closes one:
+  `close_item` refuses the kind, `add_item` cannot make one, and there is no
+  Later. They are not counted in the status line or the reminder line and set
+  off no alert. The mod's helpers are not background work for the live-chat
+  gate, and a side question sent from the pane is not an input for it.
+- Quota guard, where the account has a five-hour usage window: one alert per
+  window at 70%, and a hold at 85%. A held side question is saved, but no
+  helper starts and no question goes to Claude until a later reading is under
+  85% or the window resets. An account with no five-hour window gets neither.
+- Hand-off: `handoff_items` and `take_items` move open side questions with
+  their threads. A helper that still works is stopped, and a follow-up in the
+  new session starts a new helper that can search the old conversation file.
+- Every kind of item: a blank row separates the messages of a thread, and each
+  head names its speaker (You, Claude or Helper) in bold, in its own color,
+  with the age dim. A dim line under your newest reply shows whether it went
+  out: "Waiting to send", "Sent · Claude reads it at its next step" or
+  "✓ Claude has it". In a side question it says "✓ The helper has it".
+- The `↳ Answer to #N:` bridge leaves side questions out: the mod drops such a
+  prompt, and the drop's reason points to `/side #N`.
+- CI: the Claude Code pin moves from 2.1.310 to 2.1.331. The mod needs Claude
+  Code 2.1.330 or later.
+- Update every install before the first side question: 0.3.0 drops a saved
+  item of a kind it does not know, so a take there loses side questions.
+
 ## core 1.11.1, coo 1.0.11 — RULES.md back under its size cap; review points on 1.11.0
 
 - RULES.md: about 840 → 790 tokens (648 → 608 words), under the ~800 cap.
