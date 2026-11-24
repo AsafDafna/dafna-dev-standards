@@ -867,8 +867,19 @@ describe('hand-off', () => {
     }
 
     expect(world.files['/s/pad/open-items-side-questions.md']).toContain('## #')
-    expect(taken.result).toContain("1 side question of the user's came too")
-    expect(taken.result).not.toContain(QUESTION.text)
+    expect(taken.result).toBe("Took no items for you.\n\n1 side question of the user's came too: their helpers answer them, and they are not yours to close.")
+  })
+
+  test('a question the helper sent the old main session arrives unsent, and goes to the new main session when its turn ends', async ($, on) => {
+    const sent: Task = { ...answered({ toMain: { kind: 'question', text: 'Which branch holds the fix?', atMs: ANSWER.atMs, askedMs: QUESTION.atMs, sentMs: NOW - 10_000 } }), state: 'handing-off' }
+    const { world, clock } = seat(on, { [OLD]: keyed([sent], { handoff: { code: CODE, atMs: NOW - 60_000 } }) })
+    await start($)
+
+    await $.tool.call({ tool: TAKE, code: CODE })
+    await turn($, 't1')
+    await clock.settle()
+
+    expect(world.submitted).toEqual([expect.stringContaining(FOR_MAIN)])
   })
 
   test('a Take of a leftover side question and an action tells Claude of the action only, with no word of the side question', async ($, on) => {

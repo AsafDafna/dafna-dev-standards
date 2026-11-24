@@ -1,4 +1,4 @@
-import type { Message, Side, Task, TaskKind, ThreadEvent } from '../types'
+import type { Message, Side, Task, TaskKind, ThreadEvent, ToMain } from '../types'
 import { ago, oneLine, plural, sizeOf } from './text'
 
 export const MAX_TITLE = 80
@@ -95,17 +95,27 @@ export function arrivedAs(task: Task, id: number, atMs: number, transcript = '')
 
 /**
  * A side item's record once it arrives where the main conversation file is
- * `transcript`: no helper moves with it, and a question no helper entry
- * follows is asked again. The thread tells, as the item arrives handing-off,
- * which `isWorking` does not count.
+ * `transcript`: no helper moves with it, a question no helper entry follows
+ * is asked again, and a helper's question the old main session got goes to
+ * the new one. The thread tells, as the item arrives handing-off, which
+ * `isWorking` does not count.
  */
 function arrivedSideOf(task: Task, transcript: string): Side {
-  const { helperId, seenUuid, sentMs, ...side } = task.side ?? { transcripts: [] }
+  const { helperId, seenUuid, sentMs, toMain, ...side } = task.side ?? { transcripts: [] }
   const newest = task.thread.findLastIndex(message => message.from === 'user' && !message.event)
   const isAnswered = task.thread.slice(newest + 1).some(message => message.author === 'helper')
   const transcripts = transcript === '' || side.transcripts.includes(transcript) ? side.transcripts : [...side.transcripts, transcript]
 
-  return { ...side, transcripts, ...(isAnswered && sentMs !== undefined && { sentMs }) }
+  return {
+    ...side,
+    transcripts,
+    ...(isAnswered && sentMs !== undefined && { sentMs }),
+    ...(toMain !== undefined && { toMain: toMain.kind === 'question' ? withoutSentMs(toMain) : toMain }),
+  }
+}
+
+function withoutSentMs({ sentMs, ...toMain }: ToMain): ToMain {
+  return toMain
 }
 
 /** `task` with the event that it moved here at `atMs`, by Claude's take (`claude`) or the user's. */
@@ -729,7 +739,7 @@ export function takenBackOf(items: Took, nowMs: number): string {
  * `head`, then each of Claude's items taken whole, as `list_items` gives one,
  * with its number in the session it came from where that differs (`was`),
  * and what the user did that Claude has not heard; side questions only
- * counted.
+ * counted. A take of side questions alone says it took nothing for Claude.
  */
 function tookOf(head: string, items: Took, nowMs: number): string {
   const claudes = claudesOf(items)
@@ -742,7 +752,7 @@ function tookOf(head: string, items: Took, nowMs: number): string {
   })
   const came = sides === 0 ? [] : [`${plural(sides, 'side question')} of the user's came too: their helpers answer them, and they are not yours to close.`]
 
-  return [head, ...each, ...came].join('\n\n')
+  return [claudes.length === 0 ? 'Took no items for you.' : head, ...each, ...came].join('\n\n')
 }
 
 /** `add_item`'s answer. */
