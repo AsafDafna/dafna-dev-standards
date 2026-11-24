@@ -32,21 +32,11 @@ const MARKER_LINE = new RegExp(`^ {0,3}(?:>[ \\t]*)*(?:[-*+][ \\t]+)?(?:\\*\\*|_
 
 type Marked = { kind: (typeof MARKERS)[number][0]; text: string; at: number; used: number }
 
-const FENCE = /^ {0,3}(```|~~~)/
-const TRAILING_EMPHASIS = /(?:\*\*|__|\*|_)+$/
-
 function markedIn(text: string): Marked[] {
   const lines = text.split('\n')
-  let fenced = false
 
   return lines.flatMap((line, at) => {
-    if (FENCE.test(line)) {
-      fenced = !fenced
-
-      return []
-    }
-
-    const found = fenced ? null : MARKER_LINE.exec(line)
+    const found = MARKER_LINE.exec(line)
 
     if (!found) {
       return []
@@ -57,7 +47,7 @@ function markedIn(text: string): Marked[] {
     const next = own === '' ? lines.findIndex((entry, i) => i > at && entry.trim() !== '' && !MARKER_LINE.test(entry)) : -1
     const given = own === '' ? (lines[next] ?? '').trim() : own
 
-    return [{ kind, text: given.replace(TRAILING_EMPHASIS, '').trim(), at, used: next }]
+    return [{ kind, text: given, at, used: next }]
   })
 }
 
@@ -87,8 +77,6 @@ export function isPending(task: Task): boolean {
 
   return task.kind === 'side' && task.state === 'open' && newest !== undefined && (task.side?.sentMs === undefined || newest.atMs > task.side.sentMs)
 }
-
-const isHelperEntry = (message: Message) => message.from === 'claude' && message.author === 'helper' && (!message.event || message.event === 'notice')
 
 export function isWorking(task: Task): boolean {
   const sentMs = task.side?.sentMs

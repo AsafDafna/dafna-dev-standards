@@ -40,8 +40,6 @@ describe('side questions', () => {
     ['A.\nSee **Note for the session:** x', { asksUser: false }],
     ['Note for the session:\nQuestion for you: x\nCI lacks it.', { asksUser: true, toMain: { kind: 'note', text: 'CI lacks it.' } }],
     ['A.\n    Note for the session: x', { asksUser: false }],
-    ['A.\n```\nNote for the session: x\n```', { asksUser: false }],
-    ['A.\n**Note for the session: CI lacks it.**', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
   ]
 
   for (const [text, want] of REPORTS) {

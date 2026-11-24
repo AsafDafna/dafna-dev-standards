@@ -334,10 +334,10 @@ describe('side questions in the model', () => {
   const side = (fields: Partial<Task>) => item({ kind: 'side', title: 'Why is the cache cold?', ...fields })
   /** Its helper answered, and the user has not opened the answer. */
   const ANSWERED = side({ thread: [QUESTION, ANSWER], hasNewReply: true, side: { transcripts: ['/t/main.jsonl'], helperId: 'a1', sentMs: NOW } })
-  /** The user followed up, and no helper could start for it. */
+  /** The user followed up, and the start was refused: the notice is the unread reply. */
   const WAITING = side({
     thread: [QUESTION, ANSWER, FOLLOW_UP, NOTICE],
-    isWaitingForClaude: true,
+    hasNewReply: true,
     side: {
       transcripts: ['/t/old.jsonl', '/t/main.jsonl'],
       helperId: 'a1',
@@ -348,11 +348,15 @@ describe('side questions in the model', () => {
     },
   })
 
+  /** The user followed up and the follow-up is not sent yet. */
+  const PENDING = side({ thread: [QUESTION, ANSWER, FOLLOW_UP], isWaitingForClaude: true, side: { transcripts: ['/t/main.jsonl'], sentMs: NOW, endedMs: NOW } })
+
   test('savedIn keeps a side item whole, and drops one with a malformed side record or a message by an unknown author', () => {
     expect(savedIn(saved([WAITING]))?.tasks).toEqual([WAITING])
-    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side, transcripts: [1] as unknown as string[] } }]))?.tasks).toEqual([])
-    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side, toMain: { kind: 'note', text: 'x', atMs: 1, askedMs: 'x' as unknown as number } } }]))?.tasks).toEqual([])
-    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side, endedMs: 'x' as unknown as number } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, transcripts: [1] as unknown as string[] } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, toMain: { kind: 'note', text: 'x', atMs: 1, askedMs: 'x' as unknown as number } } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, toMain: { kind: 'note', text: 'x', atMs: 1 } } }]))?.tasks).toHaveLength(1)
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, endedMs: 'x' as unknown as number } }]))?.tasks).toEqual([])
     expect(savedIn(saved([item({ thread: [{ ...DETAIL, author: 'main' as unknown as 'helper' }] })]))?.tasks).toEqual([])
   })
 
@@ -376,7 +380,7 @@ describe('side questions in the model', () => {
   })
 
   test('the prompt reminder counts neither a side item nor its unanswered follow-up', () => {
-    expect(reminderOf([WAITING, item({ id: 2, kind: 'action' })], () => false)).toBe('Open items: 1 open, 0 unread answers; call list_items.')
+    expect(reminderOf([PENDING, item({ id: 2, kind: 'action' })], () => false)).toBe('Open items: 1 open, 0 unread answers; call list_items.')
   })
 
   test('the status line and the pane head count no side item, nor its helper\'s answer as a reply', () => {
@@ -384,7 +388,7 @@ describe('side questions in the model', () => {
 
     expect(statusOf([ANSWERED])).toBeUndefined()
     expect(waitingOf([ANSWERED, decision]).headline).toBe('1 decision')
-    expect(waitingOf([WAITING, item({ id: 2, isWaitingForClaude: true })]).headline).toBe('1 waiting for Claude')
+    expect(waitingOf([PENDING, item({ id: 2, isWaitingForClaude: true })]).headline).toBe('1 waiting for Claude')
   })
 
   test('list_items names the helper as the writer of its messages, and list_items and the item screen give a notice as its line', () => {
