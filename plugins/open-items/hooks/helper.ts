@@ -163,8 +163,6 @@ async function askHelper($: EngineInterface, task: Task) {
 }
 
 async function handedOver($: EngineInterface, id: number, helperId: string, givenMs: number | undefined) {
-  // A mark left by a stop whose report never came would swallow this run's answer.
-  live.stoppedHelpers.delete(helperId)
   arm($, helperId)
   await edit($, id, found => sentOf(found, helperId, givenMs))
 }
@@ -207,7 +205,7 @@ async function timedOut($: EngineInterface, helperId: string) {
   await pump($)
 }
 
-/** Resolves whether the helper's run is over with its report kept out of the item: `TaskStop` stopped it, or it ended while the call ran. */
+/** Resolves whether the helper's run is over: `TaskStop` stopped it, so its stopped report says nothing in the item, or its own report came while the call ran. */
 export async function stopHelper($: EngineInterface, agentId: string): Promise<boolean> {
   // Held before the call, as the stopped helper's report may come before the call resolves.
   live.stoppedHelpers.add(agentId)
@@ -266,8 +264,8 @@ async function promptOf($: EngineInterface, task: Task): Promise<string> {
 }
 
 async function reported($: EngineInterface, e: AgentReportInput) {
-  // A stopped helper's report ends no run: what stopped it ended the run and owns its timer.
-  if (live.stoppedHelpers.delete(e.agentId)) {
+  // A stopped report ends no run: what stopped the helper ended it and owns its timer. Any other report clears the mark.
+  if (live.stoppedHelpers.delete(e.agentId) && e.status === 'stopped') {
     return
   }
 

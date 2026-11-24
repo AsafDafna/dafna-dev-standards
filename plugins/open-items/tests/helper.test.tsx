@@ -413,7 +413,7 @@ describe('the 10-minute limit', () => {
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
   })
 
-  test("where TaskStop errors after the helper's own report came, the item says so and the next side question starts", async ($, on) => {
+  test("where TaskStop errors after the helper's own answer came, the answer stands and the next side question starts", async ($, on) => {
     const { world, clock } = await oneWaiting($, on, world => {
       world.agents = [RUNNING]
       world.isStopError = true
@@ -424,9 +424,36 @@ describe('the 10-minute limit', () => {
     await report($)
     await clock.advance(1000)
 
-    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
-    expect(noticesOf(world, 1)).toEqual([TIMED_OUT])
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', text: 'A pointer into the feed.' }))
+    expect(noticesOf(world, 1)).toEqual([])
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+  })
+
+  test("a stopped run's late report leaves the follow-up that resumed the same helper working, with its own timer, and starts no second helper", async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([answered()]))
+    world.helpers = ['a1']
+    await start($)
+
+    await side($, '#1 more?')
+    await clock.advance(1000)
+    await side($, '#1 also?')
+    await clock.advance(1000)
+    await side($, 'second')
+    await clock.advance(598_000)
+
+    expect(world.stops).toEqual(['a1'])
+    expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
+    expect(world.spawns).toEqual([])
+
+    await report($, { status: 'stopped', text: 'Running the 14 searches.' })
+    await clock.settle()
+
+    expect(isWorking(itemOf(world, 1)!)).toBe(true)
+    expect(noticesOf(world, 1)).toEqual([TIMED_OUT])
+    expect(world.spawns).toEqual([])
+
+    await clock.advance(600_000)
+    expect(world.stops).toEqual(['a1', 'a1'])
   })
 
   test("an answer before 10 minutes cancels the stop, and the follow-up's run gets 10 minutes of its own", async ($, on) => {
