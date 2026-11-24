@@ -50,7 +50,7 @@ A round is one Phase 1 report and the Phase 2 and 3 edits that follow it.
 - Input: the artifact and the ask (the user's own words for the job). If you did not get the ask, say so at the top of the findings and review against the artifact's stated goal.
 - Review the whole artifact against the ask, also in a later round. Do not review only the last change.
 - Each finding names the line of the ask it protects, or the failure it prevents and where that failure shows.
-- Propose the smallest change, or a removal. Do not propose a new mechanism as a fix.
+- Propose the smallest change, or a removal. Propose a new mechanism only when nothing smaller closes the failure, and say why.
 - End with a "Cut" list: parts that serve no line of the ask, each with its size. An empty list is fine.
 - Review notes stay in the findings file. The artifact gets no revision log, no findings table and no per-round appendix.
 

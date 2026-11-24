@@ -1,5 +1,17 @@
 # Changelog
 
+## core 1.11.1, coo 1.0.11 — RULES.md back under its size cap; review points on 1.11.0
+
+- RULES.md: about 840 → 790 tokens (648 → 608 words), under the ~800 cap.
+  Shorter wording in Workflow, Git, Code comments and Logs; the second "real
+  failure" clause and the repo-specific "Docs-only PRs skip CI" line are gone.
+- RULES.md: a plan step the user approved counts as one of their decisions, so
+  a brief does not mark it as a proposal.
+- review-fundamentals.md: a new mechanism may be proposed when nothing smaller
+  closes the failure, as RULES.md says.
+- coo: a non-blocking finding outside the PR gets a tracker row or is dropped
+  in one line; briefs mark additions as a "proposal", the RULES.md word.
+
 ## core 1.11.0 — build what the ask names; fix findings with the smallest change
 
 - RULES.md: a new "Proportion" section. The ask is the user's words, their
