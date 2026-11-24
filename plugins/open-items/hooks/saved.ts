@@ -57,7 +57,8 @@ function isToMain(value: unknown): value is ToMain {
     (value['kind'] === 'note' || value['kind'] === 'question') &&
     isText(value['text']) &&
     isNumber(value['atMs']) &&
-    isOptional(value['sentMs'], isNumber)
+    isOptional(value['sentMs'], isNumber) &&
+    isOptional(value['askedMs'], isNumber)
   )
 }
 

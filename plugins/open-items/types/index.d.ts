@@ -22,8 +22,8 @@ export type ThreadEvent = 'chose' | 'done' | 'seen' | 'later' | 'changed' | 'too
  */
 export type Message = { from: 'claude' | 'user'; text: string; atMs: number; event?: ThreadEvent; author?: 'helper' }
 
-/** A helper's note or question that waits for the main session: `sentMs` is set once it went there. */
-export type ToMain = { kind: 'note' | 'question'; text: string; atMs: number; sentMs?: number }
+/** A helper's note or question that waits for the main session: `sentMs` is set once it went there; `askedMs` is the `atMs` of the user message it answers. */
+export type ToMain = { kind: 'note' | 'question'; text: string; atMs: number; sentMs?: number; askedMs?: number }
 
 /**
  * A side item's record. `transcripts`: the main conversation files it was

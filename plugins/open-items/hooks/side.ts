@@ -28,15 +28,25 @@ const MARKERS = [
   ['note', 'note for the session'],
   ['question', 'question for the session'],
 ] as const
-const MARKER_LINE = new RegExp(`^[ \\t]*(?:>[ \\t]*)*(?:[-*+][ \\t]+)?(?:\\*\\*|__|\\*|_)?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*\\*|__|\\*|_)?[ \\t]*:(?:\\*\\*|__|\\*|_)?[ \\t]*(.*)$`, 'i')
+const MARKER_LINE = new RegExp(`^ {0,3}(?:>[ \\t]*)*(?:[-*+][ \\t]+)?(?:\\*\\*|__|\\*|_)?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*\\*|__|\\*|_)?[ \\t]*:(?:\\*\\*|__|\\*|_)?[ \\t]*(.*)$`, 'i')
 
 type Marked = { kind: (typeof MARKERS)[number][0]; text: string; at: number; used: number }
 
+const FENCE = /^ {0,3}(```|~~~)/
+const TRAILING_EMPHASIS = /(?:\*\*|__|\*|_)+$/
+
 function markedIn(text: string): Marked[] {
   const lines = text.split('\n')
+  let fenced = false
 
   return lines.flatMap((line, at) => {
-    const found = MARKER_LINE.exec(line)
+    if (FENCE.test(line)) {
+      fenced = !fenced
+
+      return []
+    }
+
+    const found = fenced ? null : MARKER_LINE.exec(line)
 
     if (!found) {
       return []
@@ -44,9 +54,10 @@ function markedIn(text: string): Marked[] {
 
     const kind = MARKERS.find(([, label]) => label === (found[1] ?? '').toLowerCase())?.[0] ?? 'note'
     const own = (found[2] ?? '').trim()
-    const next = own === '' ? lines.findIndex((entry, i) => i > at && entry.trim() !== '') : -1
+    const next = own === '' ? lines.findIndex((entry, i) => i > at && entry.trim() !== '' && !MARKER_LINE.test(entry)) : -1
+    const given = own === '' ? (lines[next] ?? '').trim() : own
 
-    return [{ kind, text: own === '' ? (lines[next] ?? '').trim() : own, at, used: next }]
+    return [{ kind, text: given.replace(TRAILING_EMPHASIS, '').trim(), at, used: next }]
   })
 }
 
@@ -119,13 +130,17 @@ export function answeredOf(task: Task, text: string, atMs: number, seenUuid?: st
   return withReply(task, { from: 'claude', author: 'helper', text, atMs }, {
     ...side,
     ...ended(side),
-    ...(report && { toMain: { ...report, atMs } }),
+    ...(report && { toMain: { ...report, atMs, ...(side.sentMs !== undefined && { askedMs: side.sentMs }) } }),
     ...(seenUuid !== undefined && { seenUuid }),
   })
 }
 
 export function noticedOf(task: Task, line: string, atMs: number): Task {
   return withReply(task, { from: 'claude', author: 'helper', event: 'notice', text: line, atMs }, { transcripts: [], ...task.side, ...ended(task.side) })
+}
+
+export function refusedOf(task: Task, line: string, atMs: number): Task {
+  return noticedOf(sentOf(task, undefined), line, atMs)
 }
 
 export function sentOf(task: Task, helperId: string | undefined): Task {
@@ -225,7 +240,8 @@ export function noteForMain(task: Task): string {
   const at = task.thread.findLastIndex(message => message.from === 'claude' && message.author === 'helper' && !message.event && message.atMs === toMain?.atMs)
   const helper = task.thread[at]
   const before = at >= 0 ? task.thread.slice(0, at) : task.thread
-  const question = before.findLast(message => message.from === 'user' && !message.event)
+  const asked = before.findLast(message => message.from === 'user' && !message.event && message.atMs === toMain?.askedMs)
+  const question = asked ?? before.findLast(message => message.from === 'user' && !message.event)
   const answer = withoutMarkers(helper?.text ?? '')
   const shown = answer.length > MAX_ANSWER ? `${answer.slice(0, MAX_ANSWER)} (cut: list_items with id ${task.id} gives it whole)` : answer
 
