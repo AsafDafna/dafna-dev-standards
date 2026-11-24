@@ -1,5 +1,6 @@
 import type { AgentStatus, EngineInterface } from 'claude-code'
 
+import { HELPER_TYPE } from './side'
 import { live } from './state'
 import type { UserInput } from './state'
 
@@ -19,9 +20,10 @@ export function noteInput(kind: UserInput['kind'], atMs: number) {
 }
 
 /**
- * Whether the user chats live with Claude, so `add_item` refuses: their last
- * two inputs were prompts typed in the chat, the last one under LIVE_CHAT_MS
- * ago, no agent is at work (AT_WORK), and no background shell command or
+ * Whether the user chats live with Claude, so `add_item` refuses and a
+ * helper's question starts no turn: their last two inputs were prompts typed
+ * in the chat, the last one under LIVE_CHAT_MS ago, no agent is at work
+ * (AT_WORK) but the mod's own helpers, and no background shell command or
  * monitor runs. 'unknown' when the rest holds but what runs cannot be told.
  */
 export async function isLiveChat($: EngineInterface, nowMs: number): Promise<boolean | 'unknown'> {
@@ -33,7 +35,7 @@ export async function isLiveChat($: EngineInterface, nowMs: number): Promise<boo
 
   const agents = await $.agent.list().catch(() => undefined)
 
-  if (agents?.some(agent => AT_WORK.includes(agent.status))) {
+  if (agents?.some(agent => agent.type !== HELPER_TYPE && AT_WORK.includes(agent.status))) {
     return false
   }
 

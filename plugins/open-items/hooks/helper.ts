@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, EngineInterface, On } from 'claude-code'
 
-import type { Task } from '../types'
-import { AT_WORK } from './gate'
-import { HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, refusedOf, rowsTextOf, sentOf, summaryOf } from './side'
+import type { Task, ToMain } from '../types'
+import { AT_WORK, isLiveChat } from './gate'
+import { HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, rowsTextOf, sentOf, summaryOf } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, settle, show } from './state'
 import { MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
 
@@ -292,6 +292,11 @@ async function reported($: EngineInterface, e: AgentReportInput) {
 
   if (isAnswer && found !== undefined && isActive(found)) {
     $.ui.toast(`Side question #${task.id} has an answer. See /open-items`)
+
+    // A running turn sends it as it ends; after the user's Esc it rides their next typed prompt.
+    if (reportOf(text).toMain?.kind === 'question' && live.mainTurn !== true && !live.wasStopped) {
+      void sendQuestions($)
+    }
   }
 
   await writeLog($)
@@ -306,6 +311,65 @@ function noticeOf(status: AgentReportInput['status'], text: string): string {
     case 'stopped':
       return 'The helper stopped before it answered.'
   }
+}
+
+const isAskingMain = (task: Task) => isOpenSide(task) && task.side?.toMain?.kind === 'question' && task.side.toMain.sentMs === undefined
+
+/** `task` with its message for the main session as `fn` makes it: none when `fn` gives undefined. */
+function withToMain(task: Task, fn: (toMain: ToMain) => ToMain | undefined): Task {
+  const { toMain, ...side } = task.side ?? { transcripts: [] }
+  const made = toMain === undefined ? undefined : fn(toMain)
+
+  return { ...task, side: made === undefined ? side : { ...side, toMain: made } }
+}
+
+/**
+ * Sends the helpers' waiting questions to the main session as one prompt in
+ * the mod's own name, never in the user's words. In a live chat they wait,
+ * and ride the user's next typed prompt. It never rejects.
+ */
+export async function sendQuestions($: EngineInterface): Promise<void> {
+  try {
+    if (!(await read($, tasks)).some(isAskingMain) || (await isLiveChat($, await $.clock.now())) === true) {
+      return
+    }
+
+    const sentMs = await $.clock.now()
+    let due: readonly Task[] = []
+
+    // Marked before the send, as `claim` marks: a send or a typed prompt meanwhile finds none of them waiting.
+    await change($, list => {
+      due = list.filter(isAskingMain)
+
+      return due.length === 0 ? list : list.map(task => (isAskingMain(task) ? withToMain(task, toMain => ({ ...toMain, sentMs })) : task))
+    })
+
+    if (due.length === 0) {
+      return
+    }
+
+    const sent = await $.prompt.submit({ text: due.map(questionForMain).join('\n\n') }).catch(() => undefined)
+
+    if (sent === undefined || sent.drop !== undefined) {
+      const isMarked = (task: Task) => due.some(one => one.id === task.id) && task.side?.toMain?.sentMs === sentMs
+
+      await change($, list => list.map(task => (isMarked(task) ? withToMain(task, ({ sentMs: was, ...toMain }) => toMain) : task)))
+    }
+  } catch {
+    // A question left unmarked goes at the next turn's end, or rides the next typed prompt.
+  }
+}
+
+/** After the user's typed prompt carried items `ids` to the main session: their notes are gone, their questions sent. */
+export async function rode($: EngineInterface, ids: readonly number[]): Promise<void> {
+  if (ids.length === 0) {
+    return
+  }
+
+  const nowMs = await $.clock.now()
+  const isRiding = (task: Task) => ids.includes(task.id) && task.side?.toMain !== undefined && task.side.toMain.sentMs === undefined
+
+  await change($, list => list.map(task => (isRiding(task) ? withToMain(task, toMain => (toMain.kind === 'note' ? undefined : { ...toMain, sentMs: nowMs })) : task)))
 }
 
 export async function writeLog($: EngineInterface): Promise<void> {

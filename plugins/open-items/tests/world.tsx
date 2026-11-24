@@ -1,4 +1,4 @@
-import type { AgentInfo, EngineInterface, On, PaneOpenArgs, PromptSubmitInput, SessionInfo, SessionMessage, ToolSpec } from 'claude-code'
+import type { AgentInfo, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, ToolSpec } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -51,6 +51,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     submitted: [] as string[],
     /** What the plugin's own prompts carried beside their words, one entry per prompt. */
     ownContexts: [] as (readonly string[] | undefined)[],
+    /** The origin of each of the plugin's own prompts, as the hooks beneath heard it. */
+    ownOrigins: [] as PromptOrigin[],
     appended: [] as { type: string; text: string }[],
     toasts: [] as string[],
     /** Every `$.ui.notify` the plugin made. */
@@ -379,6 +381,7 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     if (e.origin.kind === 'plugin' && e.origin.name === 'open-items') {
       world.submitted.push(e.text)
       world.ownContexts.push(e.context)
+      world.ownOrigins.push(e.origin)
     }
 
     const rewrite = (e.origin.kind === 'composer' ? world.rewriting : undefined) ?? world.masking

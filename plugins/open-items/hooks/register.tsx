@@ -138,7 +138,8 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
-import { helperHooks, registerHelper, revive } from './helper'
+import { helperHooks, registerHelper, revive, rode, sendQuestions } from './helper'
+import { ridingOf } from './side'
 
 const PLUGIN = 'open-items'
 
@@ -633,10 +634,14 @@ export const register: Register = on => {
       live.mainTurn = false
       live.wasStopped = e.reason === 'aborted'
 
-      // A row that joined the turn during its last request has no step left to read it. After the
-      // user's Esc it stays unread until the next prompt reads it: a wake-up would start the turn they just stopped.
-      if (live.unreadAppend.size > 0 && !live.wasStopped) {
-        wakeUp($)
+      // A row that joined the turn during its last request has no step left to read it. After the user's Esc it
+      // stays unread until the next prompt reads it, and a helper's question rides that prompt: a send would start the turn they just stopped.
+      if (!live.wasStopped) {
+        if (live.unreadAppend.size > 0) {
+          wakeUp($)
+        }
+
+        void sendQuestions($)
       }
     }
 
@@ -751,15 +756,28 @@ export const register: Register = on => {
 
     // Some seats skip this mod's prompt.context and session.compact hooks, so
     // a line on every prompt is what reminds a Claude past a compaction.
-    const reminder = reminderOf((await read($, tasks)).filter(one => !isAway(one)), isHeld)
-    const context = [...(e.context ?? []), ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []), ...(reminder === undefined ? [] : [reminder])]
+    const list = await read($, tasks)
+    const reminder = reminderOf(list.filter(one => !isAway(one)), isHeld)
+    // A helper's note, or its question held back, goes to the main session only beside the user's own words.
+    const riding = isTyped ? ridingOf(list) : undefined
+    const context = [
+      ...(e.context ?? []),
+      ...(due.length > 0 && !isAnswer ? [digestOf(due)] : []),
+      ...(riding === undefined ? [] : [riding.context]),
+      ...(reminder === undefined ? [] : [reminder]),
+    ]
     const entered = { ...e, ...(isAnswer ? { text: messageOf(due) } : {}), ...(context.length > 0 ? { context } : {}) }
+    const result =
+      due.length === 0 ? await next(entered) : await (isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered)))
 
-    if (due.length === 0) {
-      return next(entered)
+    // One that a hook beneath dropped, or took out of the context, waits for the next typed prompt.
+    if (riding !== undefined && result.drop === undefined) {
+      const blocks = result.context ?? []
+
+      await rode($, riding.ids.filter(id => blocks.some(block => block.includes(`Side question #${id} (Open items)`)))).catch(() => undefined)
     }
 
-    return isAnswer ? passOn($, due, inWords, 'kept', () => next(entered)) : passOn($, due, inDigest, 'nothing', () => next(entered))
+    return result
   })
 
   on('ui.render', { component: 'ToolUse', props: { tool: ADD } }, ($, e, next) => {

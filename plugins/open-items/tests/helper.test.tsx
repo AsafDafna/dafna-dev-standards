@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { isPending, isWorking } from '../hooks/side'
 import type { Message, Side, Task } from '../types'
-import { KEY_SHAPED, NOW, earlierItems, itemOf, savedItem, seat, start, typed } from './world'
+import { ADD, DONE, KEY_SHAPED, NOW, answerOf, earlierItems, itemOf, savedItem, seat, start, typed } from './world'
 
 type World = ReturnType<typeof seat>['world']
 
@@ -465,5 +465,165 @@ describe('the 10-minute limit', () => {
 
     await clock.advance(300_000)
     expect(world.stops).toEqual(['a1'])
+  })
+})
+
+const NOTE_LINE = 'The export reads the feed, so it must page by cursor too.'
+/** #1, answered by a1 with a note for the main session that has not gone yet. */
+const NOTED = answered({ toMain: { kind: 'note', text: NOTE_LINE, atMs: ANSWER.atMs, askedMs: QUESTION.atMs } })
+const ASKS_MAIN = 'A.\nQuestion for the session: Which branch holds the fix?'
+const FOR_MAIN = 'Side question #1 (Open items): the helper needs you: Which branch holds the fix?'
+
+const contextOf = (entered: { context?: readonly string[] }) => (entered.context ?? []).join('\n')
+
+async function turn($: Engine, turnId: string, end: { reason?: 'aborted'; isAborted?: true } = {}) {
+  await $.turn.start({ text: 'go', turnId })
+  await $.turn.complete({ ...DONE, turnId, ...end })
+}
+
+describe('what the main session gets', () => {
+  test("a note waits for the user's next typed prompt and rides it as context, starting no turn", async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([NOTED]))
+    await start($)
+
+    await turn($, 't1')
+    await clock.settle()
+    expect(world.submitted).toEqual([])
+
+    const entered = contextOf(await $.prompt.submit(typed('go on')))
+    expect(entered).toContain('Side question #1 (Open items)')
+    expect(entered).toContain(NOTE_LINE)
+    expect(contextOf(await $.prompt.submit(typed('and the export?')))).not.toContain('Side question')
+  })
+
+  test('a slash command does not carry the note, and the next typed prompt does', async ($, on) => {
+    seat(on, earlierItems([NOTED]))
+    await start($)
+
+    const slashed = await $.prompt.submit({ text: '/foo', wait: false, origin: { kind: 'composer' }, command: { name: 'foo', args: '' } })
+    expect(contextOf(slashed)).not.toContain('Side question')
+    expect(contextOf(await $.prompt.submit(typed('go on')))).toContain('Side question #1 (Open items)')
+  })
+
+  for (const [what, knob] of [
+    ['drops', { refusingTyped: 'A settings hook refused it.' }],
+    ['empties of context', { isStripping: true }],
+  ] as const) {
+    test(`a note on a prompt that a hook beneath ${what} waits for the next one`, async ($, on) => {
+      const { world } = seat(on, earlierItems([NOTED]))
+      await start($)
+
+      Object.assign(world, knob)
+      await $.prompt.submit(typed('go on'))
+      Object.assign(world, { refusingTyped: undefined, isStripping: false })
+
+      expect(contextOf(await $.prompt.submit(typed('go on')))).toContain('Side question #1 (Open items)')
+    })
+  }
+
+  test("a question for the session goes when the main turn ends, also while background agents run, and not in the user's voice", async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([WORKING]))
+    world.agents = [RUNNING]
+    await start($)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await report($, { text: ASKS_MAIN })
+    await clock.settle()
+    expect(world.submitted).toEqual([])
+
+    world.agents = [{ id: 'e1', type: 'Explore', status: 'running' } as AgentInfo]
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+    expect(world.submitted).toEqual([expect.stringContaining(FOR_MAIN)])
+    expect(world.ownOrigins).toStrictEqual([{ kind: 'plugin', name: 'open-items' }])
+
+    await turn($, 't2')
+    await clock.settle()
+    expect(world.submitted).toHaveLength(1)
+  })
+
+  test('a question while the main session is idle goes at once', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([WORKING]))
+    world.agents = [RUNNING]
+    await start($)
+
+    await turn($, 't1')
+    await report($, { text: ASKS_MAIN })
+    await clock.settle()
+
+    expect(world.submitted).toEqual([expect.stringContaining(FOR_MAIN)])
+  })
+
+  test('a question whose send a hook beneath drops rides the next typed prompt', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([WORKING]))
+    world.agents = [RUNNING]
+    world.refusing = 'Blocked by your organization.'
+    await start($)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await report($, { text: ASKS_MAIN })
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+    world.refusing = undefined
+
+    expect(contextOf(await $.prompt.submit(typed('Which branch?')))).toContain(FOR_MAIN)
+  })
+
+  const ESC = { reason: 'aborted', isAborted: true } as const
+
+  for (const [row, run] of [
+    [
+      'two typed prompts within 5 minutes and no agent',
+      async ($: Engine) => {
+        await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
+        await $.prompt.submit(typed('I like the short ones'))
+        await $.turn.start({ text: 'go', turnId: 't1' })
+        await report($, { text: ASKS_MAIN })
+        await $.turn.complete({ ...DONE, turnId: 't1' })
+      },
+    ],
+    [
+      'Esc',
+      async ($: Engine) => {
+        await $.turn.start({ text: 'go', turnId: 't1' })
+        await report($, { text: ASKS_MAIN })
+        await $.turn.complete({ ...DONE, turnId: 't1', ...ESC })
+      },
+    ],
+    [
+      'an answer after Esc',
+      async ($: Engine) => {
+        await turn($, 't1', ESC)
+        await report($, { text: ASKS_MAIN })
+      },
+    ],
+  ] as const) {
+    test(`in a live chat, or after Esc, a question starts no turn and rides the next typed prompt (${row})`, async ($, on) => {
+      const { world, clock } = seat(on, earlierItems([WORKING]))
+      world.agents = [RUNNING]
+      await start($)
+      await clock.settle()
+      world.agents = []
+
+      await run($)
+      await clock.settle()
+      expect(world.submitted).toEqual([])
+
+      expect(contextOf(await $.prompt.submit(typed('Which branch?')))).toContain(FOR_MAIN)
+      await turn($, 't2')
+      await clock.settle()
+      expect(world.submitted).toEqual([])
+    })
+  }
+
+  test("the mod's own helper is not background work for the live-chat gate", async ($, on) => {
+    const { world } = seat(on)
+    await start($)
+
+    world.agents = [RUNNING]
+    await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
+    await $.prompt.submit(typed('I like the short ones'))
+
+    expect(answerOf(await $.tool.call({ tool: ADD, title: 'Pick a name for the CLI', detail: 'Three short ones.', kind: 'question' })).deny).toBe('live chat: ask in the chat')
   })
 })
