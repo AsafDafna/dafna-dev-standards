@@ -67,7 +67,7 @@ export function helperHooks(on: On): void {
 
   on('session.measure', ($, e, next) => {
     if (e.changed.includes('rateLimits') && live.quotaHold !== null) {
-      runHeld($)
+      void quotaAllows($).catch(() => undefined)
     }
 
     return next(e)
@@ -302,8 +302,7 @@ async function reported($: EngineInterface, e: AgentReportInput) {
   if (isAnswer && found !== undefined && isActive(found)) {
     $.ui.toast(`Side question #${task.id} has an answer. See /open-items`)
 
-    // A running turn sends it as it ends; after the user's Esc it rides their next typed prompt.
-    if (reportOf(text).toMain?.kind === 'question' && live.mainTurn !== true && !live.wasStopped) {
+    if (reportOf(text).toMain?.kind === 'question') {
       void sendQuestions($)
     }
   }
@@ -358,10 +357,15 @@ async function unclaim($: EngineInterface, lost: readonly Task[], sentMs: number
 
 /**
  * Sends the helpers' waiting questions to the main session as one prompt in
- * the mod's own name, never in the user's words. In a live chat they wait,
- * and ride the user's next typed prompt. It never rejects.
+ * the mod's own name, never in the user's words. While the main turn runs
+ * they go as it ends; after the user's Esc, or in a live chat, they wait and
+ * ride the user's next typed prompt. It never rejects.
  */
 export async function sendQuestions($: EngineInterface): Promise<void> {
+  if (live.mainTurn === true || live.wasStopped) {
+    return
+  }
+
   try {
     if (!(await read($, tasks)).some(isAskingMain) || (await isLiveChat($, await $.clock.now())) === true) {
       return
@@ -471,19 +475,24 @@ function alertOnce($: EngineInterface, reading: QuotaHold) {
   $.ui.notify(`Five-hour usage at ${Math.floor(reading.percent)}%. Side questions pause at ${HOLD_AT}%.`, { title: 'Open items' }).catch(() => undefined)
 }
 
-/** Sets the hold, or clears it with `hold` null, with its one timer at the window's reset. */
+/** Sets the hold, or clears it with `hold` null, with its one timer at the window's reset. A hold that ends runs what it held. */
 function holdAs($: EngineInterface, hold: QuotaHold | null, nowMs: number) {
+  const wasHeld = live.quotaHold !== null
   const resetsAtMs = hold?.resetsAtMs
 
   live.quotaHold = hold
   live.quotaTimer?.cancel()
   // `rateLimits` is the last response's reading: a quiet session would never see the window reset.
-  live.quotaTimer = resetsAtMs === undefined ? null : $.clock.after(resetsAtMs + 1000 - nowMs, () => runHeld($))
-}
+  live.quotaTimer = resetsAtMs === undefined ? null : $.clock.after(resetsAtMs + 1000 - nowMs, () => void quotaAllows($).catch(() => undefined))
 
-function runHeld($: EngineInterface) {
-  void pump($)
-  void sendQuestions($)
+  if (wasHeld || hold !== null) {
+    $.ui.invalidate('ui.render')
+  }
+
+  if (wasHeld && hold === null) {
+    void pump($)
+    void sendQuestions($)
+  }
 }
 
 export async function writeLog($: EngineInterface): Promise<void> {

@@ -756,6 +756,36 @@ describe('the quota guard', () => {
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #1'])
   })
 
+  test('a turn-end reading under 85% ends the hold, and the held side question starts', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([ASKING]))
+    world.rateLimits = [fiveHour(86)]
+    await start($)
+
+    await side($, 'q')
+    await clock.settle()
+    expect(world.spawns).toEqual([])
+
+    world.rateLimits = [fiveHour(40)]
+    await turn($, 't1')
+    await clock.settle()
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+  })
+
+  test('after an Esc, the reset ends the hold and sends nothing; the question rides the next typed prompt', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([ASKING]))
+    world.rateLimits = [fiveHour(86, 60_000)]
+    await start($)
+
+    await side($, 'q')
+    await turn($, 't1', { reason: 'aborted', isAborted: true })
+    await clock.settle()
+
+    world.rateLimits = [fiveHour(10, 5 * HOUR_MS)]
+    await clock.advance(61_000)
+    expect(world.submitted).toEqual([])
+    expect(contextOf(await $.prompt.submit(typed('go on')))).toContain(FOR_MAIN)
+  })
+
   test('while held, a question for the session waits and a note still rides', async ($, on) => {
     const { world, clock } = seat(on, earlierItems([ASKING, { ...NOTED, id: 2 }]))
     world.rateLimits = [fiveHour(86)]
