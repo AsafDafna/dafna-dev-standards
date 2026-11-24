@@ -62,7 +62,7 @@ When Claude adds a decision, question or action and you have been quiet for two 
 
 A side question is a question you leave for the session while Claude works. A helper answers it in its own item, so Claude goes on with its task. Use it for a follow-up on something said in the session, a term you are not sure of, or a question that came up while you worked.
 
-To ask one, type it in the **Side question** field at the end of the pane's list and press Enter. The field is always there, also when the pane holds nothing else. You can also use the command:
+To ask one, type it in the **Side question** field at the end of the pane's list and press Enter. The field is always there, also when the pane holds nothing else. It is not drawn on the phone, so use `/side` there. You can also use the command:
 
 - `/side <question>` asks a new side question.
 - `/side #N <text>` follows up on side question #N.
@@ -74,11 +74,11 @@ The mod starts a helper for each side question. One helper runs at a time, and t
 
 Side questions have their own section, SIDE QUESTIONS, after the other kinds. Each line shows one mark: "⋯ helper working", "? helper asks you", "● answered", "⋯ waiting for the session" or "⏸ held". Side questions are not counted in the status line or in the reminder line, and they set off no alert other than the usage alert below. A side question has no Later and no options. Only you close it, with **Done**, which also stops its helper if it still works. Claude's `close_item` refuses a side question, and `add_item` cannot make one.
 
-**What Claude gets.** When the answer matters to Claude's work, the helper adds a one-line note for Claude. The note rides your next typed prompt and starts no turn. If the note changes Claude's work, Claude asks you before it acts. When only Claude can answer, the helper adds a one-line question for Claude instead. The question goes when Claude's current turn ends, also while background work runs. In a live chat, or after you pressed Esc, it starts no turn and rides your next typed prompt. Claude answers in the item and changes nothing because of the question. A note or a question reaches Claude as quoted data, marked as coming from the helper and not from you.
+**What Claude gets.** When the answer matters to Claude's work, the helper adds a one-line note for Claude. The note rides your next typed prompt and starts no turn. It tells Claude to ask you before it acts on the note. When only Claude can answer, the helper adds a one-line question for Claude instead. The question goes when Claude's current turn ends, even if background work still runs. After you pressed Esc, or in a live chat with no other agent or background work running, it starts no turn and rides your next typed prompt. It asks Claude to answer in the item and to change nothing because of the question. A note or a question reaches Claude as quoted data, marked as coming from the helper and not from you.
 
 **Usage.** Where the account has a five-hour usage window, the mod reads it before it starts a helper or sends a question to Claude. At 70% it sends one alert per window, through the same path as the alert above. At 85% it holds side questions: a new one is saved, but no helper starts and no question goes to Claude. Held side questions run when a later reading is under 85%, or when the window resets. An account with no five-hour window gets no alert and no hold.
 
-**Hand-off.** `handoff_items` and `take_items` move open side questions with their threads. A helper cannot move, so a helper that still works is stopped. A follow-up in the new session starts a new helper, which can still search the old conversation file. When a session ends with no hand-off, its open side questions are offered as leftovers, as other items are.
+**Hand-off.** `handoff_items` and `take_items` move open side questions with their threads. A helper cannot move, so a helper that still works is stopped. In the new session, a question that had no answer yet goes to a new helper, and so does a follow-up. A new helper can still search the old conversation file. When a session ends with no hand-off, its open side questions are offered as leftovers, as other items are.
 
 ## What the mod adds to prompts
 
@@ -87,7 +87,7 @@ Side questions have their own section, SIDE QUESTIONS, after the other kinds. Ea
 - **One fixed line,** "I answered an item while you were finishing your reply; my answer is above.", when your answer arrived during Claude's final reply.
 - **A side question's note,** on your next typed prompt: your question, then the helper's answer and its one-line reason, quoted and marked as the helper's words. It starts no turn.
 - **A side question's question for Claude,** as a plugin prompt when Claude's turn ends, or on your next typed prompt in a live chat or after Esc: the helper's line, quoted and marked as the helper's words, and a request to answer in the item with `reply_item` and change nothing.
-- **One fixed line when `/side` runs while Claude works:** "A helper takes this side question (Open items); the main session goes on." Your question itself does not reach Claude.
+- **One fixed line when `/side` runs while Claude works:** "A helper takes this side question (Open items); the main session goes on." The command does not send your question to Claude.
 
 The mod also reads every prompt you type. It turns a prompt that starts with `↳ Answer to #N:` into that item's answer. For a side question, it drops such a prompt, and the reason points to `/side #N`. It also counts your typed prompts for the live-chat gate. A live chat is one where your last two inputs were typed prompts, the last under five minutes ago. In a live chat with no agent or background work running, `add_item` refuses, so Claude asks in the chat. A slash command is not a typed prompt here. The mod's own helpers are not background work here, and a side question you send from the pane is not an input.
 

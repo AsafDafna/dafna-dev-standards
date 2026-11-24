@@ -21,8 +21,8 @@
 - Notes and questions for Claude: a helper's note rides your next typed prompt
   and starts no turn. A helper's question goes when Claude's turn ends; in a
   live chat or after Esc it rides your next typed prompt instead. Both reach
-  Claude as quoted data, marked as the helper's words. Claude answers in the
-  item with `reply_item`.
+  Claude as quoted data, marked as the helper's words. The question asks
+  Claude to answer in the item with `reply_item` and to change nothing.
 - Side questions have their own section, SIDE QUESTIONS. Only Done closes one:
   `close_item` refuses the kind, `add_item` cannot make one, and there is no
   Later. They are not counted in the status line or the reminder line and set
@@ -33,8 +33,9 @@
   helper starts and no question goes to Claude until a later reading is under
   85% or the window resets. An account with no five-hour window gets neither.
 - Hand-off: `handoff_items` and `take_items` move open side questions with
-  their threads. A helper that still works is stopped, and a follow-up in the
-  new session starts a new helper that can search the old conversation file.
+  their threads. A helper that still works is stopped. In the new session, a
+  question with no answer yet goes to a new helper, and so does a follow-up;
+  a new helper can search the old conversation file.
 - Every kind of item: a blank row separates the messages of a thread, and each
   head names its speaker (You, Claude or Helper) in bold, in its own color,
   with the age dim. A dim line under your newest reply shows whether it went

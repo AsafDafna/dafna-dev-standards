@@ -365,7 +365,6 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
 
     return { value }
   })
-  // The plugin's own `$.ui.focus` calls reach a stand-in only with `{ plugin: '*' }` (Claude Code 2.1.330 and later).
   on('ui.focus', { plugin: '*' }, () => (world.refusingFocus === undefined ? {} : { deny: world.refusingFocus }))
   on('ui.scroll', ($, e) => {
     world.scrolls.push({ by: e.by, origin: e.origin.kind })
