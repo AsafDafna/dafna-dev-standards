@@ -156,6 +156,7 @@ export const live = {
   background: null as Set<string> | null,
   /** The items another session took while this process ran: the pane draws them where they went, and a reload or another session forgets them. */
   moved: new Set<number>(),
+  pumpQueue: Promise.resolve() as Promise<unknown>,
 }
 
 /** `bridge`: a prompt that answers an item (`↳ Answer to #5:`, see `answerIn`), from any surface. */

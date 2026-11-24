@@ -1,4 +1,4 @@
-import type { AgentInfo, On, PaneOpenArgs, PromptSubmitInput, SessionMessage, ToolSpec } from 'claude-code'
+import type { AgentInfo, EngineInterface, On, PaneOpenArgs, PromptSubmitInput, SessionInfo, SessionMessage, ToolSpec } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -124,6 +124,14 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     scrolls: [] as { by: number; origin: string }[],
     /** The pane's screen as the plugin last wrote it to its state. */
     screen: undefined as unknown,
+    /** The agent types the plugin registered, as it described them. */
+    registered: [] as Parameters<EngineInterface['agent']['register']>[0][],
+    /** Every agent the plugin started, as the Agent tool beneath heard it. */
+    spawns: [] as { subagentType: string; description: string; prompt: string }[],
+    /** Set, the engine refuses the plugin's spawns with this reason. */
+    spawnDeny: undefined as string | undefined,
+    /** What `$.session.info()` answers with. */
+    info: { transcriptPath: '/t/main.jsonl', scratchpadDir: '/s/pad' } as SessionInfo,
   }
 
   const clock = mock.clock(on, { now: NOW })
@@ -218,7 +226,29 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     return { value: { tool: `mcp__open-items__${e.name}` } }
   })
   on('agent.list', () => (world.isAgentListFailing ? { deny: 'The agent list is out of reach.' } : { value: world.agents }))
-  on('session.messages', () => ({ value: world.messages }))
+  // A row an `after` names that the conversation no longer holds (a compaction, a /clear) answers `{ deny }`, as the engine resolves it.
+  on('session.messages', ($, e) => {
+    if (e.after !== undefined) {
+      const at = world.messages.findIndex(message => message.uuid === e.after)
+
+      return { value: at < 0 ? { deny: `No row ${e.after} in this conversation.` } : world.messages.slice(at + 1) }
+    }
+
+    return { value: e.last === undefined ? world.messages : world.messages.slice(Math.max(0, world.messages.length - e.last)) }
+  })
+  on('session.info', () => ({ value: world.info }))
+  on('agent.register', ($, e) => {
+    world.registered.push(e)
+    return { value: { agent: `open-items:${e.name}` } }
+  })
+  // The plugin's own spawn reaches the Agent tool beneath with the tool's own field names.
+  on('agent.spawn', ($, e) => {
+    const call = e as unknown as { subagent_type: string; description: string; prompt: string }
+    world.spawns.push({ subagentType: call.subagent_type, description: call.description, prompt: call.prompt })
+
+    return world.spawnDeny === undefined ? { model: 'opus' } : { deny: world.spawnDeny }
+  })
+  on('agent.offer', () => ({ isOffered: true }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)

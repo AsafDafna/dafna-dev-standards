@@ -138,6 +138,7 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
+import { helperHooks, registerHelper } from './helper'
 
 const PLUGIN = 'open-items'
 
@@ -366,6 +367,8 @@ export const register: Register = on => {
     }
 
     await $.command.register({ name: 'open-items', description: 'Show the items Claude gave you' })
+    await $.command.register({ name: 'side', description: 'Leave a side question for a helper; Claude goes on', argumentHint: '[#N] <question>', immediate: true })
+    await registerHelper($)
     await update($, folder, known => known ?? e.cwd)
     await noteActive($)
     // Background tasks may have started unseen in a conversation with rows already (a resume, the mod
@@ -415,6 +418,8 @@ export const register: Register = on => {
 
     return {}
   })
+
+  helperHooks(on)
 
   // The four tools of every turn stay in the prompt's list, where an MCP tool would wait behind ToolSearch:
   // their descriptions carry the steering, the one prompt text that reaches Claude on every seat.
