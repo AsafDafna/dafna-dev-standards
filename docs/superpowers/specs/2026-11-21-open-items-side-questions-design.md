@@ -95,7 +95,7 @@ These are Claude's, for Nir to check.
 - **Messages to the main session never use the user's voice.** A note rides the user's next typed prompt as `prompt.submit` context, the channel v0.2 uses on both seats. A question goes as a plugin message, never as `asUser`. Consent words come only from the user (v0.2 ruling R43). In a live chat (v0.2's test) a question starts no turn either: it rides the user's next typed prompt. The mod's own helpers and a side question sent from the pane do not count as background work or as a press for that test. If the main turn ended because the user pressed Esc, a question does not start a turn (ruling R22): it rides the next typed prompt.
 - **The main session's answer to a helper's question** goes into the thread for the user. It does not wake the helper; the user can follow up.
 - **A go-ahead is a normal decision item.** When a note changes its work, the main session adds a decision with `add_item` (with `ask` and option notes) and waits for the press. In a live chat, where `add_item` refuses (v0.2 Decided 12), it asks in the chat. Nir's draft added options to the ask itself, which 0.3.0's `reply_item` refuses, and whose consent path is untested. A decision item uses the tested path.
-- **Follow-ups on the phone** use `/side #N <text>`. The `↳ Answer to #N:` bridge leaves side questions out: the mod drops such a prompt from the main session and shows a toast that points to `/side #N`. The bridge today takes any open item that is not info, so without this a typed answer would reach the main session as the user's answer. This only narrows the bridge, but it is still a change to a security gate, so it gets a security review before install.
+- **Follow-ups on the phone** use `/side #N <text>`. The `↳ Answer to #N:` bridge leaves side questions out: the mod drops such a prompt from the main session, and the drop's reason points to `/side #N`. The bridge today takes any open item that is not info, so without this a typed answer would reach the main session as the user's answer. This only narrows the bridge, but it is still a change to a security gate, so it gets a security review before install.
 - **Each side question records the main conversation file** where it was asked, so a helper after a hand-off can still search it.
 - **The helper keeps the user's CLAUDE.md**, and its prompt says that it writes for the user and follows the user's reply rules there.
 - **The draft's "unused for 14 days" item and its metrics are dropped.** Nir's criterion is judged with no formal count, and nothing would read the metrics.
@@ -136,7 +136,7 @@ Its title is the question, cut at 80 characters with "…". States: `open` until
 
 The mod registers one agent type at session start with `$.agent.register`:
 
-- `tools: ["Read", "Grep", "Glob"]`, so other tools are refused by the engine (probes: `Write`, `Bash`, `Agent`, an MCP tool and `SubagentHandback` were refused, also after a resume, on both seats). `advisor` is a server tool, which neither `tools` nor `disallowedTools` withholds: where the advisor is on, the helper can call it, so its prompt forbids it (Asaf 2026-11-24, 2);
+- `tools: ["Read", "Grep", "Glob"]`, so other tools are refused by the engine (probes: `Write`, `Bash`, `Agent`, an MCP tool and `SubagentHandback` were refused when the mod called them as the helper with `$.agent.call`, also after a resume, on both seats). The helper's own run ends with `SubagentHandback`, which the engine answers "Report received"; the mod's `agent.report` hook consumes that report (probes note, correction of 2026-11-24). `advisor` is a server tool, which neither `tools` nor `disallowedTools` withholds: where the advisor is on, the helper can call it, so its prompt forbids it (Asaf 2026-11-24, 2);
 - `permissionMode: "dontAsk"`, so a read outside the paths the engine allows (the main conversation file and the scratchpad are allowed) is refused with no dialog on the user's screen, and the helper says it could not read it (probe 0.3);
 - `model: "opus"`, `effort: "medium"`, and a `maxTurns` bound;
 - its own system prompt (below), plus the user's CLAUDE.md;
@@ -247,7 +247,7 @@ Test cases:
 - a follow-up gets main's messages since the last answer.
 - a follow-up after `/clear` (the helper is gone) starts a new helper with the thread and the log.
 - a new helper reads an earlier side question from the log.
-- `↳ Answer to #N:` on a side question reaches neither the main session nor Done; a toast points to `/side #N`.
+- `↳ Answer to #N:` on a side question reaches neither the main session nor Done; the drop's reason points to `/side #N`.
 - two typed prompts, then a side question from the pane field, then a helper's question: still a live chat, so no turn starts.
 - a refused spawn: the item says so; a follow-up tries again.
 - two side questions at once: the second waits for the first helper.
