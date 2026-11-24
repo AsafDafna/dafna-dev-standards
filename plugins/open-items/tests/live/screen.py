@@ -5,17 +5,21 @@ out. This runs the real engine instead: a throwaway config folder, the store
 seeded with the items a session saved, that session started again, `/open-items`,
 keys sent with `tmux send-keys`, and `tmux capture-pane` at the width asked for.
 No model is called, so a dummy API key does: a reply sent as a prompt ends at
-the API's refusal.
+the API's refusal. `Seat` runs the cases that do call the model, on the
+person's own sign-in.
 """
 
+import contextlib
 import hashlib
 import json
 import re
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -121,7 +125,7 @@ class Claude:
             **self.extra_env,
         }
 
-    def start(self, columns, rows, *args):
+    def launch(self, columns, rows, *args):
         command = ' '.join(
             [
                 'exec env -i',
@@ -131,9 +135,11 @@ class Claude:
             ]
         )
         run('tmux', '-u', 'new-session', '-d', '-s', self.session, '-x', str(columns), '-y', str(rows), '-c', self.project, command)
-        screen = wait_for(self.session, lambda s: any(line.startswith('❯') for line in s.split('\n')))
+
+    def start(self, columns, rows, *args):
+        self.launch(columns, rows, *args)
         # The prompt draws before it reads keys: type once it echoes them.
-        return screen
+        return wait_for(self.session, has_prompt)
 
     def type(self, text):
         deadline = time.time() + 20
@@ -172,14 +178,24 @@ class Claude:
         """Leaves `items` in the store as the session saved them, for `pane` to start it again with them.
 
         Each is an item's fields over an open action's, with `detail` for
-        Claude's first message, `thread` for the messages after it (an
-        `agoMs` in place of `atMs`), and `ageMs` for how long ago Claude added it.
+        the first message, Claude's or a side question's own, `thread` for the
+        messages after it (an `agoMs` in place of `atMs`), `ageMs` for how long
+        ago it was added, and in `side` each time as how long ago (`sentAgoMs`
+        for `sentMs`).
         """
         now_ms = int(time.time() * 1000)
+
+        def timed(fields):
+            return {
+                (key[: -len('AgoMs')] + 'Ms' if key.endswith('AgoMs') else key): now_ms - value if key.endswith('AgoMs') else timed(value) if isinstance(value, dict) else value
+                for key, value in fields.items()
+            }
+
         tasks = []
         for item in items:
             created = now_ms - item.get('ageMs', 180_000)
             later = [{k: v for k, v in message.items() if k != 'agoMs'} | {'atMs': now_ms - message.get('agoMs', 60_000)} for message in item.get('thread', ())]
+            first = 'user' if item.get('kind') == 'side' else 'claude'
             tasks.append(
                 {
                     'kind': 'action',
@@ -189,8 +205,9 @@ class Claude:
                     'hasNewReply': False,
                     'createdMs': created,
                     'updatedMs': created,
-                    'thread': [{'from': 'claude', 'text': item.get('detail', ''), 'atMs': created}, *later],
-                    **{k: v for k, v in item.items() if k not in ('ageMs', 'detail', 'thread')},
+                    'thread': [{'from': first, 'text': item.get('detail', ''), 'atMs': created}, *later],
+                    **({'side': timed(item['side'])} if 'side' in item else {}),
+                    **{k: v for k, v in item.items() if k not in ('ageMs', 'detail', 'thread', 'side')},
                 }
             )
         self.store(
@@ -213,6 +230,14 @@ class Claude:
         with open(path, 'w') as f:
             json.dump({f'session:{self.session_id}': saved}, f)
 
+    def is_seeded(self):
+        """Whether the store holds a key for the session."""
+        try:
+            with open(self.store_file()) as f:
+                return f'session:{self.session_id}' in json.load(f)
+        except FileNotFoundError:
+            return False
+
     def saved(self):
         """What the session left under its key in the store, once it has ended."""
         with open(self.store_file()) as f:
@@ -221,10 +246,11 @@ class Claude:
     def open_pane(self, columns, rows):
         """Starts the seeded session again in a terminal `columns` by `rows`, and opens the pane with /open-items."""
         self.start(columns, rows, '--session-id', self.session_id)
-        # The session restores the items as it starts; the status line counts
-        # them once it has. /open-items typed before that finds none.
+        # The session restores the items seeded as it starts; the status line
+        # counts them once it has. /open-items typed before that finds none.
         try:
-            wait_for(self.session, lambda s: re.search('open-items: [☐✓⋯]', s))
+            if self.is_seeded():
+                wait_for(self.session, lambda s: re.search('open-items: [☐✓⋯]', s))
         except TimeoutError as error:
             # The engine names the store's file; the seed goes where store_file() says it does.
             raise RuntimeError(
@@ -316,9 +342,124 @@ class Claude:
         time.sleep(1.0)
         return plain_of(snapshot(self.session, name))
 
+    def conversation(self):
+        """The session's conversation file."""
+        return os.path.join(self.config, 'projects', re.sub(r'[^A-Za-z0-9]', '-', self.project), f'{self.session_id}.jsonl')
+
+    def rows(self):
+        """The rows of the session's conversation file as they stand now: none before its first."""
+        try:
+            with open(self.conversation()) as f:
+                return [json.loads(line) for line in f if line.strip()]
+        except FileNotFoundError:
+            return []
+
+    def scratchpads(self):
+        """Where Claude Code keeps the scratchpads of the project folder's sessions, outside the folders a close removes."""
+        return f'/tmp/claude-{os.getuid()}/{re.sub(r"[^A-Za-z0-9]", "-", self.project)}'
+
     def close(self):
         self.stop()
         shutil.rmtree(self.home, ignore_errors=True)
+        shutil.rmtree(self.scratchpads(), ignore_errors=True)
+
+
+class Seat(Claude):
+    """
+    A Claude on the person's own seat, for the cases that call the model: the
+    config folder CLAUDE_CONFIG_DIR names and its sign-in, no API key. The
+    plugin's installed copy is off for these sessions only, so the one in
+    `plugin_dir` is the only open-items. A Seat's sessions share one project
+    folder; `close` purges it and drops its keys from the store.
+    """
+
+    def __init__(self, plugin_dir, claude='claude'):
+        self.plugin_dir = os.path.abspath(plugin_dir)
+        self.claude = shutil.which(claude) or claude
+        # Unset, Claude Code reads a sign-in slot that may hold another account.
+        self.config = os.environ['CLAUDE_CONFIG_DIR']
+        self.project = os.path.realpath(tempfile.mkdtemp(prefix='hitl-model-'))
+        self.session = f'hitl-model-{os.getpid()}-{int(time.time() * 1000) % 100000}'
+        self.session_id = str(uuid.uuid4())
+
+    def env(self):
+        keep = ('PATH', 'LANG', 'LC_ALL', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'CLAUDE_CONFIG_DIR')
+        return {**{k: os.environ[k] for k in keep if k in os.environ}, 'TERM': 'xterm-256color', 'LANG': os.environ.get('LANG') or 'C.UTF-8'}
+
+    def start(self, columns, rows, *args):
+        with open(os.path.join(self.config, 'settings.json')) as f:
+            installed = [name for name in json.load(f).get('enabledPlugins', {}) if name.startswith('open-items@')]
+        off = json.dumps({'enabledPlugins': {name: False for name in installed}})
+        self.launch(columns, rows, '--settings', f"'{off}'", *args)
+        screen = wait_for(self.session, lambda s: TRUST in s or has_prompt(s))
+        # A new project folder asks for trust once, "No, exit" first; its entry goes with the purge.
+        if TRUST in screen:
+            # The dialog, like the prompt, draws before it reads keys, and ↓ goes round its two answers.
+            for _ in range(10):
+                if f'❯ {TRUST}' in capture(self.session):
+                    break
+                run('tmux', 'send-keys', '-t', self.session, 'Down')
+                time.sleep(1.5)
+            run('tmux', 'send-keys', '-t', self.session, 'Enter')
+            screen = wait_for(self.session, lambda s: TRUST not in s and has_prompt(s))
+        return screen
+
+    def store(self, saved):
+        """Adds `saved` to the store under the session's key, beside the keys already there."""
+        path = self.store_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path) as f:
+                kept = json.load(f)
+        except FileNotFoundError:
+            kept = {}
+        with open(path, 'w') as f:
+            json.dump({**kept, f'session:{self.session_id}': saved}, f)
+
+    def close(self):
+        self.stop()
+        run(self.claude, 'purge', self.project, '-y', check=False)
+        path = self.store_file()
+        try:
+            with open(path) as f:
+                kept = {key: saved for key, saved in json.load(f).items() if saved.get('folder') != self.project}
+        except FileNotFoundError:
+            kept = None
+        if kept == {}:
+            os.remove(path)
+        elif kept is not None:
+            with open(path, 'w') as f:
+                json.dump(kept, f)
+        shutil.rmtree(self.scratchpads(), ignore_errors=True)
+        shutil.rmtree(self.project, ignore_errors=True)
+
+
+TRUST = 'Yes, I trust this folder'
+
+
+def has_prompt(screen):
+    """Whether the prompt box is drawn: a row starts with its mark."""
+    return any(line.startswith('❯') for line in screen.split('\n'))
+
+
+@contextlib.contextmanager
+def silent_api():
+    """The environment of an API address that takes each connection and never answers: a helper started there stays at work."""
+    server = socket.create_server(('127.0.0.1', 0))
+    held = []
+
+    def hold():
+        with contextlib.suppress(OSError):
+            while True:
+                held.append(server.accept()[0])
+
+    threading.Thread(target=hold, daemon=True).start()
+    try:
+        yield {'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{server.getsockname()[1]}'}
+    finally:
+        server.close()
+        for one in held:
+            one.close()
 
 
 def has_pane(screen):
