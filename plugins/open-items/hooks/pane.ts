@@ -218,18 +218,23 @@ const BOX_CELLS = 4
 
 const BOX_ROWS = 2
 
+export type Speaker = 'You' | 'Claude' | 'Helper'
+
+/** The color of each speaker's name in a thread head: none is a kind's color. */
+export const SPEAKER_COLOR: Record<Speaker, ThemeKey> = { You: 'ide', Claude: 'claude', Helper: 'planMode' }
+
 /**
  * A thread entry as the item screen draws it: a message, line breaks kept,
  * under its `head` (`Claude · 4m`), Markdown when Claude wrote it on an item
  * `isMarkdown`; an event on one line.
  */
 export function entryOf(message: Message, nowMs: number, isMarkdown: boolean): Omit<Entry, 'i'> {
-  const who = message.from === 'claude' ? 'Claude' : 'You'
+  const who: Speaker = message.from === 'user' ? 'You' : message.author === 'helper' ? 'Helper' : 'Claude'
   const age = ago(nowMs - message.atMs)
 
   switch (message.event) {
     case undefined:
-      return { head: `${who} · ${age}`, text: printableLines(message.text, MAX_DETAIL), look: isMarkdown && message.from === 'claude' ? 'markdown' : 'plain' }
+      return { head: { who, age }, text: printableLines(message.text, MAX_DETAIL), look: isMarkdown && message.from === 'claude' ? 'markdown' : 'plain' }
     case 'chose':
       return { text: `${who} chose "${printable(message.text, MAX_OPTION)}" · ${age}`, look: 'event' }
     case 'changed':
@@ -249,7 +254,12 @@ export function entryOf(message: Message, nowMs: number, isMarkdown: boolean): O
  */
 const THREAD_CHARS = 80_000
 
-export type Entry = { i: number; head?: string; text: string; look: 'markdown' | 'plain' | 'event' }
+export type Entry = { i: number; head?: { who: Speaker; age: string }; text: string; look: 'markdown' | 'plain' | 'event' }
+
+/** `Claude · 4m`: a head's text as drawn. */
+function headTextOf(head: NonNullable<Entry['head']>): string {
+  return `${head.who} · ${head.age}`
+}
 
 /**
  * The entries of `task`'s thread the item screen draws: the detail, with no
@@ -263,7 +273,7 @@ export function entriesOf(task: Task, nowMs: number): { entries: Entry[]; hidden
     // After `printableLines`, which drops the zero-width characters that could join `]` and `(` into a link.
     return { i, ...(i === 0 || head === undefined ? {} : { head }), text: look === 'markdown' ? safeLinksOf(text) : text, look }
   })
-  const size = (entry: Entry) => (entry.head?.length ?? 0) + entry.text.length
+  const size = (entry: Entry) => (entry.head === undefined ? 0 : headTextOf(entry.head).length) + entry.text.length
 
   if (detail === undefined) {
     return { entries: [], hidden: 0 }
@@ -476,9 +486,10 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
  * text wrapped as the pane draws it, at most `max`. The list: the head, each
  * section's label and a row for each of its items, and the foot. An item:
  * its header box, ask, thread, link, done-when, option boxes, buttons and
- * reply field, and the foot, an empty row after the header and the ask and
- * before the boxes and the buttons. Markdown counts as its lines, though it
- * can draw more: the body scrolls.
+ * reply field, and the foot, an empty row after the header and the ask,
+ * before the hidden line and each thread entry after the detail, and before
+ * the boxes and the buttons. Markdown counts as its lines, though it can
+ * draw more: the body scrolls.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
@@ -534,7 +545,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const header = BOX_ROWS + rowsOf(`${label}${rest}`, boxed) + rowsOf(nameOf(task), boxed)
   const ask = task.askLine === undefined ? 0 : rowsOf(printable(task.askLine, MAX_ASK), Math.max(1, width - cellsOf(ASK_BAR))) + 1
   const { entries, hidden } = entriesOf(task, view.nowMs)
-  const thread = entries.reduce((rows, { head, text }) => rows + (head === undefined ? 0 : rowsOf(head, width)) + linesRowsOf(text, width), 0)
+  const thread = entries.reduce((rows, { i, head, text }) => rows + (i === 0 ? 0 : 1) + (head === undefined ? 0 : rowsOf(headTextOf(head), width)) + linesRowsOf(text, width), 0)
   const link = linkOf(task)
   const doneWhen = doneWhenOf(task)
   const isField = hasReplyField(task, view)
@@ -554,7 +565,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
     1 +
     ask +
     thread +
-    (hidden === 0 ? 0 : rowsOf(hiddenOf(hidden), width)) +
+    (hidden === 0 ? 0 : 1 + rowsOf(hiddenOf(hidden), width)) +
     (link === undefined ? 0 : rowsOf(link, Math.max(1, width - cellsOf(LINK_LABEL)))) +
     (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, width)) +
     (choices.length === 0 ? 0 : 1 + boxes) +

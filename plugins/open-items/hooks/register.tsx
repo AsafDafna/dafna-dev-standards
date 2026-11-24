@@ -59,6 +59,7 @@ import {
   REPLY_PLACEHOLDER,
   ROW_INDENT,
   SAVE_FAILED,
+  SPEAKER_COLOR,
   SUBMIT_LABEL,
   TAKE_BACK,
   UNCLAIMED_NOTE,
@@ -940,13 +941,16 @@ export const register: Register = on => {
         ...(head === undefined
           ? []
           : [
-              <Box key={`head-${i}`} flexDirection="column">
-                <Text dimColor wrap="wrap">
-                  {head}
+              <Box key={`head-${i}`} flexDirection="column" marginTop={1}>
+                <Text wrap="wrap">
+                  <Text bold color={SPEAKER_COLOR[head.who]}>
+                    {head.who}
+                  </Text>
+                  <Text dimColor>{` · ${head.age}`}</Text>
                 </Text>
               </Box>,
             ]),
-        <Box key={`msg-${i}`} flexDirection="column">
+        <Box key={`msg-${i}`} flexDirection="column" marginTop={head === undefined && i > 0 ? 1 : 0}>
           {look === 'markdown' ? (
             <Markdown text={text} />
           ) : (
@@ -985,7 +989,7 @@ export const register: Register = on => {
             <Box key="thread" flexDirection="column" marginTop={1}>
               {detail === undefined ? null : entry(detail)}
               {thread.hidden === 0 ? null : (
-                <Box key="earlier" flexDirection="column">
+                <Box key="earlier" flexDirection="column" marginTop={1}>
                   <Text dimColor wrap="wrap">
                     {hiddenOf(thread.hidden)}
                   </Text>

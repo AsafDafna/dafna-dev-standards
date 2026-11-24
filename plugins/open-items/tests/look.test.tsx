@@ -244,6 +244,18 @@ describe('the item screen helpers', () => {
     expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(1)
   })
 
+  test('each message after the detail takes a blank row and a head row above its own rows', () => {
+    const replies = item({
+      thread: [
+        DETAIL,
+        { from: 'user', text: 'ok', atMs: NOW - 120_000 },
+        { from: 'claude', text: 'Then cursor it is.', atMs: NOW - 60_000 },
+      ],
+    })
+
+    expect(rowsFor(itemView(replies), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(6)
+  })
+
   test('on a 0.3 item, Claude writes Markdown and the detail has no head; the user writes plain text, and a press is an event', () => {
     const task = item({
       thread: [
@@ -256,8 +268,8 @@ describe('the item screen helpers', () => {
 
     expect(entriesOf(task, NOW).entries).toStrictEqual([
       { i: 0, text: DETAIL.text, look: 'markdown' },
-      { i: 1, head: 'You · 2m', text: 'Is the feed ordered by time?', look: 'plain' },
-      { i: 2, head: 'Claude · 1m', text: 'Yes, **newest first**.', look: 'markdown' },
+      { i: 1, head: { who: 'You', age: '2m' }, text: 'Is the feed ordered by time?', look: 'plain' },
+      { i: 2, head: { who: 'Claude', age: '1m' }, text: 'Yes, **newest first**.', look: 'markdown' },
       { i: 3, text: 'You pressed Later · now', look: 'event' },
     ])
   })
