@@ -1,9 +1,8 @@
 import type { AgentInfo } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
 
 import type { Message, Side, Task, ToMain } from '../types'
-import { ADD, CLOSE, CODE, DONE, LIST, NOW, OWN, PANE, REPLY, answerOf, itemOf, keyed, savedItem, seat, start, textOf, typed } from './world'
+import { ADD, CLOSE, CODE, DONE, LIST, NOW, OWN, PANE, REPLY, answerOf, itemOf, keyed, report, savedItem, seat, start, textOf, typed } from './world'
 
 const QUESTION: Message = { from: 'user', text: 'Which branch holds the feed fix?', atMs: NOW - 60_000 }
 const ASKS_MAIN: Message = { from: 'claude', author: 'helper', text: 'The log does not name it.\nQuestion for the session: Which branch holds the feed fix?', atMs: NOW - 50_000 }
@@ -27,19 +26,11 @@ function followedUp(id: number): Task {
 
 const running = (id: string) => ({ id, type: 'open-items:helper', status: 'running' }) as AgentInfo
 
-function report($: Engine, agentId: string, text: string) {
-  return $.agent.report({ agentId, subagentType: 'open-items:helper', provider: { plugin: 'open-items', tier: 'user' }, status: 'completed', text })
-}
-
 const ASKING = answered(1, ASKS_MAIN, { toMain: SENT_QUESTION })
 const NOTING = answered(2, NOTES_MAIN, { toMain: { kind: 'note', text: 'the fix is not merged yet.', atMs: NOTES_MAIN.atMs, askedMs: QUESTION.atMs } })
-const ANSWERED_BY_CLAUDE: Task = {
-  ...followedUp(3),
-  thread: [...followedUp(3).thread, { from: 'claude', text: 'Branch fix-feed.', atMs: NOW - 20_000 }],
-  side: { transcripts: ['/t/main.jsonl'], helperId: 'a3', sentMs: FOLLOW_UP.atMs },
-  hasNewReply: true,
-}
+const ANSWERED_BY_CLAUDE = sideItem(3, [QUESTION, ASKS_MAIN, FOLLOW_UP, { from: 'claude', text: 'Branch fix-feed.', atMs: NOW - 20_000 }], { helperId: 'a3', sentMs: FOLLOW_UP.atMs }, { isWaitingForClaude: true, hasNewReply: true })
 const ACTION = savedItem(4)
+const LOG_QUESTION = savedItem(2, { kind: 'question', title: 'Which log shows the failure?' })
 const DONE_SIDE = sideItem(5, [QUESTION, NOTES_MAIN, { from: 'user', text: '', event: 'done', atMs: NOW - 10_000 }], { helperId: 'a5', sentMs: QUESTION.atMs, endedMs: QUESTION.atMs }, { state: 'resolved' })
 
 describe("Claude's tools on side questions", () => {
@@ -96,7 +87,7 @@ describe("Claude's tools on side questions", () => {
     await start($)
 
     await $.turn.start({ text: 'go', turnId: 't1' })
-    await report($, 'a1', 'It is merged.\nQuestion for the session: Which release carries it?')
+    await report($, { text: 'It is merged.\nQuestion for the session: Which release carries it?' })
     await $.tool.call({ tool: REPLY, id: 1, text: 'Branch fix-feed.' })
     await $.tool.call({ tool: REPLY, id: 2, text: 'Thanks, that matters.' })
     await clock.settle()
@@ -146,7 +137,6 @@ describe("Claude's tools on side questions", () => {
       ['updates', { show: 'updates' }, [1, 4]],
       ['open', { show: 'open' }, [1, 4]],
       ['all', { show: 'all' }, [1, 2, 3, 4, 5]],
-      ['id', { id: 3 }, [3]],
     ]
 
     for (const [label, args, ids] of ROWS) {
@@ -155,12 +145,13 @@ describe("Claude's tools on side questions", () => {
 
     const one = answerOf(await $.tool.call({ tool: LIST, id: 3 })).result ?? ''
 
+    expect(idsIn(one), 'id').toEqual([3])
     expect(one).not.toContain('The user replied and waits for you')
     expect(one).not.toContain('The user has not opened your last reply yet.')
   })
 
   test('↳ Answer to #N on a side question reaches neither the main session nor Done, and the drop points to /side #N', async ($, on) => {
-    const { world, clock } = seat(on, { [OWN]: keyed([ASKING, savedItem(2, { kind: 'question', title: 'Which log shows the failure?' })]) })
+    const { world, clock } = seat(on, { [OWN]: keyed([ASKING, LOG_QUESTION]) })
     await start($)
     const toSide = '#1 is a side question: use /side #1 <text>, or its field in /open-items.'
 
@@ -205,7 +196,7 @@ describe("Claude's tools on side questions", () => {
   })
 
   test('a bridge answer dropped for a side question is no input for the live-chat gate; one that answers a question item is', async ($, on) => {
-    seat(on, { [OWN]: keyed([ASKING, savedItem(2, { kind: 'question', title: 'Which log shows the failure?' })]) })
+    seat(on, { [OWN]: keyed([ASKING, LOG_QUESTION]) })
     await start($)
     const add = () => $.tool.call({ tool: ADD, kind: 'question', title: 'Pick a name for the CLI', detail: 'Three short ones.' })
 

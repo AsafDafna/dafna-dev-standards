@@ -260,7 +260,7 @@ describe('the item screen helpers', () => {
     const typing: PaneView = { ...itemView(side), draft: `${'word '.repeat(11)}word`, isTyping: true }
 
     // The header box (4), an empty row, the question, two messages of a blank row, a head and a line each,
-    // the sent line, an empty row and Done (no Long answer), the field on two rows, and the foot.
+    // the sent line, an empty row and Done, the field on two rows, and the foot.
     expect(rowsFor(typing, 76, 99)).toBe(18)
   })
 

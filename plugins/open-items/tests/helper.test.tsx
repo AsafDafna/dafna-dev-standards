@@ -1,10 +1,10 @@
-import type { AgentInfo, AgentReportInput, On, SessionMessage, SessionRateLimit } from 'claude-code'
+import type { AgentInfo, On, SessionMessage, SessionRateLimit } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { isPending, isWorking } from '../hooks/side'
 import type { Message, Side, Task } from '../types'
-import { ADD, CODE, DONE, HANDOFF, HOUR_MS, KEY_SHAPED, NOW, OLD, PANE, TAKE, answerOf, earlierItems, itemOf, keyed, savedItem, seat, start, typed } from './world'
+import { ADD, CODE, DONE, HANDOFF, HOUR_MS, KEY_SHAPED, NOW, OLD, PANE, TAKE, answerOf, earlierItems, itemOf, keyed, report, savedItem, seat, side, start, typed } from './world'
 
 type World = ReturnType<typeof seat>['world']
 
@@ -25,14 +25,6 @@ const WORKING = sideItem([QUESTION], { sentMs: QUESTION.atMs })
 /** #1, which helper a1 answered. */
 function answered(side: Partial<Side> = {}): Task {
   return { ...sideItem([QUESTION, ANSWER], { sentMs: QUESTION.atMs, endedMs: QUESTION.atMs, ...side }), isWaitingForClaude: false }
-}
-
-function report($: Engine, fields: Partial<AgentReportInput> = {}) {
-  return $.agent.report({ agentId: 'a1', subagentType: 'open-items:helper', provider: { plugin: 'open-items', tier: 'user' }, status: 'completed', text: 'A pointer into the feed.', ...fields })
-}
-
-function side($: Engine, args: string) {
-  return $.command.run({ command: 'side', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
 }
 
 function offer($: Engine, agent: string, agentId?: string) {

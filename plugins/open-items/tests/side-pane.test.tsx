@@ -1,9 +1,9 @@
-import type { AgentInfo, AgentReportInput, SessionRateLimit } from 'claude-code'
+import type { AgentInfo, SessionRateLimit } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
-import type { Engine, Mounted } from 'claude-code/testing'
+import type { Mounted } from 'claude-code/testing'
 
 import type { Message, Side, Task } from '../types'
-import { ADD, CLOSE, DONE, HOUR_MS, KEY_SHAPED, NOW, OWN, PANE, answerOf, itemOf, keyed, runTasks, savedItem, seat, start, textOf, typed } from './world'
+import { ADD, CLOSE, DONE, HOUR_MS, KEY_SHAPED, NOW, OWN, PANE, answerOf, itemOf, keyed, report, runTasks, savedItem, seat, side, start, textOf, typed } from './world'
 
 const QUESTION: Message = { from: 'user', text: 'What does the feed page by?', atMs: NOW - 60_000 }
 const RUNNING = { id: 'a1', type: 'open-items:helper', status: 'running' } as AgentInfo
@@ -24,14 +24,6 @@ const fiveHour = (percentUsed: number, resetsInMs?: number): SessionRateLimit =>
   percentUsed,
   ...(resetsInMs === undefined ? {} : { resetsAt: new Date(NOW + resetsInMs).toISOString() }),
 })
-
-function side($: Engine, args: string) {
-  return $.command.run({ command: 'side', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
-}
-
-function report($: Engine, agentId: string, fields: Partial<AgentReportInput> = {}) {
-  return $.agent.report({ agentId, subagentType: 'open-items:helper', provider: { plugin: 'open-items', tier: 'user' }, status: 'completed', text: 'A pointer into the feed.', ...fields })
-}
 
 async function fieldValueIn(ui: Pick<Mounted<'terminal', 'Pane'>, 'find'>): Promise<unknown> {
   return (await ui.find({ type: 'Input', key: 'side-new' }))?.props.value
@@ -359,7 +351,7 @@ describe('the side question screen', () => {
     await ui.press({ key: 'done' })
     await clock.settle()
     expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
-    await report($, 'a1', { status: 'stopped', text: 'Running the 14 searches.' })
+    await report($, { status: 'stopped', text: 'Running the 14 searches.' })
     await clock.advance(600_000)
 
     expect(world.stops).toEqual(['a1', 'a1'])
@@ -378,7 +370,7 @@ describe('the side question screen', () => {
     await clock.settle()
     expect(await textOf(ui, 'sent')).toBe('Waiting to send')
 
-    await report($, 'a1')
+    await report($)
     await clock.settle()
     expect(world.sends.map(send => send.to)).toEqual(['a2'])
     expect(await textOf(ui, 'sent')).toBe('✓ The helper has it')

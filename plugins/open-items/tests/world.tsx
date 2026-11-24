@@ -1,4 +1,4 @@
-import type { AgentInfo, CommandSpec, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
+import type { AgentInfo, AgentReportInput, CommandSpec, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -467,6 +467,15 @@ export async function runTasks($: Engine) {
     origin: { kind: 'composer' },
     presentation: { isFullscreen: true, columns: 160 },
   })
+}
+
+export function side($: Engine, args: string) {
+  return $.command.run({ command: 'side', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+}
+
+/** A helper's report: a1's answer unless `fields` say otherwise. */
+export function report($: Engine, fields: Partial<AgentReportInput> = {}) {
+  return $.agent.report({ agentId: 'a1', subagentType: 'open-items:helper', provider: { plugin: 'open-items', tier: 'user' }, status: 'completed', text: 'A pointer into the feed.', ...fields })
 }
 
 type Drawn = Pick<Mounted<'terminal', 'Pane'>, 'find'>
