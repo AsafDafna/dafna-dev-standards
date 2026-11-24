@@ -455,7 +455,7 @@ export const register: Register = on => {
       return { deny: LIVE_CHAT }
     }
 
-    const active = (await read($, tasks)).filter(isActive)
+    const active = (await read($, tasks)).filter(task => isActive(task) && !isSide(task))
     const same = active.find(task => sameAsk(task.title, ask.title))
 
     if (same !== undefined) {

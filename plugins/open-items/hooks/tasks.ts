@@ -410,7 +410,7 @@ export function replyErrorOf(task: Task, reply: Reply): string | undefined {
  * `task` after Claude's `reply` at `atMs`: the change and the message in its
  * thread, the user's turn again, and a recommended option kept only while it
  * is one of the options. A side question's helper still owes the user what
- * it owed, and its question for Claude is answered.
+ * it owed, and the question Claude was given is answered.
  */
 export function repliedBy(task: Task, reply: Reply, atMs: number): Task {
   const { recommended, ...changed } = { ...task, ...reply.change }
@@ -429,10 +429,11 @@ export function repliedBy(task: Task, reply: Reply, atMs: number): Task {
   }
 }
 
+/** `side` without the helper's question once Claude was given it: a newer one still waiting to go is not what Claude answered. */
 function withoutQuestion(side: Side): Side {
   const { toMain, ...rest } = side
 
-  return toMain?.kind === 'question' ? rest : side
+  return toMain?.kind === 'question' && toMain.sentMs !== undefined ? rest : side
 }
 
 /** Reads `close_item`'s arguments, or says what is wrong with them. */

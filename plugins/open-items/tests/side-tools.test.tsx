@@ -1,8 +1,9 @@
 import type { AgentInfo } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
 import type { Message, Side, Task, ToMain } from '../types'
-import { CLOSE, LIST, NOW, OWN, PANE, REPLY, answerOf, itemOf, keyed, savedItem, seat, start, textOf } from './world'
+import { ADD, CLOSE, DONE, LIST, NOW, OWN, PANE, REPLY, answerOf, itemOf, keyed, savedItem, seat, start, textOf, typed } from './world'
 
 const QUESTION: Message = { from: 'user', text: 'Which branch holds the feed fix?', atMs: NOW - 60_000 }
 const ASKS_MAIN: Message = { from: 'claude', author: 'helper', text: 'The log does not name it.\nQuestion for the session: Which branch holds the feed fix?', atMs: NOW - 50_000 }
@@ -26,6 +27,10 @@ function followedUp(id: number): Task {
 
 const running = (id: string) => ({ id, type: 'open-items:helper', status: 'running' }) as AgentInfo
 
+function report($: Engine, agentId: string, text: string) {
+  return $.agent.report({ agentId, subagentType: 'open-items:helper', provider: { plugin: 'open-items', tier: 'user' }, status: 'completed', text })
+}
+
 const ASKING = answered(1, ASKS_MAIN, { toMain: SENT_QUESTION })
 const NOTING = answered(2, NOTES_MAIN, { toMain: { kind: 'note', text: 'the fix is not merged yet.', atMs: NOTES_MAIN.atMs, askedMs: QUESTION.atMs } })
 const ANSWERED_BY_CLAUDE: Task = {
@@ -42,10 +47,14 @@ describe("Claude's tools on side questions", () => {
     const { world } = seat(on, { [OWN]: keyed([ASKING, ACTION, DONE_SIDE]) })
     await start($)
 
-    for (const id of [ASKING.id, DONE_SIDE.id]) {
-      const closed = answerOf(await $.tool.call({ tool: CLOSE, id, as: 'withdrawn', note: 'answered in chat' }))
+    for (const [id, as] of [
+      [ASKING.id, 'resolved'],
+      [ASKING.id, 'withdrawn'],
+      [DONE_SIDE.id, 'withdrawn'],
+    ] as const) {
+      const closed = answerOf(await $.tool.call({ tool: CLOSE, id, as, note: 'answered in chat' }))
 
-      expect(closed.deny, `#${id}`).toBe('Only the user closes a side question (Done).')
+      expect(closed.deny, `#${id} ${as}`).toBe('Only the user closes a side question (Done).')
     }
 
     expect(itemOf(world, ASKING.id)?.state).toBe('open')
@@ -79,6 +88,36 @@ describe("Claude's tools on side questions", () => {
     const late = answerOf(await $.tool.call({ tool: REPLY, id: DONE_SIDE.id, text: 'Branch fix-feed.' }))
 
     expect(late.deny).toBe('Side question #5 is closed: the user pressed Done.')
+  })
+
+  test("Claude's answer to the question it was given keeps the helper's newer question, which goes when the turn ends, and keeps a note", async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([followedUp(1), NOTING]) })
+    world.agents = [running('a1')]
+    await start($)
+
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await report($, 'a1', 'It is merged.\nQuestion for the session: Which release carries it?')
+    await $.tool.call({ tool: REPLY, id: 1, text: 'Branch fix-feed.' })
+    await $.tool.call({ tool: REPLY, id: 2, text: 'Thanks, that matters.' })
+    await clock.settle()
+    expect(world.submitted).toEqual([])
+
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+    expect(world.submitted).toEqual([expect.stringContaining('Which release carries it?')])
+
+    const entered = await $.prompt.submit(typed('go on'))
+    expect((entered.context ?? []).join('\n')).toContain('the fix is not merged yet.')
+  })
+
+  test("add_item adds Claude's item when its title matches a side question's", async ($, on) => {
+    const { world } = seat(on, { [OWN]: keyed([ASKING]) })
+    await start($)
+
+    const added = answerOf(await $.tool.call({ tool: ADD, kind: 'question', title: QUESTION.text, detail: 'The release notes need it.' }))
+
+    expect(added.result).toContain(`Added item #2: "${QUESTION.text}".`)
+    expect(itemOf(world, 2)?.kind).toBe('question')
   })
 
   test("Claude's answer on a side question whose helper works on a follow-up keeps the follow-up's sent line", async ($, on) => {
