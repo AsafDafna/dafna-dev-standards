@@ -57,7 +57,7 @@ describe("Claude's tools on side questions", () => {
   })
 
   test('reply_item answers a side question in its thread with text only, clears the waiting question, and sets off no alert', async ($, on) => {
-    const { world, clock } = seat(on, { [OWN]: keyed([ASKING]) })
+    const { world, clock } = seat(on, { [OWN]: keyed([ASKING, DONE_SIDE]) })
     await start($)
     const opens = world.opens.length
 
@@ -75,6 +75,10 @@ describe("Claude's tools on side questions", () => {
 
     expect(changed.deny).toBe('A side question takes only text: answer the user in it.')
     expect(itemOf(world, 1)?.title).toBe(QUESTION.text)
+
+    const late = answerOf(await $.tool.call({ tool: REPLY, id: DONE_SIDE.id, text: 'Branch fix-feed.' }))
+
+    expect(late.deny).toBe('Side question #5 is closed: the user pressed Done.')
   })
 
   test("Claude's answer on a side question whose helper works on a follow-up keeps the follow-up's sent line", async ($, on) => {

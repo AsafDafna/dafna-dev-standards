@@ -371,6 +371,10 @@ export function replyErrorOf(task: Task, reply: Reply): string | undefined {
     return `Item #${task.id} went to a new session; that session answers it now.`
   }
 
+  if (isSide(task) && task.state === 'resolved') {
+    return `Side question #${task.id} is closed: the user pressed Done.`
+  }
+
   if (!isActive(task)) {
     return `Item #${task.id} is already ${task.state}; add a new item if you need more from the user.`
   }
