@@ -47,6 +47,8 @@ export type PaneView = {
   moved?: readonly Task[]
   /** How many items `take_items` just brought from the previous session. */
   arrived?: number
+  /** The items whose reply joined the running main turn as a row that no step has read yet. */
+  unreadIds?: readonly number[]
 }
 
 const KIND_SECTIONS: readonly { kind: TaskKind; label: string }[] = [
@@ -295,6 +297,19 @@ export function hiddenOf(hidden: number): string {
   return `${hidden} earlier ${hidden === 1 ? 'message is' : 'messages are'} not shown: the thread is too long for the pane.`
 }
 
+/** The line under the user's newest reply while it waits for Claude: whether it went out, and whether Claude read it. */
+export function sentLineOf(task: Task, view: Pick<PaneView, 'unreadIds'>): string | undefined {
+  if (!task.isWaitingForClaude) {
+    return undefined
+  }
+
+  if (task.update === 'pending') {
+    return 'Waiting to send'
+  }
+
+  return view.unreadIds?.includes(task.id) === true ? 'Sent · Claude reads it at its next step' : '✓ Claude has it'
+}
+
 export function doneWhenOf(task: Task): string | undefined {
   return task.doneWhen === undefined ? undefined : `Done when: ${printableLines(task.doneWhen, MAX_DETAIL)}`
 }
@@ -485,11 +500,11 @@ export function buttonRowsOf(labels: readonly string[], columns: number): number
  * The rows the Open items pane's body takes at `columns` cells across, each
  * text wrapped as the pane draws it, at most `max`. The list: the head, each
  * section's label and a row for each of its items, and the foot. An item:
- * its header box, ask, thread, link, done-when, option boxes, buttons and
- * reply field, and the foot, an empty row after the header and the ask,
- * before the hidden line and each thread entry after the detail, and before
- * the boxes and the buttons. Markdown counts as its lines, though it can
- * draw more: the body scrolls.
+ * its header box, ask, thread, sent line, link, done-when, option boxes,
+ * buttons and reply field, and the foot, an empty row after the header and
+ * the ask, before the hidden line and each thread entry after the detail,
+ * and before the boxes and the buttons. Markdown counts as its lines, though
+ * it can draw more: the body scrolls.
  */
 export function rowsFor(view: PaneView, columns: number, max: number): number {
   const width = Math.max(1, columns)
@@ -546,6 +561,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
   const ask = task.askLine === undefined ? 0 : rowsOf(printable(task.askLine, MAX_ASK), Math.max(1, width - cellsOf(ASK_BAR))) + 1
   const { entries, hidden } = entriesOf(task, view.nowMs)
   const thread = entries.reduce((rows, { i, head, text }) => rows + (i === 0 ? 0 : 1) + (head === undefined ? 0 : rowsOf(headTextOf(head), width)) + linesRowsOf(text, width), 0)
+  const sent = sentLineOf(task, view)
   const link = linkOf(task)
   const doneWhen = doneWhenOf(task)
   const isField = hasReplyField(task, view)
@@ -566,6 +582,7 @@ function itemRowsOf(task: Task, view: PaneView, width: number): number {
     ask +
     thread +
     (hidden === 0 ? 0 : 1 + rowsOf(hiddenOf(hidden), width)) +
+    (sent === undefined ? 0 : rowsOf(sent, width)) +
     (link === undefined ? 0 : rowsOf(link, Math.max(1, width - cellsOf(LINK_LABEL)))) +
     (doneWhen === undefined ? 0 : linesRowsOf(doneWhen, width)) +
     (choices.length === 0 ? 0 : 1 + boxes) +

@@ -223,6 +223,8 @@ export async function handOver(
         live.unreadAppend.set(id, due.find(task => task.id === id))
       }
     }
+
+    $.ui.invalidate('ui.render')
   } else if (!live.wasStopped) {
     // The turn ended while the row went in.
     wakeUp($)
@@ -235,8 +237,16 @@ export async function handOver(
 
 /** Starts a turn for the answers that joined the main turn after its last request. */
 export function wakeUp($: EngineInterface) {
-  live.unreadAppend.clear()
+  clearUnread($)
   void $.prompt.submit({ text: WAKE_UP, asUser: true }).catch(() => undefined)
+}
+
+/** Forgets the rows no step has read, and redraws the pane's sent line, which no render input carries. */
+export function clearUnread($: EngineInterface) {
+  if (live.unreadAppend.size > 0) {
+    live.unreadAppend.clear()
+    $.ui.invalidate('ui.render')
+  }
 }
 
 /** Whether a prompt that entered carries an update in its words as its news (`#5 open: <title>.`), read as `inWords` reads them. */

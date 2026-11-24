@@ -89,6 +89,7 @@ import {
   replyKeyOf,
   rowBackTo,
   rowTitleOf,
+  sentLineOf,
 } from './pane'
 import type { Action, Entry } from './pane'
 import { isExpired, keyOf, savedIn, trimmed } from './saved'
@@ -135,7 +136,7 @@ import {
 } from './state'
 import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
-import { armBatch, cancelBatch, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
+import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
 
 const PLUGIN = 'open-items'
@@ -603,7 +604,7 @@ export const register: Register = on => {
       live.alertedTurn = false
       live.mainTurn = true
       live.wasStopped = false
-      live.unreadAppend.clear()
+      clearUnread($)
       await noteActive($)
       await awaited($, Promise.all([scan($), persist($)]))
     }
@@ -613,7 +614,7 @@ export const register: Register = on => {
 
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
-      live.unreadAppend.clear()
+      clearUnread($)
     }
 
     return yield* next(e)
@@ -633,7 +634,7 @@ export const register: Register = on => {
         wakeUp($)
       }
 
-      live.unreadAppend.clear()
+      clearUnread($)
     }
 
     return result
@@ -927,6 +928,7 @@ export const register: Register = on => {
       const heldText = heldOf(task, view)
       const thread = entriesOf(task, view.nowMs)
       const [detail, ...newest] = thread.entries
+      const sent = sentLineOf(task, view)
       const { choices, buttons } = itemButtonsOf(task)
       const isField = hasReplyField(task, view)
       const drawn = focusOrderOf(shown)
@@ -996,6 +998,13 @@ export const register: Register = on => {
                 </Box>
               )}
               {newest.flatMap(entry)}
+              {sent === undefined ? null : (
+                <Box key="sent" flexDirection="column">
+                  <Text dimColor wrap="wrap">
+                    {sent}
+                  </Text>
+                </Box>
+              )}
             </Box>
             {link === undefined ? null : (
               <Box key="link" flexDirection="row">

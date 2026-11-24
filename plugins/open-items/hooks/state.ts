@@ -492,8 +492,8 @@ export async function paneView($: EngineInterface, surface: Pick<PaneView, 'canT
   }
   const task = openTaskOf(state)
 
-  // The draft is read after every await: a key typed while a read is slow counts.
-  return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? '') }, surface)
+  // The draft and the unread rows are read after every await: a key typed, or a step, while a read is slow counts.
+  return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? ''), unreadIds: [...live.unreadAppend.keys()] }, surface)
 }
 
 /** What the pane draws of `entries`: how many items other sessions left, and whether this session's own hand-off waits unclaimed. */

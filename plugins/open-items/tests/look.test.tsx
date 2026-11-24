@@ -240,8 +240,9 @@ describe('the item screen helpers', () => {
   test("the header's first line wraps in its box once the waiting mark makes it too wide", () => {
     const waiting = item({ isWaitingForClaude: true })
 
-    expect(rowsFor(itemView(waiting), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(0)
-    expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(1)
+    // The sent line under the reply takes one row at both widths.
+    expect(rowsFor(itemView(waiting), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(1)
+    expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(2)
   })
 
   test('each message after the detail takes a blank row and a head row above its own rows', () => {
