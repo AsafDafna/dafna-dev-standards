@@ -159,6 +159,25 @@ describe("Claude's tools on side questions", () => {
     expect(one).not.toContain('The user has not opened your last reply yet.')
   })
 
+  test('↳ Answer to #N on a side question reaches neither the main session nor Done, and the drop points to /side #N', async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([ASKING, savedItem(2, { kind: 'question', title: 'Which log shows the failure?' })]) })
+    await start($)
+    const toSide = '#1 is a side question: use /side #1 <text>, or its field in /open-items.'
+
+    expect((await $.prompt.submit(typed('↳ Answer to #1: more'))).drop).toBe(toSide)
+    expect((await $.prompt.submit(typed('↳ Answer to #1:'))).drop).toBe(toSide)
+    await clock.settle()
+
+    expect(itemOf(world, 1)).toEqual(expect.objectContaining({ state: 'open', thread: ASKING.thread }))
+    expect(world.submitted).toEqual([])
+
+    const answer = await $.prompt.submit(typed('↳ Answer to #2: the log'))
+
+    expect(answer.drop).toBeUndefined()
+    expect(itemOf(world, 2)).toEqual(expect.objectContaining({ state: 'open', isWaitingForClaude: true }))
+    expect(itemOf(world, 2)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'user', text: 'the log' }))
+  })
+
   test('the tool text leaves side questions out of the session-end rule and tells Claude how to answer one', async ($, on) => {
     const { world } = seat(on)
     await start($)

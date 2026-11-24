@@ -693,7 +693,14 @@ export const register: Register = on => {
       noteEnds(e.text)
     }
 
-    const task = bridged === null ? undefined : (await read($, tasks)).find(one => one.id === bridged.id && isOpenAsk(one))
+    const items = bridged === null ? [] : await read($, tasks)
+
+    // An answer meant for a helper would reach Claude in the user's words, as their consent.
+    if (bridged !== null && items.some(one => one.id === bridged.id && isActive(one) && isSide(one))) {
+      return { drop: `#${bridged.id} is a side question: use /side #${bridged.id} <text>, or its field in /open-items.` }
+    }
+
+    const task = bridged === null ? undefined : items.find(one => one.id === bridged.id && isOpenAsk(one))
     let isAnswered = false
 
     if (bridged !== null && task !== undefined) {
