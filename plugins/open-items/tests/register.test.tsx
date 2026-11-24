@@ -2955,6 +2955,7 @@ describe('the mod\'s own tools', () => {
     const calls: { event: string; matcher: unknown }[] = []
     const record = ((event: string, ...rest: unknown[]) => {
       calls.push({ event, matcher: typeof rest[0] === 'object' ? rest[0] : undefined })
+      return { catch: () => undefined }
     }) as unknown as On
 
     register(record, {})

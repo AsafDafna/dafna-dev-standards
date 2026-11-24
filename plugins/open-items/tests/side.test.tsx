@@ -1,7 +1,7 @@
 import type { SessionMessage } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { answeredOf, clockOf, fiveHourOf, isPending, isWorking, newSideOf, noteForMain, noticedOf, refusedOf, questionForMain, reportOf, ridingOf, summaryOf } from '../hooks/side'
+import { answeredOf, clockOf, fiveHourOf, isPending, isWorking, newSideOf, noteForMain, noticedOf, refusedOf, questionForMain, reportOf, ridingOf, sentOf, summaryOf } from '../hooks/side'
 import { tookBy } from '../hooks/tasks'
 import type { Message, Task } from '../types'
 
@@ -119,6 +119,15 @@ describe('side questions', () => {
 
       expect([isPending(refused), isWorking(refused), refused.thread.at(-1)]).toEqual([false, false, expect.objectContaining({ event: 'notice', text: NOTICE })])
     }
+  })
+
+  test('a follow-up that came in while its helper started stays pending, sent or refused', () => {
+    const followed = side([ASKED, { from: 'user', text: 'and then?', atMs: 3000 }])
+    const started = sentOf(followed, 'a1', 1000)
+    const refused = refusedOf(followed, 'The helper could not start: x', 4000, 1000)
+
+    expect([started.side?.sentMs, isPending(started), isWorking(started)]).toEqual([1000, true, true])
+    expect([refused.side?.sentMs, isPending(refused), isWorking(refused)]).toEqual([1000, true, false])
   })
 
   test('noteForMain names the question the helper was given, not a follow-up that waited', () => {

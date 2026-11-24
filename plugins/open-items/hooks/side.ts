@@ -164,12 +164,13 @@ export function noticedOf(task: Task, line: string, atMs: number): Task {
   return withReply(task, { from: 'claude', author: 'helper', event: 'notice', text: line, atMs }, { transcripts: [], ...task.side, ...ended(task.side) })
 }
 
-export function refusedOf(task: Task, line: string, atMs: number): Task {
-  return noticedOf(sentOf(task, undefined), line, atMs)
+// `givenMs`: the atMs of the newest user message the helper was given; one added since stays pending.
+export function refusedOf(task: Task, line: string, atMs: number, givenMs?: number): Task {
+  return noticedOf(sentOf(task, undefined, givenMs), line, atMs)
 }
 
-export function sentOf(task: Task, helperId: string | undefined): Task {
-  const sentMs = newestUserOf(task)?.atMs
+export function sentOf(task: Task, helperId: string | undefined, givenMs?: number): Task {
+  const sentMs = givenMs ?? newestUserOf(task)?.atMs
 
   return { ...task, side: { transcripts: [], ...task.side, ...(sentMs !== undefined && { sentMs }), ...(helperId !== undefined && { helperId }) } }
 }

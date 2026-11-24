@@ -29,7 +29,8 @@ export async function registerHelper($: EngineInterface): Promise<void> {
 }
 
 export function helperHooks(on: On): void {
-  on('agent.offer', { agent: 'open-items:helper' }, ($, e, next) => (e.agentId === undefined ? { isOffered: false } : next(e)))
+  // Fails closed: a failed hook never offers the helper to the main model.
+  on('agent.offer', { agent: 'open-items:helper' }, ($, e, next) => (e.agentId === undefined ? { isOffered: false } : next(e))).catch(() => ({ isOffered: false }))
 
   on('command.run', { command: 'side' }, async ($, e) => {
     const text = e.args.trim()
@@ -109,6 +110,7 @@ function waitingOf(list: readonly Task[], tried: ReadonlySet<number>): Task | un
 }
 
 async function startHelper($: EngineInterface, task: Task) {
+  const givenMs = newestUserOf(task)?.atMs
   const prompt = await promptOf($, task)
   const spawned: AgentSpawnResult = await $.agent
     .spawn({ subagentType: HELPER_TYPE, description: `Side question #${task.id}`, prompt })
@@ -118,11 +120,11 @@ async function startHelper($: EngineInterface, task: Task) {
   if (agentId === undefined) {
     const line = `The helper could not start: ${spawned.deny ?? 'no helper id came back'}`
 
-    await edit($, task.id, (found, nowMs) => refusedOf(found, line, nowMs))
+    await edit($, task.id, (found, nowMs) => refusedOf(found, line, nowMs, givenMs))
     return
   }
 
-  await edit($, task.id, found => sentOf(found, agentId))
+  await edit($, task.id, found => sentOf(found, agentId, givenMs))
 }
 
 async function promptOf($: EngineInterface, task: Task): Promise<string> {
