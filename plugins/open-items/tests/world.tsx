@@ -96,6 +96,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     masking: undefined as ((text: string) => string) | undefined,
     /** Set, the user's typed prompts fail beneath: nothing there answers them, and the engine rejects them. */
     isTypedFailing: false,
+    /** How long the hooks beneath take to pass on the user's typed prompts. */
+    typedMs: 0,
     /** How long the plugin's own rows take to join the conversation. */
     appendMs: 0,
     /** How long the surface takes to open a pane. */
@@ -360,7 +362,11 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
   })
   on('turn.complete', ($, e) => ({ text: e.answer }))
-  on('prompt.submit', ($, e) => {
+  on('prompt.submit', async ($, e) => {
+    if (e.origin.kind === 'composer' && world.typedMs > 0) {
+      await clock.sleep(world.typedMs)
+    }
+
     if (e.origin.kind === 'plugin' && world.refusing !== undefined) {
       return { drop: world.refusing }
     }

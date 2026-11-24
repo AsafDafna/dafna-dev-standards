@@ -593,6 +593,39 @@ describe('what the main session gets', () => {
     expect(itemOf(world, 1)?.thread.at(-1)).toMatchObject({ event: 'notice', text: "The helper's message for the session looked like a secret, so it was not sent." })
   })
 
+  test('a note that replaces the riding one while the typed prompt passes rides the next typed prompt', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([NOTED]))
+    world.typedMs = 1000
+    await start($)
+
+    const passing = $.prompt.submit(typed('go on'))
+    await clock.settle()
+    await report($, { text: 'B.\nNote for the session: The cart reads the feed too.' })
+    await clock.advance(1000)
+    expect(contextOf(await passing)).toContain(NOTE_LINE)
+
+    world.typedMs = 0
+    expect(contextOf(await $.prompt.submit(typed('and the cart?')))).toContain('The cart reads the feed too.')
+  })
+
+  test('where the live-chat gate cannot tell what runs, a question still goes when the main turn ends', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([WORKING]))
+    world.agents = [RUNNING]
+    world.messages = [row('assistant', 'The tests pass.')]
+    await start($)
+    await clock.settle()
+    world.agents = []
+
+    await $.prompt.submit(typed("Let's brainstorm a name for the CLI"))
+    await $.prompt.submit(typed('I like the short ones'))
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await report($, { text: ASKS_MAIN })
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+
+    expect(world.submitted).toEqual([expect.stringContaining(FOR_MAIN)])
+  })
+
   const ESC = { reason: 'aborted', isAborted: true } as const
 
   for (const [row, run] of [

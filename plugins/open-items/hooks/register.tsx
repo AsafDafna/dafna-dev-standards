@@ -774,7 +774,7 @@ export const register: Register = on => {
     if (riding !== undefined && result.drop === undefined) {
       const blocks = result.context ?? []
 
-      await rode($, riding.ids.filter(id => blocks.some(block => block.includes(`Side question #${id} (Open items)`)))).catch(() => undefined)
+      await rode($, riding.messages.filter(({ id }) => blocks.some(block => block.includes(`Side question #${id} (Open items)`)))).catch(() => undefined)
     }
 
     return result

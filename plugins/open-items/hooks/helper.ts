@@ -360,14 +360,14 @@ export async function sendQuestions($: EngineInterface): Promise<void> {
   }
 }
 
-/** After the user's typed prompt carried items `ids` to the main session: their notes are gone, their questions sent. */
-export async function rode($: EngineInterface, ids: readonly number[]): Promise<void> {
-  if (ids.length === 0) {
+/** After the user's typed prompt carried `messages` to the main session: those notes are gone, those questions sent. One that replaced them meanwhile waits. */
+export async function rode($: EngineInterface, messages: readonly { id: number; atMs: number }[]): Promise<void> {
+  if (messages.length === 0) {
     return
   }
 
   const nowMs = await $.clock.now()
-  const isRiding = (task: Task) => ids.includes(task.id) && task.side?.toMain !== undefined && task.side.toMain.sentMs === undefined
+  const isRiding = (task: Task) => messages.some(one => one.id === task.id && one.atMs === task.side?.toMain?.atMs) && task.side?.toMain?.sentMs === undefined
 
   await change($, list => list.map(task => (isRiding(task) ? withToMain(task, toMain => (toMain.kind === 'note' ? undefined : { ...toMain, sentMs: nowMs })) : task)))
 }
