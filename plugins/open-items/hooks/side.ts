@@ -28,15 +28,40 @@ const MARKERS = [
   ['note', 'note for the session'],
   ['question', 'question for the session'],
 ] as const
-const MARKER_LINE = new RegExp(`^ {0,3}(?:>[ \\t]*)*(?:[-*+][ \\t]+)?(?:\\*\\*|__|\\*|_)?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*\\*|__|\\*|_)?[ \\t]*:(?:\\*\\*|__|\\*|_)?[ \\t]*(.*)$`, 'i')
+const MARKER_LINE = new RegExp(`^ {0,3}(?:[-*+][ \\t]+)?(?:\\*{1,2}|_{1,2})?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*{1,2}|_{1,2})?[ \\t]*:(?:\\*{1,2}|_{1,2})?[ \\t]*(.*)$`, 'i')
+const FENCE = /^(?:[ \t]*[-*+][ \t]+| {0,3})(`{3,}|~{3,})/
 
 type Marked = { kind: (typeof MARKERS)[number][0]; text: string; at: number; used: number }
 
+// A code block holds quoted text, such as a file the helper read: a marker there must never reach the main session.
+function fencedIn(lines: readonly string[]): boolean[] {
+  let opener = ''
+
+  return lines.map(line => {
+    const found = FENCE.exec(line)
+    const run = found?.[1] ?? ''
+    const rest = found ? line.slice(found[0].length) : ''
+
+    if (opener === '') {
+      opener = run.startsWith('`') && rest.includes('`') ? '' : run
+
+      return opener !== ''
+    }
+
+    if (run.charAt(0) === opener.charAt(0) && run.length >= opener.length && rest.trim() === '') {
+      opener = ''
+    }
+
+    return true
+  })
+}
+
 function markedIn(text: string): Marked[] {
   const lines = text.split('\n')
+  const fenced = fencedIn(lines)
 
   return lines.flatMap((line, at) => {
-    const found = MARKER_LINE.exec(line)
+    const found = fenced[at] ? null : MARKER_LINE.exec(line)
 
     if (!found) {
       return []
@@ -44,7 +69,7 @@ function markedIn(text: string): Marked[] {
 
     const kind = MARKERS.find(([, label]) => label === (found[1] ?? '').toLowerCase())?.[0] ?? 'note'
     const own = (found[2] ?? '').trim()
-    const next = own === '' ? lines.findIndex((entry, i) => i > at && entry.trim() !== '' && !MARKER_LINE.test(entry)) : -1
+    const next = own === '' ? lines.findIndex((entry, i) => i > at && !fenced[i] && entry.trim() !== '' && !MARKER_LINE.test(entry)) : -1
     const given = own === '' ? (lines[next] ?? '').trim() : own
 
     return [{ kind, text: given, at, used: next }]

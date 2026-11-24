@@ -34,12 +34,20 @@ describe('side questions', () => {
     ['A.\n**Note for the session:** CI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
     ['A.\n**Question for the session**: which?', { asksUser: false, toMain: { kind: 'question', text: 'which?' } }],
     ['A.\n- Note for the session: CI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
-    ['A.\n> Note for the session: CI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\n> Note for the session: CI lacks it.', { asksUser: false }],
     ['A.\n**Question for you:** which one?', { asksUser: true }],
     ['A.\nNote for the session:\n\nCI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
     ['A.\nSee **Note for the session:** x', { asksUser: false }],
     ['Note for the session:\nQuestion for you: x\nCI lacks it.', { asksUser: true, toMain: { kind: 'note', text: 'CI lacks it.' } }],
     ['A.\n    Note for the session: x', { asksUser: false }],
+    ['A.\n- ```bash\n  npm test\n  ```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n```npm test```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n```\n~~~\n```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n```\nNote for the session: quoted\n```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n~~~\nQuestion for the session: quoted?\n~~~\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n````\n```\nNote for the session: quoted\n````\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n```\nQuestion for you: quoted?\nNote for the session: quoted', { asksUser: false }],
+    ['A.\nNote for the session:\n```\nquoted\n```\nCI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
   ]
 
   for (const [text, want] of REPORTS) {
