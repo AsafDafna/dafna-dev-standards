@@ -194,10 +194,10 @@ function rowTextOf(task: Task, numberCells: number, columns: number): string {
   return `${rowTitleOf(task, numberCells, columns)}${newReply}${waiting}`
 }
 
-const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO' }
+const KIND_LABEL: Record<TaskKind, string> = { decision: 'DECISION', question: 'QUESTION', action: 'ACTION', info: 'INFO', side: 'SIDE QUESTION' }
 
 /** The background of an item's kind label and the color of its ask. */
-export const KIND_COLOR: Record<TaskKind, ThemeKey> = { decision: 'warning', question: 'suggestion', action: 'permission', info: 'success' }
+export const KIND_COLOR: Record<TaskKind, ThemeKey> = { decision: 'warning', question: 'suggestion', action: 'permission', info: 'success', side: 'merged' }
 
 /** The background of the option box with the focus or under the mouse: the theme has no key for one. */
 export const FOCUS_BACKGROUND: ThemeKey = 'subtle'
@@ -236,6 +236,8 @@ export function entryOf(message: Message, nowMs: number, isMarkdown: boolean): O
       return { text: `${who} changed the item · ${age}`, look: 'event' }
     case 'took':
       return { text: `The item moved here from an earlier session · ${age}`, look: 'event' }
+    case 'notice':
+      return { text: printable(message.text, MAX_DETAIL), look: 'event' }
     default:
       return { text: `${who} pressed ${PRESSED[message.event]} · ${age}`, look: 'event' }
   }
@@ -298,10 +300,16 @@ export function linkOf(task: Task): string | undefined {
 
 export type Action = { key: string; hotkey: string; label: string; move: Move }
 
-/** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open. */
+/** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open, but on a side question. */
 export function actionsOf(task: Task): Action[] {
+  const done = { key: 'done', hotkey: 'd', label: 'Done', move: DONE }
+
   if (task.kind === 'info') {
     return [{ key: 'seen', hotkey: 'd', label: 'Seen', move: SEEN }]
+  }
+
+  if (task.kind === 'side') {
+    return [done]
   }
 
   const later = task.state === 'open' ? [{ key: 'later', hotkey: 'l', label: 'Later', move: LATER }] : []
@@ -321,7 +329,7 @@ export function actionsOf(task: Task): Action[] {
     return [...choices, ...later]
   }
 
-  return [{ key: 'done', hotkey: 'd', label: 'Done', move: DONE }, ...later]
+  return [done, ...later]
 }
 
 /**

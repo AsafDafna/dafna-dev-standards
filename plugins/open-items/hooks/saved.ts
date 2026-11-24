@@ -1,4 +1,4 @@
-import type { Message, Saved, Taken, Task, TaskKind } from '../types'
+import type { Message, Saved, Side, Taken, Task, ToMain } from '../types'
 import { KINDS, isShown } from './tasks'
 
 /** How long a session's saved items wait for `claude --resume`: an older key is deleted at the next start. */
@@ -17,8 +17,9 @@ const PREFIX = 'session:'
 
 const STATES: readonly string[] = ['open', 'later', 'resolved', 'withdrawn', 'handing-off', 'moved']
 const CLOSED: readonly string[] = ['resolved', 'withdrawn', 'moved']
-const EVENTS: readonly string[] = ['chose', 'done', 'seen', 'later', 'changed', 'took']
+const EVENTS: readonly string[] = ['chose', 'done', 'seen', 'later', 'changed', 'took', 'notice']
 const UPDATES: readonly string[] = ['none', 'pending', 'delivered']
+const SAVED_KINDS: readonly string[] = [...KINDS, 'side']
 
 export function keyOf(sessionId: string): string {
   return `${PREFIX}${sessionId}`
@@ -45,7 +46,28 @@ function isMessage(value: unknown): value is Message {
     (value['from'] === 'claude' || value['from'] === 'user') &&
     isText(value['text']) &&
     isNumber(value['atMs']) &&
-    (value['event'] === undefined || EVENTS.includes(value['event'] as string))
+    (value['event'] === undefined || EVENTS.includes(value['event'] as string)) &&
+    (value['author'] === undefined || value['author'] === 'helper')
+  )
+}
+
+function isToMain(value: unknown): value is ToMain {
+  return (
+    isFields(value) &&
+    (value['kind'] === 'note' || value['kind'] === 'question') &&
+    isText(value['text']) &&
+    isNumber(value['atMs']) &&
+    isOptional(value['sentMs'], isNumber)
+  )
+}
+
+function isSideRecord(value: unknown): value is Side {
+  return (
+    isFields(value) &&
+    isTexts(value['transcripts']) &&
+    ['helperId', 'seenUuid'].every(key => isOptional(value[key], isText)) &&
+    isOptional(value['sentMs'], isNumber) &&
+    isOptional(value['toMain'], isToMain)
   )
 }
 
@@ -54,7 +76,7 @@ function hasSharedFields(value: Fields): boolean {
   return (
     ['id', 'createdMs', 'updatedMs'].every(key => isNumber(value[key])) &&
     isText(value['title']) &&
-    KINDS.includes(value['kind'] as TaskKind) &&
+    SAVED_KINDS.includes(value['kind'] as string) &&
     ['doneWhen', 'recommended'].every(key => isOptional(value[key], isText)) &&
     isOptional(value['options'], isTexts)
   )
@@ -73,7 +95,8 @@ function isItem(value: unknown): value is Task {
     ['link', 'note', 'askLine'].every(key => isOptional(value[key], isText)) &&
     isOptional(value['optionNotes'], isTexts) &&
     isOptional(value['isMarkdown'], (is): is is true => is === true) &&
-    isOptional(value['heardMs'], isNumber)
+    isOptional(value['heardMs'], isNumber) &&
+    isOptional(value['side'], isSideRecord)
   )
 }
 
@@ -198,8 +221,8 @@ export function isExpired(saved: Saved, nowMs: number): boolean {
 /**
  * `saved` as its key keeps it: open, later and handing-off items whole. A
  * closed item Claude has heard of keeps no thread, `doneWhen`, options,
- * `recommended`, ask line, option notes, link or note, and is gone 7 days
- * after its last change. One Claude has not heard of yet stays whole.
+ * `recommended`, ask line, option notes, link, note or side record, and is
+ * gone 7 days after its last change. One Claude has not heard of yet stays whole.
  */
 export function trimmed(saved: Saved, nowMs: number): Saved {
   const tasks = saved.tasks.flatMap(task => {
@@ -207,7 +230,7 @@ export function trimmed(saved: Saved, nowMs: number): Saved {
       return [task]
     }
 
-    const { doneWhen, options, recommended, link, note, askLine, optionNotes, ...kept } = task
+    const { doneWhen, options, recommended, link, note, askLine, optionNotes, side, ...kept } = task
 
     return nowMs - task.updatedMs > KEEP_CLOSED_MS ? [] : [{ ...kept, thread: [] }]
   })

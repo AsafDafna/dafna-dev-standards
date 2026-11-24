@@ -1,9 +1,10 @@
 /**
  * What Claude needs from the user: one of a few options (`decision`), an
  * answer in their own words (`question`), something done (`action`), or
- * nothing but a look (`info`).
+ * nothing but a look (`info`). A `side` item is the user's question to the
+ * session, which a helper answers.
  */
-export type TaskKind = 'decision' | 'question' | 'action' | 'info'
+export type TaskKind = 'decision' | 'question' | 'action' | 'info' | 'side'
 
 /**
  * `handing-off`: marked for a successor session, not taken yet. `moved`:
@@ -11,11 +12,26 @@ export type TaskKind = 'decision' | 'question' | 'action' | 'info'
  */
 export type ItemState = 'open' | 'later' | 'resolved' | 'withdrawn' | 'handing-off' | 'moved'
 
-/** A one-line entry in a thread for a press or an in-place change, in place of words. */
-export type ThreadEvent = 'chose' | 'done' | 'seen' | 'later' | 'changed' | 'took'
+/** A one-line entry in a thread for a press, an in-place change or a notice, in place of words. */
+export type ThreadEvent = 'chose' | 'done' | 'seen' | 'later' | 'changed' | 'took' | 'notice'
 
-/** `text` is the option for `chose`, and empty for the other events. */
-export type Message = { from: 'claude' | 'user'; text: string; atMs: number; event?: ThreadEvent }
+/**
+ * `text` is the option for `chose`, the line for `notice`, and empty for the
+ * other events. `author: 'helper'` marks a message from Claude that a helper
+ * wrote; without it, the main session wrote it.
+ */
+export type Message = { from: 'claude' | 'user'; text: string; atMs: number; event?: ThreadEvent; author?: 'helper' }
+
+/** A helper's note or question that waits for the main session: `sentMs` is set once it went there. */
+export type ToMain = { kind: 'note' | 'question'; text: string; atMs: number; sentMs?: number }
+
+/**
+ * A side item's record. `transcripts`: the main conversation files it was
+ * asked in, oldest first. `helperId`: the agent that answered last. `sentMs`:
+ * the `atMs` of the user's newest message a helper was given. `seenUuid`: the
+ * newest main-conversation row the helper has seen.
+ */
+export type Side = { transcripts: readonly string[]; helperId?: string; sentMs?: number; seenUuid?: string; toMain?: ToMain }
 
 /**
  * Whether Claude has heard of the user's latest move on the item: nothing
@@ -30,7 +46,7 @@ export type Task = {
   title: string
   /** The `ask` argument: the one line the user answers, does or must know. */
   askLine?: string
-  /** `thread[0]` is the detail, from Claude. A closed item saved past its delivery keeps none. */
+  /** `thread[0]` is the detail, from Claude, or a side item's question, from the user. A closed item saved past its delivery keeps none. */
   thread: readonly Message[]
   doneWhen?: string
   options?: readonly string[]
@@ -51,6 +67,7 @@ export type Task = {
   heardMs?: number
   /** Claude's note on closing it, "recorded in …", or "was #5 in the previous session". */
   note?: string
+  side?: Side
   createdMs: number
   updatedMs: number
 }

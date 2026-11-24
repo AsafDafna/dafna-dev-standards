@@ -21,14 +21,19 @@ export function isActive(task: Task): boolean {
   return task.state === 'open' || task.state === 'later'
 }
 
-/** Open or later, and asks something of the user: every kind but `info`. */
+/** The user's question to the session: a helper, not Claude, answers it. */
+export function isSide(task: Task): boolean {
+  return task.kind === 'side'
+}
+
+/** Open or later, and asks something of the user: a decision, a question or an action. */
 export function isOpenAsk(task: Task): boolean {
-  return isActive(task) && task.kind !== 'info'
+  return isActive(task) && task.kind !== 'info' && !isSide(task)
 }
 
 /** What the pane's head and the status line count: not yet replied to, or replied to and answered by Claude since. */
 export function waitsOnUser(task: Task): boolean {
-  return isActive(task) && !task.isWaitingForClaude
+  return isActive(task) && !task.isWaitingForClaude && !isSide(task)
 }
 
 /** In the Open items pane: the user's to act on, or moving to a new session. */
@@ -450,7 +455,8 @@ export function isRepeatOf(task: Task | undefined, move: Move): boolean {
  * `task` after the user's `move` at `atMs`, Claude's last reply counted as
  * read; the same task when the move repeats their last. A move in the same
  * millisecond as the user's one before it, a reply of Claude's between them
- * or not, takes the next, so `heardMs` tells the two apart.
+ * or not, takes the next, so `heardMs` tells the two apart. A side item's
+ * update stays as it was: its helper hears of the move, not Claude.
  */
 export function movedBy(task: Task, move: Move, atMs: number): Task {
   if (isRepeatOf(task, move)) {
@@ -460,16 +466,17 @@ export function movedBy(task: Task, move: Move, atMs: number): Task {
   const before = task.thread.findLast(message => message.from === 'user')
   const thread = [...task.thread, { from: 'user' as const, ...move, atMs: before === undefined ? atMs : Math.max(atMs, before.atMs + 1) }]
   const moved = { ...task, thread, hasNewReply: false }
+  const update = isSide(task) ? task.update : 'pending'
 
   switch (move.event) {
     case undefined:
-      return { ...moved, isWaitingForClaude: true, update: 'pending' }
+      return { ...moved, isWaitingForClaude: true, update }
     case 'later':
-      return { ...moved, state: 'later', update: 'pending' }
+      return { ...moved, state: 'later', update }
     case 'seen':
       return { ...moved, state: 'resolved' }
     default:
-      return { ...moved, state: 'resolved', update: 'pending' }
+      return { ...moved, state: 'resolved', update }
   }
 }
 
@@ -597,11 +604,12 @@ export function digestOf(due: readonly Task[]): string {
 
 /**
  * The line each prompt carries while an ask is open, Later ones too, for a Claude past a compaction. Unread: a move
- * Claude was not told of, or a reply it has not answered or closed; not one `isHeld` is about to send.
+ * Claude was not told of, or a reply it has not answered or closed; not one `isHeld` is about to send, nor a side
+ * item's, which its helper answers.
  */
 export function reminderOf(tasks: readonly Task[], isHeld: (task: Task) => boolean): string | undefined {
   const open = tasks.filter(isOpenAsk).length
-  const unread = tasks.filter(task => !isHeld(task) && (task.update === 'pending' || task.isWaitingForClaude)).length
+  const unread = tasks.filter(task => !isSide(task) && !isHeld(task) && (task.update === 'pending' || task.isWaitingForClaude)).length
 
   return open === 0 ? undefined : `Open items: ${open} open, ${plural(unread, 'unread answer')}; call list_items.`
 }
@@ -615,9 +623,9 @@ function whenOf(ms: number): string {
 
 export const PRESSED = { done: 'Done', seen: 'Seen', later: 'Later' } as const
 
-/** A thread entry as `list_items` gives it: a message on the lines under its head, a press or a change on one line. */
+/** A thread entry as `list_items` gives it: a message on the lines under its head, a press, a change or a notice on one line. */
 function listedEntryOf(message: Message, nowMs: number): string {
-  const who = message.from === 'claude' ? 'You' : 'The user'
+  const who = message.from === 'user' ? 'The user' : message.author === 'helper' ? 'The helper' : 'You'
   const when = whenOf(nowMs - message.atMs)
 
   switch (message.event) {
@@ -629,6 +637,8 @@ function listedEntryOf(message: Message, nowMs: number): string {
       return `- ${who} changed the item, ${when}.`
     case 'took':
       return `- The item moved here from an earlier session, ${when}.`
+    case 'notice':
+      return `- ${message.text}, ${when}.`
     default:
       return `- ${who} pressed ${PRESSED[message.event]}, ${when}.`
   }
@@ -646,7 +656,7 @@ function listedOf(task: Task, nowMs: number, isWhole: boolean): string {
     shown.length === task.thread.length ? 'Thread:' : `Thread, the last ${shown.length} of ${task.thread.length} entries (list_items with id ${task.id} gives all):`
   const notes = optionNotesOf(task)
   const lines = [
-    task.isWaitingForClaude ? 'The user replied and waits for you: answer in the item with reply_item, or close it with close_item.' : '',
+    task.isWaitingForClaude && !isSide(task) ? 'The user replied and waits for you: answer in the item with reply_item, or close it with close_item.' : '',
     task.hasNewReply ? 'The user has not opened your last reply yet.' : '',
     task.askLine ? `Ask: ${task.askLine}` : '',
     task.options && notes ? ['Options:', ...task.options.map((option, at) => `- ${option}: ${notes[at]}`)].join('\n') : '',
@@ -764,7 +774,7 @@ export function waitingOf(shown: readonly Task[]): { glyph: string; headline: st
     return { glyph: '☐ ', headline: parts.join(' · ') }
   }
 
-  return { glyph: '⋯ ', headline: `${shown.filter(isActive).length} waiting for Claude` }
+  return { glyph: '⋯ ', headline: `${shown.filter(task => isActive(task) && !isSide(task)).length} waiting for Claude` }
 }
 
 const BRIDGE = /^\s*↳?\s*Answer to #(\d+):[ \t]*\n?/i
