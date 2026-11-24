@@ -237,7 +237,7 @@ export function entryOf(message: Message, nowMs: number, isMarkdown: boolean): O
     case 'took':
       return { text: `The item moved here from an earlier session · ${age}`, look: 'event' }
     case 'notice':
-      return { text: printable(message.text, MAX_DETAIL), look: 'event' }
+      return { text: `${printable(message.text, MAX_DETAIL)} · ${age}`, look: 'event' }
     default:
       return { text: `${who} pressed ${PRESSED[message.event]} · ${age}`, look: 'event' }
   }

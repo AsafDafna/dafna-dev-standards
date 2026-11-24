@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { entryOf } from '../hooks/pane'
 import { leftoversIn, savedIn, takenCodes, trimmed } from '../hooks/saved'
 import { DONE, isOpenAsk, listOf, movedBy, parseAsk, parseReply, reminderOf, repliedBy, replyErrorOf, replyOf, statusOf, waitingOf } from '../hooks/tasks'
 import type { Message, Saved, Task } from '../types'
@@ -380,13 +381,15 @@ describe('side questions in the model', () => {
 
     expect(statusOf([ANSWERED])).toBeUndefined()
     expect(waitingOf([ANSWERED, decision]).headline).toBe('1 decision')
+    expect(waitingOf([WAITING, item({ id: 2, isWaitingForClaude: true })]).headline).toBe('1 waiting for Claude')
   })
 
-  test('list_items names the helper as the writer of its messages, and gives a notice as its line', () => {
+  test('list_items names the helper as the writer of its messages, and list_items and the item screen give a notice as its line', () => {
     const listed = listOf([WAITING], NOW + 3)
 
     expect(listed).toContain('- The user, ')
     expect(listed).toContain('- The helper, ')
     expect(listed).toContain('- The helper could not start: x, ')
+    expect(entryOf(NOTICE, NOTICE.atMs + 4 * 60_000, false)).toEqual({ text: 'The helper could not start: x · 4m', look: 'event' })
   })
 })
