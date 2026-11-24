@@ -26,12 +26,17 @@ export function isSide(task: Task): boolean {
   return task.kind === 'side'
 }
 
+/** A message in the user's own words, a question or a reply: no press. */
+export function isUserWords(message: Message): boolean {
+  return message.from === 'user' && !message.event
+}
+
 /** Open or later, and asks something of the user: a decision, a question or an action. */
 export function isOpenAsk(task: Task): boolean {
   return isActive(task) && task.kind !== 'info' && !isSide(task)
 }
 
-/** What the pane's head and the status line count: not yet replied to, or replied to and answered by Claude since. */
+/** What the pane's head and the status line count: an item of Claude's not yet replied to, or replied to and answered by Claude since. */
 export function waitsOnUser(task: Task): boolean {
   return isActive(task) && !task.isWaitingForClaude && !isSide(task)
 }
@@ -102,7 +107,7 @@ export function arrivedAs(task: Task, id: number, atMs: number, transcript = '')
  */
 function arrivedSideOf(task: Task, transcript: string): Side {
   const { helperId, seenUuid, sentMs, toMain, ...side } = task.side ?? { transcripts: [] }
-  const newest = task.thread.findLastIndex(message => message.from === 'user' && !message.event)
+  const newest = task.thread.findLastIndex(isUserWords)
   const isAnswered = task.thread.slice(newest + 1).some(message => message.author === 'helper')
   const transcripts = transcript === '' || side.transcripts.includes(transcript) ? side.transcripts : [...side.transcripts, transcript]
 

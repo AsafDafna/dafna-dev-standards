@@ -379,7 +379,7 @@ export function linkOf(task: Task): string | undefined {
 
 export type Action = { key: string; hotkey: string; label: string; move: Move }
 
-/** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open, but on a side question. */
+/** The item screen's buttons for `task`, each with the move it makes: by its kind, then Later while it is open, except on a side question. */
 export function actionsOf(task: Task): Action[] {
   const done = { key: 'done', hotkey: 'd', label: 'Done', move: DONE }
 

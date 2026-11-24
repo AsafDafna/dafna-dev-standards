@@ -145,6 +145,8 @@ import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from '
 import { askNew, doneSide, helperHooks, refusalOf, registerHelper, revive, sendQuestions, takeRiding } from './helper'
 
 const PLUGIN = 'open-items'
+// The same as state.ts's: a hook matcher reads only a literal or a const of this file.
+const PANE = 'open-items'
 
 const ADD = 'mcp__open-items__add_item'
 const REPLY = 'mcp__open-items__reply_item'
@@ -162,9 +164,6 @@ const DEFERRED: readonly string[] = [HANDOFF, TAKE]
  */
 const NEW_ID_READS = 3
 const NEW_ID_GAP_MS = 100
-
-/** The pane the items wait in, and the command that opens it. */
-const PANE = 'open-items'
 
 const TOOLS: readonly ToolSpec[] = [
   {
@@ -698,7 +697,7 @@ export const register: Register = on => {
       const drop = isActive(side)
         ? `#${side.id} is a side question: use /side #${side.id} <text>, or its field in /open-items.`
         : isAway(side)
-          ? `Item #${side.id} moved to a new session, so your response wasn't saved.`
+          ? unsavedOf(side.id, true)
           : `#${side.id} is a closed side question: ask a new one with /side.`
 
       return { drop }
@@ -964,6 +963,17 @@ export const register: Register = on => {
           </Text>
         </Box>
       ) : null
+    const heldNotice = (notice: string, onEdit: () => Promise<void>, onSend: () => Promise<void>) => (
+      <Box key="held" flexDirection="column">
+        <Text color="yellow" wrap="wrap">
+          {notice}
+        </Text>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
+          <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={onEdit} />
+          <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={onSend} />
+        </Box>
+      </Box>
+    )
     const task = openTaskOf(view)
 
     if (task !== undefined) {
@@ -1099,17 +1109,7 @@ export const register: Register = on => {
                 {isField && !isSide(task) ? <Button key={LONG_ANSWER.key} plain label={LONG_ANSWER.label} onPress={() => longAnswer($, task.id)} /> : null}
               </Box>
             )}
-            {heldText === undefined ? null : (
-              <Box key="held" flexDirection="column">
-                <Text color="yellow" wrap="wrap">
-                  {heldNoticeOf(task)}
-                </Text>
-                <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-                  <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editHeld($, task.id)} />
-                  <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => answer($, task.id, heldText, true)} />
-                </Box>
-              </Box>
-            )}
+            {heldText === undefined ? null : heldNotice(heldNoticeOf(task), () => editHeld($, task.id), () => answer($, task.id, heldText, true))}
             {!isField || Input === undefined ? null : (
               <Input
                 key={key}
@@ -1224,17 +1224,7 @@ export const register: Register = on => {
             onSubmit={value => askTyped($, value)}
           />
         )}
-        {heldNew === undefined ? null : (
-          <Box key="held" flexDirection="column">
-            <Text color="yellow" wrap="wrap">
-              {heldNoticeOf(NEW_HELD)}
-            </Text>
-            <Box flexDirection="row" flexWrap="wrap" columnGap={BUTTON_GAP}>
-              <Button key="edit" plain label={HELD_BUTTONS[0]} onPress={() => editNew($)} />
-              <Button key="send-anyway" plain label={HELD_BUTTONS[1]} onPress={() => askHeld($)} />
-            </Box>
-          </Box>
-        )}
+        {heldNew === undefined ? null : heldNotice(heldNoticeOf(NEW_HELD), () => editNew($), () => askHeld($))}
         {moving.length === 0 ? null : (
           <Box key="moving" flexDirection="column" flexShrink={0}>
             <Text bold color="yellow">
@@ -1573,12 +1563,16 @@ async function respond($: EngineInterface, id: number, move: Move, typedText = '
 
   if (was === undefined || (!isActive(was) && !isRepeatOf(was, move))) {
     const kept = (await toPromptBox($, typedText)) ? ' What you typed is in the prompt box.' : ''
-    const why = was !== undefined && isAway(was) ? 'moved to a new session' : "isn't open any more"
 
-    $.ui.toast(`Item #${id} ${why}, so your response wasn't saved.${kept}`, { timeoutMs: 8000 })
+    $.ui.toast(`${unsavedOf(id, was !== undefined && isAway(was))}${kept}`, { timeoutMs: 8000 })
   }
 
   return true
+}
+
+/** Why the user's response to item `id` wasn't saved: it moved to a new session (`isMoved`), or it closed. */
+function unsavedOf(id: number, isMoved: boolean): string {
+  return `Item #${id} ${isMoved ? 'moved to a new session' : "isn't open any more"}, so your response wasn't saved.`
 }
 
 /**

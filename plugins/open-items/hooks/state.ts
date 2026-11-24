@@ -7,8 +7,7 @@ import { NEW_SIDE, hasReplyField, openTaskOf, replyKeyOf, rowsFor } from './pane
 import type { PaneView } from './pane'
 import { isExpired, isSavedKey, keyOf, savedIn, trimmed, withTaken } from './saved'
 import { clockOf } from './side'
-
-export const PLUGIN = 'open-items'
+import type { QuotaHold } from './side'
 
 /** An ask alerts only when the person has been quiet this long. */
 export const ALERT_QUIET_MS = 120_000
@@ -42,7 +41,7 @@ export function isAlike(one: Seat, other: Seat): boolean {
 }
 
 export const TASKS_INITIAL: readonly Task[] = []
-export const NEXT_ID_INITIAL = 1
+export const NEXT_ID_INITIAL: number = 1
 export const HELD_INITIAL: Held | null = null
 export const RESTORED_FOR_INITIAL: string | null = null
 export const FOLDER_INITIAL: string | null = null
@@ -51,7 +50,7 @@ export type Roster = StateValue<'open-items', 'clients'>
 export const CLIENTS_INITIAL: Roster = {}
 export const HEADER_INITIAL: Header = { lastActiveMs: 0, taken: [] }
 export const OFFER_INITIAL: Offer = []
-export const SAVE_FAILING_INITIAL = false
+export const SAVE_FAILING_INITIAL: boolean = false
 export const ARRIVED_INITIAL: readonly number[] = []
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
@@ -171,8 +170,6 @@ export const live = {
   /** The user opened the pane (/open-items, /side): it stays open with nothing in it, until Hide or the person's close. */
   isKeptOpen: false,
 }
-
-export type QuotaHold = { percent: number; resetsAtMs?: number }
 
 function quotaOf(hold: QuotaHold): NonNullable<PaneView['quota']> {
   return { percent: Math.floor(hold.percent), ...(hold.resetsAtMs !== undefined && { resumesAt: clockOf(hold.resetsAtMs) }) }

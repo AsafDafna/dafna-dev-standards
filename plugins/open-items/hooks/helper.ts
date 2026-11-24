@@ -3,9 +3,9 @@ import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, 
 
 import type { Task, ToMain } from '../types'
 import { AT_WORK, isLiveChat } from './gate'
-import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
+import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isOpenSide, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf, workingHelperOf } from './side'
+import type { QuotaHold } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField } from './state'
-import type { QuotaHold } from './state'
 import { DONE, MAX_DETAIL, isActive, isSide, looksSecret, movedBy, replyOf } from './tasks'
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
@@ -106,8 +106,6 @@ export async function askNew($: EngineInterface, text: string): Promise<boolean>
   return true
 }
 
-const isOpenSide = (task: Task) => task.kind === 'side' && task.state === 'open'
-
 export async function followUp($: EngineInterface, id: number, text: string): Promise<boolean> {
   const refusal = refusalOf(text)
 
@@ -133,9 +131,9 @@ export async function followUp($: EngineInterface, id: number, text: string): Pr
 export async function doneSide($: EngineInterface, id: number): Promise<void> {
   await afterHelpers(async () => {
     const task = (await tasksNow($)).find(found => found.id === id)
-    const helperId = task?.side?.helperId
+    const helperId = task === undefined ? undefined : workingHelperOf(task)
 
-    if (task !== undefined && isWorking(task) && helperId !== undefined) {
+    if (helperId !== undefined) {
       disarm(helperId)
       await stopHelper($, helperId)
     }
@@ -222,7 +220,7 @@ export function disarm(helperId: string) {
   live.helperTimers.delete(helperId)
 }
 
-const isRunOf = (helperId: string) => (task: Task) => isWorking(task) && task.side?.helperId === helperId
+const isRunOf = (helperId: string) => (task: Task) => workingHelperOf(task) === helperId
 
 async function timedOut($: EngineInterface, helperId: string) {
   live.helperTimers.delete(helperId)

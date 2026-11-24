@@ -44,7 +44,7 @@ export async function isLiveChat($: EngineInterface, nowMs: number): Promise<boo
 
 /**
  * Notes a background start that a Bash or Monitor result reports, in the
- * words of Claude Code 2.1.310. A start whose id cannot be read leaves what
+ * words of Claude Code 2.1.331. A start whose id cannot be read leaves what
  * runs unknown.
  */
 export function noteStart(tool: string, text: string | undefined) {

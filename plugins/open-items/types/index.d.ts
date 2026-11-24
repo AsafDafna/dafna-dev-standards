@@ -27,10 +27,11 @@ export type ToMain = { kind: 'note' | 'question'; text: string; atMs: number; se
 
 /**
  * A side item's record. `transcripts`: the main conversation files it was
- * asked in, oldest first. `helperId`: the agent that answered last. `sentMs`:
- * the `atMs` of the user's newest message a helper was given. `endedMs`: the
- * `sentMs` whose helper run ended, with an answer or a notice. `seenUuid`: the
- * newest main-conversation row the helper has seen.
+ * asked in, oldest first. `helperId`: the helper it was last handed to,
+ * which a follow-up resumes; none after a timeout or a move. `sentMs`: the
+ * `atMs` of the user's newest message a helper was given. `endedMs`: the
+ * `sentMs` whose helper run ended, with an answer or a notice. `seenUuid`:
+ * the newest main-conversation row the helper has seen.
  */
 export type Side = { transcripts: readonly string[]; helperId?: string; sentMs?: number; endedMs?: number; seenUuid?: string; toMain?: ToMain }
 

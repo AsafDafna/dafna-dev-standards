@@ -1,7 +1,7 @@
 import type { SessionMessage, SessionRateLimit } from 'claude-code'
 
 import type { Message, Task, ToMain } from '../types'
-import { MAX_TITLE, looksSecret } from './tasks'
+import { MAX_TITLE, isSide, isUserWords, looksSecret } from './tasks'
 import { clip, oneLine } from './text'
 
 export const HELPER_TYPE = 'open-items:helper'
@@ -33,6 +33,9 @@ const MARKERS = [
 ] as const
 const MARKER_LINE = new RegExp(`^ {0,3}(?:[-*+][ \\t]+)?(?:\\*{1,2}|_{1,2})?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*{1,2}|_{1,2})?[ \\t]*:(?:\\*{1,2}|_{1,2})?[ \\t]*(.*)$`, 'i')
 const FENCE = /^([ \t]*)((?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})/
+
+/** A reading of the five-hour window, which `live.quotaHold` keeps while it holds side questions. */
+export type QuotaHold = { percent: number; resetsAtMs?: number }
 
 type Marked = { kind: (typeof MARKERS)[number][0]; text: string; at: number; used: number }
 
@@ -109,19 +112,28 @@ export function newSideOf(id: number, text: string, atMs: number, transcript: st
 }
 
 export function newestUserOf(task: Task): Message | undefined {
-  return task.thread.findLast(message => message.from === 'user' && !message.event)
+  return task.thread.findLast(isUserWords)
+}
+
+export function isOpenSide(task: Task): boolean {
+  return isSide(task) && task.state === 'open'
 }
 
 export function isPending(task: Task): boolean {
   const newest = newestUserOf(task)
 
-  return task.kind === 'side' && task.state === 'open' && newest !== undefined && (task.side?.sentMs === undefined || newest.atMs > task.side.sentMs)
+  return isOpenSide(task) && newest !== undefined && (task.side?.sentMs === undefined || newest.atMs > task.side.sentMs)
 }
 
 export function isWorking(task: Task): boolean {
   const sentMs = task.side?.sentMs
 
-  return task.kind === 'side' && task.state === 'open' && sentMs !== undefined && task.side?.endedMs !== sentMs
+  return isOpenSide(task) && sentMs !== undefined && task.side?.endedMs !== sentMs
+}
+
+/** The helper at work on `task`, when one is. */
+export function workingHelperOf(task: Task): string | undefined {
+  return isWorking(task) ? task.side?.helperId : undefined
 }
 
 export function reportOf(text: string): { asksUser: boolean; toMain?: { kind: 'note' | 'question'; text: string } } {
@@ -170,11 +182,11 @@ export function noticedOf(task: Task, line: string, atMs: number): Task {
   return withReply(task, { from: 'claude', author: 'helper', event: 'notice', text: line, atMs }, { transcripts: [], ...task.side, ...ended(task.side) })
 }
 
-// `givenMs`: the atMs of the newest user message the helper was given; one added since stays pending.
 export function refusedOf(task: Task, line: string, atMs: number, givenMs?: number): Task {
   return noticedOf(sentOf(task, undefined, givenMs), line, atMs)
 }
 
+// `givenMs`: the atMs of the newest user message the helper was given; one added since stays pending.
 export function sentOf(task: Task, helperId: string | undefined, givenMs?: number): Task {
   const sentMs = givenMs ?? newestUserOf(task)?.atMs
 
@@ -232,14 +244,14 @@ export function helperPromptOf(args: { task: Task; summary: string; current: str
 /** Every follow-up since the helper's last run, oldest first: more than one queues behind a working helper. */
 export function followUpOf(task: Task, since: string): string {
   const sentMs = task.side?.sentMs
-  const asked = task.thread.filter(message => message.from === 'user' && !message.event && (sentMs === undefined || message.atMs > sentMs))
+  const asked = task.thread.filter(message => isUserWords(message) && (sentMs === undefined || message.atMs > sentMs))
 
   return `Follow-up on side question #${task.id}: ${asked.map(message => message.text).join('\n\n')}\n\nThe main conversation since your last answer:\n${since === '' ? 'nothing new' : since}`
 }
 
 export function logOf(tasks: readonly Task[]): string {
   const entries = tasks
-    .filter(task => task.kind === 'side')
+    .filter(isSide)
     .map(task => {
       const answer = task.thread.findLast(message => message.from === 'claude' && !message.event)?.text ?? 'none yet'
 
@@ -249,7 +261,7 @@ export function logOf(tasks: readonly Task[]): string {
   return ['# Side questions of this session', ...entries].join('\n\n')
 }
 
-export function fiveHourOf(limits: readonly SessionRateLimit[], nowMs: number): { percent: number; resetsAtMs?: number } | undefined {
+export function fiveHourOf(limits: readonly SessionRateLimit[], nowMs: number): QuotaHold | undefined {
   const limit = limits.find(entry => entry.kind === 'five_hour')
 
   if (!limit) {
@@ -276,8 +288,8 @@ export function noteForMain(task: Task): string {
   const at = task.thread.findLastIndex(message => message.from === 'claude' && message.author === 'helper' && !message.event && message.atMs === toMain?.atMs)
   const helper = task.thread[at]
   const before = at >= 0 ? task.thread.slice(0, at) : task.thread
-  const asked = before.findLast(message => message.from === 'user' && !message.event && message.atMs === toMain?.askedMs)
-  const question = asked ?? before.findLast(message => message.from === 'user' && !message.event)
+  const asked = before.findLast(message => isUserWords(message) && message.atMs === toMain?.askedMs)
+  const question = asked ?? before.findLast(isUserWords)
   const answer = unquoted(oneLine(withoutMarkers(helper?.text ?? '')))
   const shown = answer.length > MAX_ANSWER ? `"${answer.slice(0, MAX_ANSWER)}" (cut: list_items with id ${task.id} gives it whole)` : `"${answer}"`
 
@@ -297,7 +309,7 @@ export function questionForMain(task: Task): string {
 
 /** `messages`: each item's message that rides, by the `atMs` of its `toMain`. */
 export function ridingOf(tasks: readonly Task[]): { context: string; messages: { id: number; atMs: number }[] } | undefined {
-  const riding = tasks.filter((task): task is Task & { side: { toMain: ToMain } } => task.kind === 'side' && task.state === 'open' && task.side?.toMain !== undefined && task.side.toMain.sentMs === undefined)
+  const riding = tasks.filter((task): task is Task & { side: { toMain: ToMain } } => isOpenSide(task) && task.side?.toMain !== undefined && task.side.toMain.sentMs === undefined)
 
   if (riding.length === 0) {
     return undefined

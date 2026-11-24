@@ -3,7 +3,7 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { Offer, Taken, Task } from '../types'
 import { arrivedAs, isActive, isShown, isSide, leftTakenOf, numbersFor, stateBefore, takenBackOf, takenByCodeOf, toldOf, tookBy } from './tasks'
-import { isWorking } from './side'
+import { workingHelperOf } from './side'
 import { afterHelpers, disarm, pump, stopHelper, tasksNow, unsentOf, writeLog } from './helper'
 import { offerOf } from './pane'
 import { handedOffIn, isUnclaimed, keyOf, leftoversIn, savedIn, takenCodes, takenFrom } from './saved'
@@ -44,8 +44,6 @@ const header = atom({ plugin: 'open-items', key: 'header' } as const, HEADER_INI
 const offer = atom({ plugin: 'open-items', key: 'offer' } as const, OFFER_INITIAL)
 const arrived = atom({ plugin: 'open-items', key: 'arrived' } as const, ARRIVED_INITIAL)
 
-const isRunning = (task: Task) => isWorking(task) && task.side?.helperId !== undefined
-
 export async function handOffItems($: EngineInterface, e: { agentId?: string }): Promise<ToolCallResult> {
   if (e.agentId !== undefined) {
     return { deny: 'Only the main agent hands items off.' }
@@ -75,7 +73,7 @@ export async function handOffItems($: EngineInterface, e: { agentId?: string }):
 
   // A helper whose start is in flight is stopped too, and none starts before the items are marked.
   await afterHelpers(async () => {
-    for (const helperId of (await tasksNow($)).filter(isRunning).flatMap(task => task.side?.helperId ?? [])) {
+    for (const helperId of (await tasksNow($)).flatMap(task => workingHelperOf(task) ?? [])) {
       disarm(helperId)
       await stopHelper($, helperId)
     }
@@ -87,7 +85,7 @@ export async function handOffItems($: EngineInterface, e: { agentId?: string }):
       handed = list.filter(isActive).map(task => task.id)
 
       // A stopped helper's question is asked again where the item goes, or here after a Take back.
-      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(isRunning(task) ? unsentOf(task) : task, unread, nowMs) : task))
+      return handed.length === 0 ? list : list.map(task => (isActive(task) ? handedOff(workingHelperOf(task) === undefined ? task : unsentOf(task), unread, nowMs) : task))
     })
   })
 
