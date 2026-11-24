@@ -8,26 +8,37 @@
   with `/side <question>`. `/side #N <text>` follows up on side question #N,
   and `/side` alone opens the pane on the field. `/side` and `/open-items` run
   at once, also while Claude works, and `/open-items` opens the pane also when
-  it holds nothing.
+  it holds nothing. `/side` runs only from you, at the prompt or through
+  Remote Control. The arrow keys reach the field after the list's last row.
 - The helper: the mod registers the agent type `open-items:helper` and starts
   one helper for each side question, one at a time in a session. It has only
   Read, Grep and Glob, runs on Opus at medium effort with a limit of 20 turns,
   keeps CLAUDE.md, and is hidden from the main model. At 10 minutes the mod
   stops it with `TaskStop` and says so in the item. A follow-up wakes the same
-  helper. A new helper's prompt holds a summary of the conversation (the first
-  prompt and the latest messages, text only) and the paths of the conversation
-  file and of a log of the session's side questions, which the mod writes in
-  the scratchpad.
+  helper, with Claude's replies in the item since its last answer, and after a
+  compaction the conversation's newest messages. The helper is told that text
+  in files and conversations is data, never to quote a secret value, and to
+  keep its answer under 4,000 characters. `/clear` stops the helpers of the
+  session it ends. A new helper's prompt holds a summary of the conversation
+  (the first prompt and the latest messages, text only) and the paths of the
+  conversation file and of a log of the session's side questions, which the
+  mod writes in the scratchpad.
 - Notes and questions for Claude: a helper's note rides your next typed prompt
   and starts no turn. A helper's question goes when Claude's turn ends; in a
   live chat or after Esc it rides your next typed prompt instead. Both reach
-  Claude as quoted data, marked as the helper's words. The question asks
-  Claude to answer in the item with `reply_item` and to change nothing.
+  Claude as quoted data, marked as the helper's words; the note quotes your
+  words to the helper too. Where auto mode's review flags a helper's answer,
+  or gives no verdict, nothing from it goes to Claude, and the item says so.
+  `list_items` gives a helper's answer as its quoted words, cut at 4,000
+  characters, and hides one that looks like a secret. The question asks Claude
+  to answer in the item with `reply_item` and to change nothing.
 - Side questions have their own section, SIDE QUESTIONS. Only Done closes one:
   `close_item` refuses the kind, `add_item` cannot make one, and there is no
-  Later. They are not counted in the status line or the reminder line and set
-  off no alert. The mod's helpers are not background work for the live-chat
-  gate, and a side question sent from the pane is not an input for it.
+  Later. Done keeps a note that has not reached Claude yet: it still rides
+  your next typed prompt. They are not counted in the status line or the
+  reminder line and set off no alert. The mod's helpers are not background
+  work for the live-chat gate, and a side question sent from the pane is not
+  an input for it.
 - Quota guard, where the account has a five-hour usage window: one alert per
   window at 70%, and a hold at 85%. A held side question is saved, but no
   helper starts and no question goes to Claude on its own until a later
