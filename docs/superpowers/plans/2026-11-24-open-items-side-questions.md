@@ -371,7 +371,7 @@ The spec does not ask for this; Asaf's recorded follow-up does: "register.tsx is
 
 - [ ] **Step 1: Write the failing tests** in `helper.test.tsx`:
   - `'the helper type is registered with only Read, Grep and Glob, no permission dialogs, Opus at medium effort and a turn bound'`. `world.registered[0]` holds those fields and `maxTurns: 20`. It has no `omitClaudeMd`, and its `prompt` holds `Never call the advisor.`.
-    - Retention: this pins the mod's side of the look-and-report-only grant (the spec's "Decided" items 9 and 10). The engine's refusals were proved by probe 0.1, so no unit test replays them.
+    - Retention: this pins the mod's side of the look-and-report-only grant (the spec's "Decided by Nir (2026-11-07)" items 9 and 10). The engine's refusals were proved by probe 0.1, so no unit test replays them.
   - `'the helper type is hidden from the main model, and its own runs still resume'`. `$.agent.offer` of `open-items:helper` with no `agentId` gives `{ isOffered: false }`. With `agentId: 'a1'` it is offered. `Explore` with no `agentId` is offered.
   - `'/side <question> adds a side question and asks a helper with what it needs'`.
     - `world.messages` holds a first prompt `Build the feed` and a later reply.
@@ -397,6 +397,7 @@ The spec does not ask for this; Asaf's recorded follow-up does: "register.tsx is
   - `session.send`: records in `world.sends`. It answers `{ isDelivered: true }` only when `e.to` is in `world.helpers`, else `{ isDelivered: false, reason: 'No agent by that id.' }`.
   - `agent.report`: answers `{ text: e.text }` for the types the mod passes on.
   - `fs.write`: records `world.files[e.path] = e.text`, or answers `{ deny }` while `world.isFileRefused` is set.
+  - `world.helpers: string[]` (the agent ids that a send reaches), `world.sends`, `world.files` and `world.isFileRefused`.
 - Test: `<plugin>/tests/helper.test.tsx`
 
 **Interfaces:**
@@ -458,6 +459,7 @@ The spec does not ask for this; Asaf's recorded follow-up does: "register.tsx is
 **Files:**
 - Modify: `<plugin>/hooks/helper.ts`
 - Modify: `<plugin>/hooks/state.ts`: add `helperTimers: Map<string, Timer>` to `live`.
+- Modify: `<plugin>/tests/world.tsx`: a `tool.call` stand-in for `TaskStop`. It records `e.task_id` in `world.stops`, or answers `{ deny }` while `world.isStopRefused` is set.
 - Test: `<plugin>/tests/helper.test.tsx`
 
 **Interfaces:**
@@ -478,7 +480,7 @@ The spec does not ask for this; Asaf's recorded follow-up does: "register.tsx is
 - [ ] **Step 2: Run and see them fail.**
 - [ ] **Step 3: Implement** the timer, `stopHelper` and the stopped-report rule.
 - [ ] **Step 4: Run and see them pass.**
-- [ ] **Step 5: Commit** the three files: `feat(open-items): stop a helper that does not answer in 10 minutes`
+- [ ] **Step 5: Commit** the four files: `feat(open-items): stop a helper that does not answer in 10 minutes`
 
 ### Task 8: Notes and questions for the main session, and the live-chat gate
 
@@ -529,7 +531,7 @@ The spec does not ask for this; Asaf's recorded follow-up does: "register.tsx is
 - Modify: `<plugin>/hooks/helper.ts`
 - Modify: `<plugin>/hooks/state.ts`: add `quotaHold: { percent: number; resetsAtMs?: number } | null`, `quotaTimer: Timer | null` and `alertedWindows: Set<string>` to `live`. `paneView` sets `PaneView.quota` from `quotaHold`.
 - Modify: `<plugin>/hooks/pane.ts`: `PaneView.quota?: { percent: number; resumesAt?: string }`. Task 10a draws it.
-- Modify: `<plugin>/tests/world.tsx`: a `session.measure` stand-in that answers `{ changed: e.changed }`.
+- Modify: `<plugin>/tests/world.tsx`: a `session.measure` stand-in that answers `{ changed: e.changed }`, and a `session.usage` stand-in that answers `{ value: { rateLimits: world.rateLimits } }`, with `world.rateLimits: SessionRateLimit[]` empty by default.
 - Test: `<plugin>/tests/helper.test.tsx`
 
 **Interfaces:**
@@ -557,7 +559,7 @@ The spec does not ask for this; Asaf's recorded follow-up does: "register.tsx is
 - [ ] **Step 2: Run and see them fail.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run and see them pass.**
-- [ ] **Step 5: Commit** the four files: `feat(open-items): alert at 70% of the five-hour window and hold side questions at 85%`
+- [ ] **Step 5: Commit** the five files: `feat(open-items): alert at 70% of the five-hour window and hold side questions at 85%`
 
 ### Task 10a: The list, the new-question field and an immediate /open-items
 
