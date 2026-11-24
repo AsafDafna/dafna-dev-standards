@@ -1,10 +1,10 @@
-import type { AgentInfo, AgentReportInput, On, SessionMessage } from 'claude-code'
+import type { AgentInfo, AgentReportInput, On, SessionMessage, SessionRateLimit } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { isPending, isWorking } from '../hooks/side'
 import type { Message, Side, Task } from '../types'
-import { ADD, DONE, KEY_SHAPED, NOW, answerOf, earlierItems, itemOf, savedItem, seat, start, typed } from './world'
+import { ADD, DONE, HOUR_MS, KEY_SHAPED, NOW, answerOf, earlierItems, itemOf, savedItem, seat, start, typed } from './world'
 
 type World = ReturnType<typeof seat>['world']
 
@@ -702,4 +702,89 @@ describe('what the main session gets', () => {
 
     expect(answerOf(await $.tool.call({ tool: ADD, title: 'Pick a name for the CLI', detail: 'Three short ones.', kind: 'question' })).deny).toBe('live chat: ask in the chat')
   })
+})
+
+const ALERT = { text: 'Five-hour usage at 72%. Side questions pause at 85%.', title: 'Open items' }
+const fiveHour = (percentUsed: number, resetsInMs = HOUR_MS): SessionRateLimit => ({ kind: 'five_hour', percentUsed, resetsAt: new Date(NOW + resetsInMs).toISOString() })
+
+describe('the quota guard', () => {
+  test('at 72% of the five-hour window the user gets one alert per window, and the question still runs', async ($, on) => {
+    const { world, clock } = seat(on)
+    world.rateLimits = [fiveHour(72.9)]
+    await start($)
+
+    await side($, 'first')
+    await clock.settle()
+    await side($, 'second')
+    await clock.settle()
+    expect(world.notices).toEqual([ALERT])
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #1', 'Side question #2'])
+
+    world.rateLimits = [fiveHour(72.9, 5 * HOUR_MS)]
+    await side($, 'third')
+    await clock.settle()
+    expect(world.notices).toEqual([ALERT, ALERT])
+  })
+
+  test('at 86% a new side question is saved and held, and runs once the window resets', async ($, on) => {
+    const { world, clock } = seat(on)
+    world.rateLimits = [fiveHour(86, 60_000)]
+    await start($)
+
+    await side($, 'q')
+    await clock.settle()
+    expect(itemOf(world, 1)?.kind).toBe('side')
+    expect(world.spawns).toEqual([])
+
+    world.rateLimits = [fiveHour(10, 5 * HOUR_MS)]
+    await clock.advance(61_000)
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #1'])
+  })
+
+  test('a later reading under 85% ends the hold', async ($, on) => {
+    const { world, clock } = seat(on)
+    world.rateLimits = [fiveHour(86)]
+    await start($)
+
+    await side($, 'q')
+    await clock.settle()
+    expect(world.spawns).toEqual([])
+
+    world.rateLimits = [fiveHour(40)]
+    await $.session.measure({ changed: ['rateLimits'], rateLimits: world.rateLimits, context: { window: 200_000 } })
+    await clock.settle()
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #1'])
+  })
+
+  test('while held, a question for the session waits and a note still rides', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([ASKING, { ...NOTED, id: 2 }]))
+    world.rateLimits = [fiveHour(86)]
+    await start($)
+
+    await turn($, 't1')
+    await clock.settle()
+    expect(world.submitted).toEqual([])
+
+    const entered = contextOf(await $.prompt.submit(typed('go on')))
+    expect(entered).toContain(NOTE_LINE)
+    expect(entered).toContain(FOR_MAIN)
+  })
+
+  for (const [label, limits] of [
+    ['seven_day at 89 with five_hour at 14', [{ kind: 'seven_day', percentUsed: 89 }, fiveHour(14)]],
+    ['seven_day at 89 alone', [{ kind: 'seven_day', percentUsed: 89 }]],
+    ['five_hour at 90 past its reset', [fiveHour(90, -1000)]],
+  ] as const) {
+    test(`only the five-hour window counts, and a reading past its reset is stale (${label})`, async ($, on) => {
+      const { world, clock } = seat(on)
+      world.rateLimits = [...limits]
+      await start($)
+
+      await side($, 'q')
+      await clock.settle()
+
+      expect(world.spawns).toHaveLength(1)
+      expect(world.notices).toEqual([])
+    })
+  }
 })

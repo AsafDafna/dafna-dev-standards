@@ -6,6 +6,7 @@ import { isActive, isAway, isShown, statusOf, toldOf } from './tasks'
 import { hasReplyField, openTaskOf, replyKeyOf, rowsFor } from './pane'
 import type { PaneView } from './pane'
 import { isExpired, isSavedKey, keyOf, savedIn, trimmed, withTaken } from './saved'
+import { clockOf } from './side'
 
 export const PLUGIN = 'open-items'
 
@@ -163,6 +164,16 @@ export const live = {
   helperTimers: new Map<string, Timer>(),
   /** The last write of the side questions' log failed: a helper's prompt holds the log. */
   isLogFailing: false,
+  quotaHold: null as QuotaHold | null,
+  quotaTimer: null as Timer | null,
+  /** The five-hour windows alerted, by their reset time ('' for a window with none). */
+  alertedWindows: new Set<string>(),
+}
+
+export type QuotaHold = { percent: number; resetsAtMs?: number }
+
+function quotaOf(hold: QuotaHold): NonNullable<PaneView['quota']> {
+  return { percent: Math.floor(hold.percent), ...(hold.resetsAtMs !== undefined && { resumesAt: clockOf(hold.resetsAtMs) }) }
 }
 
 /** `bridge`: a prompt that answers an item (`↳ Answer to #5:`, see `answerIn`), from any surface. */
@@ -499,8 +510,16 @@ export async function paneView($: EngineInterface, surface: Pick<PaneView, 'canT
   }
   const task = openTaskOf(state)
 
-  // The draft and the unread rows are read after every await: a key typed, or a step, while a read is slow counts.
-  return seated({ ...state, draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? ''), unreadIds: [...live.unreadAppend.keys()] }, surface)
+  // The draft, the unread rows and the hold are read after every await: a key typed, or a step, while a read is slow counts.
+  return seated(
+    {
+      ...state,
+      draft: task === undefined ? '' : (live.drafts.get(replyKeyOf(task.id)) ?? ''),
+      unreadIds: [...live.unreadAppend.keys()],
+      ...(live.quotaHold !== null && { quota: quotaOf(live.quotaHold) }),
+    },
+    surface,
+  )
 }
 
 /** What the pane draws of `entries`: how many items other sessions left, and whether this session's own hand-off waits unclaimed. */

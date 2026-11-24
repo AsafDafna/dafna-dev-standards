@@ -1,4 +1,4 @@
-import type { AgentInfo, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, ToolSpec } from 'claude-code'
+import type { AgentInfo, EngineInterface, On, PaneOpenArgs, PromptOrigin, PromptSubmitInput, SessionInfo, SessionMessage, SessionRateLimit, ToolSpec } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
@@ -154,6 +154,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     isFileRefused: false,
     /** What `$.session.info()` answers with. */
     info: { transcriptPath: '/t/main.jsonl', scratchpadDir: '/s/pad' } as SessionInfo,
+    /** The rate-limit windows `$.session.usage()` answers with: none off a subscription. */
+    rateLimits: [] as SessionRateLimit[],
   }
 
   const clock = mock.clock(on, { now: NOW })
@@ -259,6 +261,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     return { value: e.last === undefined ? world.messages : world.messages.slice(Math.max(0, world.messages.length - e.last)) }
   })
   on('session.info', () => ({ value: world.info }))
+  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200_000 }, rateLimits: world.rateLimits } }))
+  on('session.measure', ($, e) => ({ changed: e.changed }))
   on('agent.register', ($, e) => {
     world.registered.push(e)
     return { value: { agent: `open-items:${e.name}` } }

@@ -3,8 +3,9 @@ import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, 
 
 import type { Task, ToMain } from '../types'
 import { AT_WORK, isLiveChat } from './gate'
-import { HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
-import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, settle, show } from './state'
+import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf } from './side'
+import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, show } from './state'
+import type { QuotaHold } from './state'
 import { MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
@@ -63,6 +64,14 @@ export function helperHooks(on: On): void {
 
     return CONSUMED
   }).catch(() => CONSUMED)
+
+  on('session.measure', ($, e, next) => {
+    if (e.changed.includes('rateLimits') && live.quotaHold !== null) {
+      runHeld($)
+    }
+
+    return next(e)
+  })
 }
 
 function refusalOf(text: string): string | undefined {
@@ -135,7 +144,7 @@ async function pumpNow($: EngineInterface) {
     const list = await read($, tasks)
     const next = list.some(isWorking) ? undefined : waitingOf(list, tried)
 
-    if (next === undefined) {
+    if (next === undefined || !(await quotaAllows($))) {
       return
     }
 
@@ -358,6 +367,10 @@ export async function sendQuestions($: EngineInterface): Promise<void> {
       return
     }
 
+    if (!(await quotaAllows($))) {
+      return
+    }
+
     const sentMs = await $.clock.now()
     const due = await claimQuestions($, sentMs)
 
@@ -419,6 +432,58 @@ async function rode($: EngineInterface, carried: readonly { id: number; atMs: nu
   if (carried.length > 0) {
     await change($, list => list.map(task => (isCarried(task) ? withToMain(task, () => undefined) : task)))
   }
+}
+
+/**
+ * Whether the five-hour window lets a helper start or a question go to the
+ * main session. At `ALERT_AT` it alerts once a window; at `HOLD_AT` it holds
+ * them until a later reading is under it, or the window resets.
+ */
+export async function quotaAllows($: EngineInterface): Promise<boolean> {
+  const nowMs = await $.clock.now()
+  const reading = fiveHourOf(await $.session.usage().then(usage => usage.rateLimits, () => []), nowMs)
+
+  if (reading !== undefined && reading.percent >= ALERT_AT) {
+    alertOnce($, reading)
+  }
+
+  const hold = reading !== undefined && reading.percent >= HOLD_AT ? reading : null
+
+  holdAs($, hold, nowMs)
+
+  if (hold === null) {
+    return true
+  }
+
+  await refresh($).catch(() => undefined)
+
+  return false
+}
+
+function alertOnce($: EngineInterface, reading: QuotaHold) {
+  const key = String(reading.resetsAtMs ?? '')
+
+  if (live.alertedWindows.has(key)) {
+    return
+  }
+
+  live.alertedWindows.add(key)
+  $.ui.notify(`Five-hour usage at ${Math.floor(reading.percent)}%. Side questions pause at ${HOLD_AT}%.`, { title: 'Open items' }).catch(() => undefined)
+}
+
+/** Sets the hold, or clears it with `hold` null, with its one timer at the window's reset. */
+function holdAs($: EngineInterface, hold: QuotaHold | null, nowMs: number) {
+  const resetsAtMs = hold?.resetsAtMs
+
+  live.quotaHold = hold
+  live.quotaTimer?.cancel()
+  // `rateLimits` is the last response's reading: a quiet session would never see the window reset.
+  live.quotaTimer = resetsAtMs === undefined ? null : $.clock.after(resetsAtMs + 1000 - nowMs, () => runHeld($))
+}
+
+function runHeld($: EngineInterface) {
+  void pump($)
+  void sendQuestions($)
 }
 
 export async function writeLog($: EngineInterface): Promise<void> {

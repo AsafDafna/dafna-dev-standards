@@ -49,6 +49,8 @@ export type PaneView = {
   arrived?: number
   /** The items whose reply joined the running main turn as a row that no step has read yet. */
   unreadIds?: readonly number[]
+  /** The five-hour window holds side questions: at `percent`, until `resumesAt` (HH:MM) or a later reading under the hold. */
+  quota?: { percent: number; resumesAt?: string }
 }
 
 const KIND_SECTIONS: readonly { kind: TaskKind; label: string }[] = [
