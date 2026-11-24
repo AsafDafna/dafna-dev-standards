@@ -1,5 +1,5 @@
 import type { Message, Side, Task, TaskKind, ThreadEvent, ToMain } from '../types'
-import { ago, clip, oneLine, plural, sizeOf } from './text'
+import { ago, clip, oneLine, plural, sizeOf, untagged } from './text'
 
 export const MAX_TITLE = 80
 export const MAX_ASK = 150
@@ -695,7 +695,7 @@ function listedEntryOf(message: Message, nowMs: number): string {
 
 // Text a helper read may be planted: Claude gets it as quoted data that no line of it can pass for an entry of the user's.
 function helperEntryOf(text: string, when: string): string {
-  const shown = looksSecret(text) ? '[hidden: it looks like a secret]' : clip(text, MAX_DETAIL)
+  const shown = looksSecret(text) ? '[hidden: it looks like a secret]' : untagged(clip(text, MAX_DETAIL))
 
   return `- The helper (its words, not the user's), ${when}:\n${shown
     .split(/\r\n?|\n/)

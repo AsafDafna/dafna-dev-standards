@@ -2,7 +2,7 @@ import type { SessionMessage, SessionRateLimit } from 'claude-code'
 
 import type { Message, Task, ToMain } from '../types'
 import { MAX_TITLE, isSide, isUserWords, looksSecret } from './tasks'
-import { clip, oneLine } from './text'
+import { clip, oneLine, untagged } from './text'
 
 export const HELPER_TYPE = 'open-items:helper'
 const MAX_SUMMARY_FIRST = 2000
@@ -78,7 +78,7 @@ function fencedIn(lines: readonly string[]): boolean[] {
 
 const linesOf = (text: string) => text.replace(/\r\n?/g, '\n').split('\n')
 
-// A line of a message at column 0 could read as another speaker's in the helper's prompt.
+// A line of a message at column 0 could read, to a helper, as another speaker's line or a heading of the log.
 const indented = (text: string) => linesOf(text).join('\n  ')
 
 function markedIn(text: string): Marked[] {
@@ -279,7 +279,7 @@ export function logOf(tasks: readonly Task[]): string {
     .map(task => {
       const answer = task.thread.findLast(message => message.from === 'claude' && !message.event)?.text ?? 'none yet'
 
-      return `## #${task.id} ${task.title}\nQuestion: ${task.thread[0]?.text ?? ''}\nLatest answer: ${answer}`
+      return `## #${task.id} ${task.title}\nQuestion: ${indented(task.thread[0]?.text ?? '')}\nLatest answer: ${indented(answer)}`
     })
 
   return ['# Side questions of this session', ...entries].join('\n\n')
@@ -321,7 +321,7 @@ export function noteForMain(task: Task): string {
 }
 
 // The main session reads these words with no user in between: text planted in a file the helper read must stay quoted data, so no quote mark or tag of its own can end the quote or the block around it.
-const unquoted = (text: string) => text.replace(/["“”]/g, "'").replaceAll('<', '‹').replaceAll('>', '›')
+const unquoted = (text: string) => untagged(text.replace(/["“”]/g, "'"))
 
 const quoted = (text: string) => `"${clip(unquoted(oneLine(text)), MAX_TO_MAIN)}"`
 
