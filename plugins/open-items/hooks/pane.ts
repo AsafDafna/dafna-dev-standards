@@ -438,8 +438,8 @@ export function insteadOf(kind: TaskKind, id?: number): string {
   return kind === 'action' ? `press Done${on}` : `reply${on} without it`
 }
 
-export function heldNoticeOf(task: Pick<Task, 'kind'>): string {
-  return `This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and ${insteadOf(task.kind)} instead.`
+export function heldNoticeOf(task: { id: Held['id']; kind: TaskKind }): string {
+  return `This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and ${task.id === 'new' ? 'ask without it' : insteadOf(task.kind)} instead.`
 }
 
 export const HELD_BUTTONS = ['Edit', 'Send anyway'] as const

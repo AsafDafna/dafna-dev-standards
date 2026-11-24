@@ -151,7 +151,7 @@ describe('opening the pane and the new-question field', () => {
     await clock.settle()
     expect(world.items).toEqual([])
     expect(await textOf(ui, 'held')).toContain(
-      'This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and reply without it instead.',
+      'This looks like a secret. Claude and the transcript on disk would see it. Put it where it belongs and ask without it instead.',
     )
 
     await ui.press({ key: 'edit' })

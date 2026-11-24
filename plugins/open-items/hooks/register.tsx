@@ -823,6 +823,12 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Closed by the person's close mark too, the pane is no longer one they keep open.
+  on('ui.close', { id: PANE }, ($, e, next) => {
+    live.isKeptOpen = false
+    return next(e)
+  })
+
   // The ring on the reply field lets the terminal wrap what is typed there:
   // the pane asks for the rows that takes, and for one row once it leaves.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
