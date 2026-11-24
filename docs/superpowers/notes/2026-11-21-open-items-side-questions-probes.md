@@ -57,3 +57,17 @@ It works, with costs: it needs `--strict-mcp-config` (with only `--tools Read,Gr
 - A follow-up after a long pause (cache expired).
 - Rex: it reads status from the program's own escape sequence (OSC 7501); how it shows a mod helper is unknown.
 - Opus as the helper's model.
+
+# Step 0 probes (2026-11-24)
+
+Claude Code 2.1.331, manual mode, the spec's helper: Opus 5.5 at medium effort, CLAUDE.md kept, `tools: ["Read", "Grep", "Glob"]`. The same throwaway mod as above, loaded with `claude --plugin-dir`. Personal seat run by a subagent; the org seat and the phone check run by the lead after Asaf's go.
+
+| Probe | Result | Evidence |
+|---|---|---|
+| 0.1 org seat | Passed | Register, spawn and resume work; a consumed report started no main turn; after a resume, `$.agent.call` as the helper is refused for `Write`, `Bash`, `Agent`, an MCP tool and `SubagentHandback`; `$.session.messages()` and `$.session.info()` answer; `TaskStop` through `$.tool.call` stopped a helper, with no deny from `cc-plugin-sec-default`. `advisor` is listed as a deferred tool (`defer_loading: true`) that the helper cannot load; no call was made. |
+| 0.1 personal seat | Passed, but `advisor` is callable | The same checks pass. Asked to, the helper made real `advisor` calls (Fable, about 12k to 14k uncached input tokens each); `disallowedTools: ["advisor"]` did not stop it. No helper called it unprompted (11 helpers). Likely source: `advisorModel` in the personal settings (not tested). |
+| 0.2 cost, org seat | About 0.05% of the five-hour window per side question | A cold helper search of a 4.9 MB real conversation: 6 requests, 12 tool uses, 2,746 output, 20,628 cache write, 71,453 cache read tokens. A warm repeat: 2,021 output, 8,224 cache write, 61,116 cache read. A main turn from a helper's question in a short session: 148 output, 16,448 cache write, 43,024 cache read. Percent from weighted tokens (input 1, output 5, cache write 1.25, cache read 0.1) against this week's org logs: 1% of the week is about 4.85M weighted, 1% of the five-hour window about 0.92M. Both answers were right. In a long real session the main turn reads its whole context: about 30k weighted per 300k tokens warm, about 375k weighted when main's cache has lapsed. |
+| 0.3 permission modes | Passed with `permissionMode: "dontAsk"` | In default mode, `Read` and `Grep` of the main conversation file and the scratchpad raise no dialog. A read elsewhere showed a Yes/No dialog on main's screen in mid-turn, and the helper waited. With `dontAsk` the read is refused with no dialog and the helper says so. |
+| 0.4 phone | Passed | A stand-in command registered `immediate: true`, sent from the Claude app through Remote Control while main wrote a long answer, ran 5.5 s into the turn. |
+| 0.5 late follow-up | Passed | A resume after 31 minutes recalled the code word, still Opus at medium effort. Its cache was cold (10.4k cache write, no read): a helper's cache lasts 5 minutes. |
+| 0.6 personal seat | No five-hour window | `rateLimits` lists only `seven_day`. |
