@@ -30,8 +30,10 @@
   gate, and a side question sent from the pane is not an input for it.
 - Quota guard, where the account has a five-hour usage window: one alert per
   window at 70%, and a hold at 85%. A held side question is saved, but no
-  helper starts and no question goes to Claude until a later reading is under
-  85% or the window resets. An account with no five-hour window gets neither.
+  helper starts and no question goes to Claude on its own until a later
+  reading is under 85% or the window resets. A question that waits still
+  rides your next typed prompt, as a note does. An account with no five-hour
+  window gets neither.
 - Hand-off: `handoff_items` and `take_items` move open side questions with
   their threads. A helper that still works is stopped. In the new session, a
   question with no answer yet goes to a new helper, and so does a follow-up;
