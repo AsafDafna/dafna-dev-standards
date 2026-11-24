@@ -73,6 +73,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     sessionId: 'session-1',
     /** The folder the session runs in now: a /cd or a worktree move changes it. */
     cwd: '/repo',
+    /** How long the engine takes to say which folder the session runs in. */
+    cwdMs: 0,
     store: JSON.parse(JSON.stringify(store)) as Record<string, unknown>,
     /** Every store call the plugin makes, in order: `get <key>`, `set <key>`, `delete <key>` or `keys`. */
     ops: [] as string[],
@@ -146,6 +148,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     sendMs: 0,
     /** The task ids of every `TaskStop` the plugin made that went through. */
     stops: [] as string[],
+    /** Called as each `TaskStop` goes through: the stopped agent's report can come before the call answers. */
+    onStop: undefined as ((taskId: string) => void) | undefined,
     /** Set, the plugin's `TaskStop` calls are refused. */
     isStopRefused: false,
     /** Set, the plugin's `TaskStop` calls answer as a tool error, as for a task that is not running. */
@@ -240,7 +244,13 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
   })
 
   on('session.id', () => ({ value: world.sessionId }))
-  on('session.cwd', () => ({ value: world.cwd }))
+  on('session.cwd', async () => {
+    if (world.cwdMs > 0) {
+      await clock.sleep(world.cwdMs)
+    }
+
+    return { value: world.cwd }
+  })
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('session.attach', async ($, e) => {
     if (world.attachMs > 0) {
@@ -310,6 +320,7 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
 
     const taskId = e.task_id ?? ''
     world.stops.push(taskId)
+    world.onStop?.(taskId)
 
     return { result: { message: 'Successfully stopped task', task_id: taskId, task_type: 'local_agent' } }
   })

@@ -331,6 +331,25 @@ describe('the helper', () => {
     })
   }
 
+  test("/clear starts no helper for an old side question that waited, when the stopped helper's report comes before the old items are gone", async ($, on) => {
+    const waiting: Task = { ...savedItem(2, { kind: 'side', title: 'And the cart?', thread: [{ ...QUESTION, text: 'And the cart?' }], isWaitingForClaude: true, isMarkdown: true }), side: { transcripts: [] } }
+    const { world, clock } = seat(on, earlierItems([WORKING, waiting]))
+    world.agents = [RUNNING]
+    await start($)
+    await clock.settle()
+    world.onStop = () => void report($, { status: 'stopped', text: 'Half of an answer' })
+    world.cwdMs = 1000
+
+    await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+    world.sessionId = 'session-2'
+    await clock.advance(1)
+    await clock.settle()
+    await clock.advance(1000)
+    await clock.settle()
+
+    expect({ stops: world.stops, spawns: world.spawns }).toEqual({ stops: ['a1'], spawns: [] })
+  })
+
   test('after a restart, the log leaves out a closed side question whose thread the save dropped', async ($, on) => {
     const closed = savedItem(1, { kind: 'side', title: QUESTION.text, state: 'resolved', thread: [] })
     const { world, clock } = seat(on, earlierItems([closed, { ...WORKING, id: 2, title: 'And the cart?' }]))

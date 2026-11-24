@@ -1271,13 +1271,15 @@ export const register: Register = on => {
  */
 async function startCleared($: EngineInterface, endingId: string) {
   const sessionId = await newIdAfter($, endingId)
-
-  // Its helpers would run on, unbounded, beside the new session's, and their answers would find no item.
-  for (const helperId of (await tasksNow($)).flatMap(task => workingHelperOf(task) ?? [])) {
-    void $.tool.call({ tool: 'TaskStop', task_id: helperId }).catch(() => undefined)
-  }
+  const working = (await tasksNow($)).flatMap(task => workingHelperOf(task) ?? [])
 
   await switchTo($, sessionId ?? endingId)
+
+  // The ended session's helpers would run on, unbounded, beside the new session's. Stopped once its items
+  // are gone, a stopped report finds none, so it frees no queue for a side question that waited.
+  for (const helperId of working) {
+    void $.tool.call({ tool: 'TaskStop', task_id: helperId }).catch(() => undefined)
+  }
 
   if (sessionId !== undefined) {
     await update($, restoredFor, () => sessionId)
