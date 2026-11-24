@@ -1,4 +1,4 @@
-import type { AgentInfo, AgentReportInput, SessionMessage } from 'claude-code'
+import type { AgentInfo, AgentReportInput, On, SessionMessage } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
@@ -307,4 +307,88 @@ describe('the helper', () => {
       expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', event: 'notice', text: notice }))
     })
   }
+})
+
+/** #1, answered by a1, which `/side #1 more?` resumes, with `/side second` (#3) waiting behind it. */
+async function oneWaiting($: Engine, on: On, prepare: (world: World) => void = () => undefined) {
+  const seated = seat(on, earlierItems([answered()]))
+  seated.world.helpers = ['a1']
+  prepare(seated.world)
+  await start($)
+
+  await side($, '#1 more?')
+  await side($, 'second')
+  await seated.clock.settle()
+  expect(seated.world.sends.map(send => send.to)).toEqual(['a1'])
+  expect(seated.world.spawns).toEqual([])
+
+  return seated
+}
+
+const TIMED_OUT = expect.objectContaining({ from: 'claude', author: 'helper', event: 'notice', text: 'The helper did not answer in 10 minutes.' })
+
+describe('the 10-minute limit', () => {
+  test('a helper silent for 10 minutes is stopped, the item says so, and the next side question starts', async ($, on) => {
+    const { world, clock } = await oneWaiting($, on)
+
+    await clock.advance(600_000)
+
+    expect(world.stops).toEqual(['a1'])
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+
+    const thread = itemOf(world, 1)?.thread
+    expect(await report($, { status: 'stopped', text: 'Running the 14 searches.' })).toEqual(CONSUMED)
+    await clock.settle()
+    expect(itemOf(world, 1)?.thread).toEqual(thread)
+  })
+
+  test("where TaskStop is refused, the mod waits for the helper's own end", async ($, on) => {
+    const { world, clock } = await oneWaiting($, on, world => {
+      world.agents = [RUNNING]
+      world.isStopRefused = true
+    })
+
+    await clock.advance(600_000)
+
+    expect(itemOf(world, 1)?.thread.filter(message => message.event === 'notice')).toEqual([])
+    expect(world.spawns).toEqual([])
+
+    await report($, { text: 'More of the feed.' })
+    await clock.settle()
+
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', text: 'More of the feed.' }))
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+  })
+
+  test('where TaskStop is refused and the helper is gone, the item says so at 10 minutes and the next side question starts', async ($, on) => {
+    const { world, clock } = await oneWaiting($, on, world => {
+      world.agents = [{ ...RUNNING, status: 'completed' }, { ...RUNNING, id: 'a2' }] as AgentInfo[]
+      world.isStopRefused = true
+    })
+
+    await clock.advance(600_000)
+
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+  })
+
+  test("an answer before 10 minutes cancels the stop, and the follow-up's run gets 10 minutes of its own", async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([answered()]))
+    world.helpers = ['a1']
+    await start($)
+
+    await side($, '#1 more?')
+    await clock.advance(300_000)
+    await report($)
+    await side($, '#1 and then?')
+    await clock.settle()
+    expect(world.sends.map(send => send.to)).toEqual(['a1', 'a1'])
+
+    await clock.advance(300_000)
+    expect(world.stops).toEqual([])
+
+    await clock.advance(300_000)
+    expect(world.stops).toEqual(['a1'])
+  })
 })

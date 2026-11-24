@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
-import type { AgentReportInput, AgentReportResult, AgentSpawnResult, EngineInterface, On } from 'claude-code'
+import type { AgentInfo, AgentReportInput, AgentReportResult, AgentSpawnResult, EngineInterface, On } from 'claude-code'
 
 import type { Task } from '../types'
 import { AT_WORK } from './gate'
-import { HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, refusedOf, rowsTextOf, sentOf, summaryOf } from './side'
+import { HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, LOG_NAME, MAX_SUMMARY, answeredOf, followUpOf, helperPromptOf, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, refusedOf, rowsTextOf, sentOf, summaryOf } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, settle, show } from './state'
 import { MAX_DETAIL, isActive, looksSecret, movedBy, replyOf } from './tasks'
 
@@ -15,6 +15,7 @@ const SECRET = "This looks like a secret, so it wasn't sent. Put it where it bel
 const TAKEN = 'A helper takes this side question (Open items); the main session goes on.'
 const CONSUMED: AgentReportResult = { consumed: 'open-items wrote the answer in its side question' }
 const FOLLOW_UP = /^#(\d+)(?:\s+([\s\S]*))?$/
+const TIMED_OUT = 'The helper did not answer in 10 minutes.'
 
 export async function registerHelper($: EngineInterface): Promise<void> {
   await $.agent
@@ -154,11 +155,61 @@ async function askHelper($: EngineInterface, task: Task) {
   const helperId = task.side?.helperId
 
   if (helperId !== undefined && (await resumeHelper($, task, helperId))) {
-    await edit($, task.id, found => sentOf(found, helperId, givenMs))
+    await handedOver($, task.id, helperId, givenMs)
     return
   }
 
   await startHelper($, task, givenMs)
+}
+
+async function handedOver($: EngineInterface, id: number, helperId: string, givenMs: number | undefined) {
+  disarm(helperId)
+  live.helperTimers.set(helperId, $.clock.after(HELPER_LIMIT_MS, () => void timedOut($, helperId).catch(() => undefined)))
+  await edit($, id, found => sentOf(found, helperId, givenMs))
+}
+
+function disarm(helperId: string) {
+  live.helperTimers.get(helperId)?.cancel()
+  live.helperTimers.delete(helperId)
+}
+
+const isRunOf = (helperId: string) => (task: Task) => isWorking(task) && task.side?.helperId === helperId
+
+async function timedOut($: EngineInterface, helperId: string) {
+  live.helperTimers.delete(helperId)
+  const isRun = isRunOf(helperId)
+  const task = (await read($, tasks)).find(isRun)
+
+  if (task === undefined) {
+    return
+  }
+
+  // Where TaskStop is refused, a helper still at work ends by its maxTurns bound and reports as usual.
+  if (!(await stopHelper($, helperId)) && atWorkIn(await $.agent.list().catch(() => []), helperId)) {
+    return
+  }
+
+  await edit($, task.id, (found, nowMs) => (isRun(found) ? noticedOf(found, TIMED_OUT, nowMs) : found))
+  await writeLog($)
+  await pump($)
+}
+
+/** Resolves whether `TaskStop` stopped the helper; its report then says nothing in the item. */
+export async function stopHelper($: EngineInterface, agentId: string): Promise<boolean> {
+  // Held before the call, as the stopped helper's report may come before the call resolves.
+  live.stoppedHelpers.add(agentId)
+  const answer = await $.tool.call({ tool: 'TaskStop', task_id: agentId }).catch(() => undefined)
+
+  if (answer === undefined || answer.deny !== undefined) {
+    live.stoppedHelpers.delete(agentId)
+    return false
+  }
+
+  return true
+}
+
+function atWorkIn(agents: readonly AgentInfo[], agentId: string | undefined): boolean {
+  return agents.some(agent => agent.id === agentId && AT_WORK.includes(agent.status))
 }
 
 /** Resolves whether the follow-up reached the helper. */
@@ -185,7 +236,7 @@ async function startHelper($: EngineInterface, task: Task, givenMs: number | und
     return
   }
 
-  await edit($, task.id, found => sentOf(found, agentId, givenMs))
+  await handedOver($, task.id, agentId, givenMs)
 }
 
 async function promptOf($: EngineInterface, task: Task): Promise<string> {
@@ -202,6 +253,7 @@ async function promptOf($: EngineInterface, task: Task): Promise<string> {
 }
 
 async function reported($: EngineInterface, e: AgentReportInput) {
+  disarm(e.agentId)
   const task = (await read($, tasks)).find(found => found.side?.helperId === e.agentId)
   const isStopped = live.stoppedHelpers.delete(e.agentId)
 
@@ -251,7 +303,7 @@ export async function writeLog($: EngineInterface): Promise<void> {
 /** After a restart or a resume: a working item's helper died with the old process, and no report or timer would end its work. */
 export async function revive($: EngineInterface): Promise<void> {
   const agents = await $.agent.list().catch(() => [])
-  const isGone = (task: Task) => isWorking(task) && !agents.some(agent => agent.id === task.side?.helperId && AT_WORK.includes(agent.status))
+  const isGone = (task: Task) => isWorking(task) && !atWorkIn(agents, task.side?.helperId)
 
   await change($, list => (list.some(isGone) ? list.map(task => (isGone(task) ? unsentOf(task) : task)) : list))
   await pump($)

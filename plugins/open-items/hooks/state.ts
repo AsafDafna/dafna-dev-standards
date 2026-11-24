@@ -159,6 +159,8 @@ export const live = {
   pumpQueue: Promise.resolve() as Promise<unknown>,
   /** Helpers the mod stopped: their report says nothing in the item. */
   stoppedHelpers: new Set<string>(),
+  /** The 10-minute stop of each helper at work, by agent id. */
+  helperTimers: new Map<string, Timer>(),
   /** The last write of the side questions' log failed: a helper's prompt holds the log. */
   isLogFailing: false,
 }

@@ -136,6 +136,10 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     helpers: [] as string[],
     /** Every message the plugin sent to an agent. */
     sends: [] as { to: string; text: string }[],
+    /** The task ids of every `TaskStop` the plugin made that went through. */
+    stops: [] as string[],
+    /** Set, the plugin's `TaskStop` calls are refused. */
+    isStopRefused: false,
     /** The files the plugin wrote, by path. */
     files: {} as Record<string, string>,
     /** Set, the plugin's file writes are refused. */
@@ -268,6 +272,16 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     world.sends.push({ to: e.to, text: e.text })
 
     return world.helpers.includes(e.to) ? { isDelivered: true } : { isDelivered: false, reason: 'No agent by that id.' }
+  })
+  on('tool.call', { tool: 'TaskStop' }, ($, e) => {
+    if (world.isStopRefused) {
+      return { deny: 'TaskStop is not allowed here.' }
+    }
+
+    const taskId = e.task_id ?? ''
+    world.stops.push(taskId)
+
+    return { result: { message: 'Successfully stopped task', task_id: taskId, task_type: 'local_agent' } }
   })
   on('fs.write', ($, e) => {
     if (world.isFileRefused) {
