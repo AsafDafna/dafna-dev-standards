@@ -72,7 +72,7 @@ export function isWorking(task: Task): boolean {
 export function reportOf(text: string): { asksUser: boolean; toMain?: { kind: 'note' | 'question'; text: string } } {
   const question = QUESTION.exec(text)
   const note = NOTE.exec(text)
-  const found = question ? { kind: 'question' as const, text: question[1].trim() } : note ? { kind: 'note' as const, text: note[1].trim() } : undefined
+  const found = question ? { kind: 'question' as const, text: (question[1] ?? '').trim() } : note ? { kind: 'note' as const, text: (note[1] ?? '').trim() } : undefined
 
   return { asksUser: ASKS_USER.test(text), ...(found && { toMain: found }) }
 }
@@ -126,7 +126,7 @@ export function rowsTextOf(messages: readonly SessionMessage[], max: number): st
 
 export function summaryOf(messages: readonly SessionMessage[]): string {
   const first = messages.findIndex(message => message.role === 'user' && message.text !== '')
-  const prompt = first >= 0 ? clip(messages[first].text, MAX_SUMMARY_FIRST) : ''
+  const prompt = clip(messages[first]?.text ?? '', MAX_SUMMARY_FIRST)
 
   return `First prompt: ${prompt}\nLatest messages:\n${rowsTextOf(messages.slice(first + 1), MAX_SUMMARY)}`
 }

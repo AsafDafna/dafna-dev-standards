@@ -69,7 +69,7 @@ describe('side questions', () => {
 
   test('summaryOf keeps only the newest rows within 8,000 characters', () => {
     const rows = Array.from({ length: 20 }, (_, i) => row('assistant', `${String(i).padStart(2, '0')}${'z'.repeat(998)}`))
-    const latest = summaryOf([row('user', 'go'), ...rows]).split('Latest messages:\n')[1]
+    const latest = summaryOf([row('user', 'go'), ...rows]).split('Latest messages:\n')[1] ?? ''
 
     expect(latest.length).toBeLessThanOrEqual(8000)
     expect(latest).toContain('19zzz')
