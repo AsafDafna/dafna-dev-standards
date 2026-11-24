@@ -43,8 +43,8 @@
   "✓ Claude has it". In a side question it says "✓ The helper has it".
 - The `↳ Answer to #N:` bridge leaves side questions out: the mod drops such a
   prompt, and the drop's reason points to `/side #N`.
-- CI: the Claude Code pin moves from 2.1.310 to 2.1.331. The mod needs Claude
-  Code 2.1.330 or later.
+- CI: the Claude Code pin moves from 2.1.310 to 2.1.331. Tested on Claude
+  Code 2.1.331.
 - Update every install before the first side question: 0.3.0 drops a saved
   item of a kind it does not know, so a take there loses side questions.
 
