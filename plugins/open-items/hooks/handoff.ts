@@ -30,12 +30,12 @@ import {
 import type { Source } from './state'
 import { handOver, inNews } from './delivery'
 
-export const CODE_LENGTH = 6
-export const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
-export const CODE_SHAPE = new RegExp(`^[${CODE_CHARS}]{${CODE_LENGTH}}$`)
+const CODE_LENGTH = 6
+const CODE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
+const CODE_SHAPE = new RegExp(`^[${CODE_CHARS}]{${CODE_LENGTH}}$`)
 
 /** What a tool answers when the store cannot be read, which a hand-off needs. */
-export const STORE_DOWN = 'Open items could not read the store, so nothing changed. Try again in a moment.'
+const STORE_DOWN = 'Open items could not read the store, so nothing changed. Try again in a moment.'
 
 const tasks = atom({ plugin: 'open-items', key: 'tasks' } as const, TASKS_INITIAL)
 const nextId = atom({ plugin: 'open-items', key: 'nextId' } as const, NEXT_ID_INITIAL)
@@ -178,7 +178,7 @@ export async function scan($: EngineInterface, all?: Record<string, unknown>) {
  * over: an item that take left behind (handed off again meanwhile) is back
  * as it was before.
  */
-export async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
+async function noteMoved($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
   const { handoff } = await read($, header)
   const taken = takenFrom(all, keyOf(sessionId), handoff)
 
@@ -230,7 +230,7 @@ export async function noteMoved($: EngineInterface, all: Record<string, unknown>
  * own hand-off when no session took it in time; opens the pane for an offer
  * that grew.
  */
-export async function offerLeftovers($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
+async function offerLeftovers($: EngineInterface, all: Record<string, unknown>, sessionId: string) {
   const ownKey = keyOf(sessionId)
   const nowMs = await $.clock.now()
   const left = leftoversIn(all, (await read($, folder)) ?? '', ownKey, nowMs).map(({ key, saved }) => ({ key, ids: saved.tasks.map(task => task.id) }))
@@ -254,7 +254,7 @@ export async function offerLeftovers($: EngineInterface, all: Record<string, unk
 }
 
 /** A hand-off code no key in `all` holds. */
-export function newCode(all: Record<string, unknown>): string {
+function newCode(all: Record<string, unknown>): string {
   const used = new Set([...takenCodes(all), ...Object.values(all).flatMap(raw => savedIn(raw)?.handoff?.code ?? [])])
   let code = randomCode()
 
@@ -266,7 +266,7 @@ export function newCode(all: Record<string, unknown>): string {
 }
 
 /** CODE_LENGTH characters of CODE_CHARS from the runtime's random source, which no other session can guess. */
-export function randomCode(): string {
+function randomCode(): string {
   // A byte past the last whole run of the characters would favour the first ones.
   const fair = 256 - (256 % CODE_CHARS.length)
   let code = ''
@@ -287,7 +287,7 @@ export function randomCode(): string {
  * request read (in `unread`) goes on with that answer not heard; what Claude
  * heard before stays heard.
  */
-export function handedOff(task: Task, unread: ReadonlyMap<number, Task | undefined>, atMs: number): Task {
+function handedOff(task: Task, unread: ReadonlyMap<number, Task | undefined>, atMs: number): Task {
   const handed: Task = { ...task, state: 'handing-off', updatedMs: atMs }
 
   if (!unread.has(task.id)) {
@@ -303,7 +303,7 @@ export function handedOff(task: Task, unread: ReadonlyMap<number, Task | undefin
  * with a record of what came from which key. Resolves each as it arrived, as
  * made, and with the number it had.
  */
-export async function takeIn($: EngineInterface, sources: readonly Source[], make: (arrived: Task) => Task): Promise<{ arrived: Task; task: Task; was: number }[]> {
+async function takeIn($: EngineInterface, sources: readonly Source[], make: (arrived: Task) => Task): Promise<{ arrived: Task; task: Task; was: number }[]> {
   const nowMs = await $.clock.now()
   const transcript = (await $.session.info().catch(() => undefined))?.transcriptPath ?? ''
   const incoming = sources.flatMap(source => source.tasks)
@@ -338,7 +338,7 @@ export async function takeIn($: EngineInterface, sources: readonly Source[], mak
   return came
 }
 
-export async function dropOffered($: EngineInterface, sources: readonly Source[]) {
+async function dropOffered($: EngineInterface, sources: readonly Source[]) {
   await update($, offer, entries =>
     entries.flatMap(entry => {
       const gone = sources.find(source => source.key === entry.key)?.tasks.map(task => task.id) ?? []
@@ -356,7 +356,7 @@ export async function dropOffered($: EngineInterface, sources: readonly Source[]
  * are its items still handing off; else by none. Undefined, and the user
  * told, when nothing is left or the store cannot be read.
  */
-export async function stillOffered($: EngineInterface, drawn: Offer): Promise<Source[] | undefined> {
+async function stillOffered($: EngineInterface, drawn: Offer): Promise<Source[] | undefined> {
   const all = await readStore($)
   const left = all === undefined ? [] : leftoversIn(all, (await read($, folder)) ?? '', keyOf(live.sessionId), await $.clock.now())
   const sources = left.flatMap(({ key, saved }) => {
@@ -415,7 +415,7 @@ export async function dismissLeft($: EngineInterface, drawn: Offer) {
 }
 
 /** Says a Take or Dismiss found nothing to act on (`isStoreDown`: it could not read the store), and offers what is left. */
-export async function notOffered($: EngineInterface, isStoreDown: boolean) {
+async function notOffered($: EngineInterface, isStoreDown: boolean) {
   $.ui.toast(isStoreDown ? STORE_DOWN : 'Those items are no longer offered, so nothing changed.', { timeoutMs: 8000 })
   await scan($)
 }

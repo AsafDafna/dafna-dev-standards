@@ -8,7 +8,7 @@ import type { UserInput } from './state'
 export const AT_WORK: readonly AgentStatus[] = ['pending', 'running', 'waiting']
 
 /** How recent the user's last typed prompt is in a live chat. */
-export const LIVE_CHAT_MS = 300_000
+const LIVE_CHAT_MS = 300_000
 
 export const LIVE_CHAT = 'live chat: ask in the chat'
 

@@ -119,11 +119,12 @@ export function readOnlyRowOf(task: Task, columns: number): string {
   return clipCells(titleOf(task), Math.max(1, columns - ROW_INDENT))
 }
 
-/** The keys the list's focus ring walks, in the order drawn: the offer's buttons, each row, Take for an unclaimed hand-off, then Hide. */
-export function focusOrderOf(shown: readonly Task[], view: Pick<PaneView, 'offered' | 'isUnclaimed'> = {}): string[] {
+/** The keys the list's focus ring walks, in the order drawn: the offer's buttons, each row, the new side question's field where the surface draws it, Take for an unclaimed hand-off, then Hide. */
+export function focusOrderOf(shown: readonly Task[], view: Partial<Pick<PaneView, 'offered' | 'isUnclaimed' | 'canType'>> = {}): string[] {
   return [
     ...(offerOf(view) === undefined ? [] : OFFER_BUTTONS.map(button => button.key)),
     ...groupsOf(shown).flatMap(group => group.tasks.map(task => `row-${task.id}`)),
+    ...(view.canType === true ? [NEW_SIDE.key] : []),
     ...(view.isUnclaimed === true && movingOf(shown).length > 0 ? [TAKE_BACK.key] : []),
     'hide',
   ]
@@ -267,10 +268,10 @@ const BOX_CELLS = 4
 
 const BOX_ROWS = 2
 
-export type Speaker = 'You' | 'Claude' | 'Helper'
+type Speaker = 'You' | 'Claude' | 'Helper'
 
 /** The color of each speaker's name in a thread head: none is a kind's color. */
-export const SPEAKER_COLOR: Record<Speaker, ThemeKey> = { You: 'ide', Claude: 'claude', Helper: 'planMode' }
+export const SPEAKER_COLOR: Record<Speaker, ThemeKey> = { You: 'ide', Claude: 'claude', Helper: 'bashBorder' }
 
 /**
  * A thread entry as the item screen draws it: a message, line breaks kept,
@@ -433,7 +434,7 @@ export function itemButtonsOf(task: Task): { choices: { action: Action; note: st
 export const REPLY_LABEL = 'Reply'
 export const REPLY_PLACEHOLDER = 'Enter sends it to Claude'
 
-export const FOLLOW_UP = { label: 'Follow up', placeholder: 'Enter sends it to the helper' } as const
+const FOLLOW_UP = { label: 'Follow up', placeholder: 'Enter sends it to the helper' } as const
 
 /** The label and placeholder of `task`'s reply field: a side question's goes to its helper. */
 export function replyFieldOf(task: Task): { label: string; placeholder: string } {

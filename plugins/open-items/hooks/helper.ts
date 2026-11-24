@@ -3,7 +3,7 @@ import type { AgentInfo, AgentReportInput, AgentReportResult, AgentReportReview,
 
 import type { Task, ToMain } from '../types'
 import { AT_WORK, isLiveChat } from './gate'
-import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isOpenSide, isPending, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf, workingHelperOf } from './side'
+import { ALERT_AT, HELPER_LIMIT_MS, HELPER_PROMPT, HELPER_TYPE, HOLD_AT, LOG_NAME, MAX_SUMMARY, answeredOf, fiveHourOf, followUpOf, helperPromptOf, isOpenSide, isPending, isToMainWaiting, isWorking, logOf, newSideOf, newestUserOf, noticedOf, questionForMain, refusedOf, reportOf, ridingOf, rowsTextOf, sentOf, summaryOf, workingHelperOf } from './side'
 import type { QuotaHold } from './side'
 import { LOADING, NEXT_ID_INITIAL, TASKS_INITIAL, change, edit, live, refresh, settle, showField, within } from './state'
 import { DONE, MAX_DETAIL, isActive, isSide, looksSecret, movedBy, replyOf } from './tasks'
@@ -16,7 +16,7 @@ const SECRET = "This looks like a secret, so it wasn't sent. Put it where it bel
 // It holds none of the question: when the command runs mid-turn, this text reaches the main session.
 const TAKEN = 'A helper takes this side question (Open items); the main session goes on.'
 const CONSUMED: AgentReportResult = { consumed: 'open-items wrote the answer in its side question' }
-const FOLLOW_UP = /^#(\d+)(?:\s+([\s\S]*))?$/
+const FOLLOW_UP_ARGS = /^#(\d+)(?:\s+([\s\S]*))?$/
 const TIMED_OUT = 'The helper did not answer in 10 minutes.'
 const MAX_REPORT = 20_000
 const CUT = '(The rest of the answer was cut: it ran past 20,000 characters.)'
@@ -61,7 +61,7 @@ export function helperHooks(on: On): void {
       return {}
     }
 
-    const followed = FOLLOW_UP.exec(text)
+    const followed = FOLLOW_UP_ARGS.exec(text)
     const isTaken = followed ? await followUp($, Number(followed[1]), followed[2] ?? '') : await askNew($, text)
 
     return isTaken ? { text: TAKEN, isTextDisplayOnly: true } : {}
@@ -118,7 +118,7 @@ export async function askNew($: EngineInterface, text: string): Promise<boolean>
   return true
 }
 
-export async function followUp($: EngineInterface, id: number, text: string): Promise<boolean> {
+async function followUp($: EngineInterface, id: number, text: string): Promise<boolean> {
   const refusal = refusalOf(text)
 
   if (refusal !== undefined) {
@@ -295,8 +295,11 @@ function atWorkIn(agents: readonly AgentInfo[], agentId: string | undefined): bo
 async function resumeHelper($: EngineInterface, task: Task, helperId: string): Promise<boolean> {
   const seenUuid = task.side?.seenUuid
   const rows = seenUuid === undefined ? undefined : await $.session.messages({ after: seenUuid }).catch(() => undefined)
-  const since = Array.isArray(rows) ? rowsTextOf(rows, MAX_SUMMARY) : ''
-  const sent = await $.session.send({ to: { agentId: helperId }, text: followUpOf(task, since) }).catch(() => undefined)
+  // A compaction or a /clear took the row the helper saw last.
+  const isCompacted = rows !== undefined && 'deny' in rows
+  const shown = isCompacted ? await $.session.messages().catch(() => []) : rows
+  const since = Array.isArray(shown) ? rowsTextOf(shown, MAX_SUMMARY) : ''
+  const sent = await $.session.send({ to: { agentId: helperId }, text: followUpOf(task, since, isCompacted) }).catch(() => undefined)
 
   return sent?.isDelivered === true
 }
@@ -380,7 +383,7 @@ function noticeOf(status: AgentReportInput['status'], text: string): string {
 
 const isAskingMain = (task: Task) => isOpenSide(task) && task.side?.toMain?.kind === 'question' && task.side.toMain.sentMs === undefined
 
-const isNoting = (task: Task) => isOpenSide(task) && task.side?.toMain?.kind === 'note'
+const isNoting = (task: Task) => isToMainWaiting(task) && task.side.toMain.kind === 'note'
 
 /** `task` with its message for the main session as `fn` makes it: none when `fn` gives undefined. */
 function withToMain(task: Task, fn: (toMain: ToMain) => ToMain | undefined): Task {
@@ -500,7 +503,7 @@ async function rode($: EngineInterface, carried: readonly { id: number; atMs: nu
  * main session. At `ALERT_AT` it alerts once a window; at `HOLD_AT` it holds
  * them until a later reading is under it, or the window resets.
  */
-export async function quotaAllows($: EngineInterface): Promise<boolean> {
+async function quotaAllows($: EngineInterface): Promise<boolean> {
   const nowMs = await $.clock.now()
   const reading = fiveHourOf(await $.session.usage().then(usage => usage.rateLimits, () => []), nowMs)
 

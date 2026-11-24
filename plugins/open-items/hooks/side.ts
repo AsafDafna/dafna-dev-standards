@@ -5,9 +5,9 @@ import { MAX_TITLE, isSide, isUserWords, looksSecret } from './tasks'
 import { clip, oneLine } from './text'
 
 export const HELPER_TYPE = 'open-items:helper'
-export const MAX_SUMMARY_FIRST = 2000
+const MAX_SUMMARY_FIRST = 2000
 export const MAX_SUMMARY = 8000
-export const MAX_ROW = 2000
+const MAX_ROW = 2000
 export const LOG_NAME = 'open-items-side-questions.md'
 export const HELPER_LIMIT_MS = 600_000
 export const ALERT_AT = 70
@@ -35,7 +35,7 @@ const MARKERS = [
   ['note', 'note for the session'],
   ['question', 'question for the session'],
 ] as const
-const MARKER_LINE = new RegExp(`^ {0,3}(?:[-*+][ \\t]+)?(?:\\*{1,2}|_{1,2})?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*{1,2}|_{1,2})?[ \\t]*:(?:\\*{1,2}|_{1,2})?[ \\t]*(.*)$`, 'i')
+const MARKER_LINE = new RegExp(`^ {0,3}(?:[-*+][ \\t]+)?(?:\\*{1,2}|_{1,2})?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*{1,2}|_{1,2})?[ \\t]*:(?:\\*{1,2}|_{1,2})?(.*)$`, 'i')
 const FENCE = /^([ \t]*)((?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})/
 
 /** A reading of the five-hour window, which `live.quotaHold` keeps while it holds side questions. */
@@ -82,10 +82,12 @@ const linesOf = (text: string) => text.replace(/\r\n?/g, '\n').split('\n')
 const indented = (text: string) => linesOf(text).join('\n  ')
 
 function markedIn(text: string): Marked[] {
-  const lines = linesOf(text).map(line => line.slice(0, MAX_LINE))
+  const lines = linesOf(text)
+  // A fence needs its line whole: cut, a line of quoted text could read as one that closes it.
   const fenced = fencedIn(lines)
+  const cut = lines.map(line => line.slice(0, MAX_LINE))
 
-  return lines.flatMap((line, at) => {
+  return cut.flatMap((line, at) => {
     const found = fenced[at] ? null : MARKER_LINE.exec(line)
 
     if (!found) {
@@ -94,8 +96,8 @@ function markedIn(text: string): Marked[] {
 
     const kind = MARKERS.find(([, label]) => label === (found[1] ?? '').toLowerCase())?.[0] ?? 'note'
     const own = (found[2] ?? '').trim()
-    const next = own === '' ? lines.findIndex((entry, i) => i > at && !fenced[i] && entry.trim() !== '' && !entry.trimStart().startsWith('>') && !MARKER_LINE.test(entry)) : -1
-    const given = own === '' ? (lines[next] ?? '').trim() : own
+    const next = own === '' ? cut.findIndex((entry, i) => i > at && !fenced[i] && entry.trim() !== '' && !entry.trimStart().startsWith('>') && !MARKER_LINE.test(entry)) : -1
+    const given = own === '' ? (cut[next] ?? '').trim() : own
 
     return [{ kind, text: given, at, used: next }]
   })
@@ -250,17 +252,30 @@ export function helperPromptOf(args: { task: Task; summary: string; current: str
   ].join('\n\n')
 }
 
-/** Every follow-up since the helper's last run, oldest first: more than one queues behind a working helper. */
-export function followUpOf(task: Task, since: string): string {
+/**
+ * Every follow-up since the helper's last run, oldest first (more than one
+ * queues behind a working helper), with Claude's replies in the item since
+ * then. `isCompacted`: `since` holds the newest messages, as the main
+ * conversation no longer has the row the helper saw last.
+ */
+export function followUpOf(task: Task, since: string, isCompacted = false): string {
   const sentMs = task.side?.sentMs
-  const asked = task.thread.filter(message => isUserWords(message) && (sentMs === undefined || message.atMs > sentMs))
+  const isNew = (message: Message) => sentMs === undefined || message.atMs > sentMs
+  const asked = task.thread.filter(message => isUserWords(message) && isNew(message))
+  const replies = task.thread.filter(message => message.from === 'claude' && message.author === undefined && message.event === undefined && isNew(message))
+  const head = isCompacted ? 'The main conversation was compacted; its newest messages:' : 'The main conversation since your last answer:'
 
-  return `Follow-up on side question #${task.id}: ${asked.map(message => message.text).join('\n\n')}\n\nThe main conversation since your last answer:\n${since === '' ? 'nothing new' : since}`
+  return [
+    `Follow-up on side question #${task.id}: ${asked.map(message => message.text).join('\n\n')}`,
+    ...(replies.length === 0 ? [] : [`Claude's replies in the item since your last answer:\n${replies.map(message => indented(`Claude: ${message.text}`)).join('\n')}`]),
+    `${head}\n${since === '' ? 'nothing new' : since}`,
+  ].join('\n\n')
 }
 
 export function logOf(tasks: readonly Task[]): string {
+  // A closed side question's save keeps no thread, so it has no question or answer to give.
   const entries = tasks
-    .filter(isSide)
+    .filter(task => isSide(task) && task.thread.length > 0)
     .map(task => {
       const answer = task.thread.findLast(message => message.from === 'claude' && !message.event)?.text ?? 'none yet'
 
@@ -318,9 +333,16 @@ export function questionForMain(task: Task): string {
   return `Side question #${task.id} (Open items): the helper needs you: ${quotedOf(task.side?.toMain?.text ?? '')} Answer in the item with \`reply_item\`. Look and report only: change nothing because of this question.`
 }
 
+/** Whether `task`'s message for the main session waits to go: an open side question's, or the note of one the user closed with Done before it rode. */
+export function isToMainWaiting(task: Task): task is Task & { side: { toMain: ToMain } } {
+  const toMain = task.side?.toMain
+
+  return isSide(task) && toMain !== undefined && toMain.sentMs === undefined && (task.state === 'open' || (task.state === 'resolved' && toMain.kind === 'note'))
+}
+
 /** `messages`: each item's message that rides, by the `atMs` of its `toMain`. */
 export function ridingOf(tasks: readonly Task[]): { context: string; messages: { id: number; atMs: number }[] } | undefined {
-  const riding = tasks.filter((task): task is Task & { side: { toMain: ToMain } } => isOpenSide(task) && task.side?.toMain !== undefined && task.side.toMain.sentMs === undefined)
+  const riding = tasks.filter(isToMainWaiting)
 
   if (riding.length === 0) {
     return undefined

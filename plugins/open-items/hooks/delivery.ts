@@ -9,10 +9,10 @@ import type { DropNote, Entered } from './state'
 import { pump } from './helper'
 
 /** Resolutions pressed this close together go to Claude as one message. */
-export const BATCH_MS = 800
+const BATCH_MS = 800
 
 /** The prompt that wakes Claude for an answer its turn ended without reading. */
-export const WAKE_UP = 'I answered an item while you were finishing your reply; my answer is above.'
+const WAKE_UP = 'I answered an item while you were finishing your reply; my answer is above.'
 
 /** Whether the batch under way, or a press still writing, sends `task`'s update. */
 export function isHeld(task: Task): boolean {
@@ -81,7 +81,7 @@ export function inDigest(entered: Entered, task: Task): boolean {
  * and says so as `note` says. It never throws: `passOn` keeps the prompt's
  * own error.
  */
-export async function giveBack($: EngineInterface, lost: readonly Task[], note: DropNote, reason?: string) {
+async function giveBack($: EngineInterface, lost: readonly Task[], note: DropNote, reason?: string) {
   try {
     await undelivered($, lost)
   } catch {
@@ -106,7 +106,7 @@ export async function giveBack($: EngineInterface, lost: readonly Task[], note: 
  * they were claimed: they wait again, and Claude counts as told only of what
  * it was told before.
  */
-export async function undelivered($: EngineInterface, lost: readonly Task[]) {
+async function undelivered($: EngineInterface, lost: readonly Task[]) {
   await change($, list =>
     list.map(task => {
       const was = lost.find(one => one.id === task.id)
@@ -182,7 +182,7 @@ export function cancelBatch() {
  * a send gave back): a row the running main turn reads at its next request,
  * or else the user's prompt, which the engine runs once Claude is idle.
  */
-export async function deliver($: EngineInterface, ids: readonly number[]) {
+async function deliver($: EngineInterface, ids: readonly number[]) {
   // A move Claude is never told of (a Seen v0.1 saved unsent) counts as told, and says nothing.
   const due = (await claim($, task => ids.includes(task.id) || !isHeld(task))).filter(hasNewsIn)
 

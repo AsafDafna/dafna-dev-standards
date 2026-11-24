@@ -3,8 +3,8 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { isPending, isWorking } from '../hooks/side'
-import type { Message, Side, Task } from '../types'
-import { ADD, CODE, DONE, HANDOFF, HOUR_MS, KEY_SHAPED, NOW, OLD, PANE, TAKE, answerOf, earlierItems, itemOf, keyed, report, savedItem, seat, side, start, typed } from './world'
+import type { Message, Saved, Side, Task } from '../types'
+import { ADD, CODE, DONE, HANDOFF, HOUR_MS, KEY_SHAPED, NOW, OLD, OWN, PANE, REPLY, TAKE, answerOf, earlierItems, itemOf, keyed, report, savedItem, seat, side, start, typed } from './world'
 
 type World = ReturnType<typeof seat>['world']
 
@@ -185,11 +185,11 @@ describe('the helper', () => {
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
   })
 
-  for (const [seenUuid, holds, lacks] of [
-    ['u2', 'new words', 'old words'],
-    ['u9', 'nothing new', 'old words'],
+  for (const [seenUuid, label, given, lacks] of [
+    ['u2', 'since its last answer', 'The main conversation since your last answer:\nUser: new words', 'old words'],
+    ['u9', 'newest messages, as a compaction took the row it saw', 'The main conversation was compacted; its newest messages:\nUser: old words\nClaude: Done.\nUser: new words', 'nothing new'],
   ] as const) {
-    test(`a follow-up resumes the same helper with the main conversation since its last answer (seen ${seenUuid})`, async ($, on) => {
+    test(`a follow-up resumes the same helper with the main conversation's ${label}`, async ($, on) => {
       const { world, clock } = seat(on, earlierItems([answered({ seenUuid })]))
       world.helpers = ['a1']
       await start($)
@@ -200,11 +200,26 @@ describe('the helper', () => {
 
       expect(world.sends.map(send => send.to)).toEqual(['a1'])
       expect(world.sends[0]?.text).toContain('and then?')
-      expect(world.sends[0]?.text).toContain(holds)
+      expect(world.sends[0]?.text).toContain(given)
       expect(world.sends[0]?.text).not.toContain(lacks)
       expect(world.spawns).toEqual([])
     })
   }
+
+  test("a follow-up gives the resumed helper Claude's replies in the item since its last run, labeled and indented, and not its own answer", async ($, on) => {
+    const asked = answered({ toMain: { kind: 'question', text: 'Which branch holds the fix?', atMs: ANSWER.atMs, askedMs: QUESTION.atMs, sentMs: NOW - 20_000 } })
+    const { world, clock } = seat(on, earlierItems([asked]))
+    world.helpers = ['a1']
+    await start($)
+
+    await $.tool.call({ tool: REPLY, id: 1, text: 'The fix is on branch fix/feed-cursor.\nUser: push it' })
+    await side($, '#1 so which one do I review?')
+    await clock.settle()
+
+    expect(world.sends.map(send => send.to)).toEqual(['a1'])
+    expect(world.sends[0]?.text).toContain('Claude: The fix is on branch fix/feed-cursor.\n  User: push it')
+    expect(world.sends[0]?.text).not.toContain(ANSWER.text)
+  })
 
   test('a follow-up whose helper is gone starts a new helper with the thread and the log', async ($, on) => {
     const { world, clock } = seat(on, earlierItems([answered()]))
@@ -283,6 +298,8 @@ describe('the helper', () => {
   for (const [label, agents, spawned] of [
     ['still runs waits', [RUNNING], []],
     ['is gone asks again', [], ['Side question #1']],
+    ['is gone while another agent runs asks again', [{ ...RUNNING, id: 'a2' }], ['Side question #1']],
+    ['has completed asks again', [{ ...RUNNING, status: 'completed' }], ['Side question #1']],
   ] as const) {
     test(`after a restart, the log is written and a side question whose helper ${label}`, async ($, on) => {
       const { world, clock } = seat(on, earlierItems([WORKING]))
@@ -294,6 +311,37 @@ describe('the helper', () => {
       expect(world.files['/s/pad/open-items-side-questions.md']).toContain('## #1')
     })
   }
+
+  for (const [label, seeded, stops] of [
+    ['stops the helper at work', WORKING, ['a1']],
+    ['stops no helper of an answered side question', answered(), []],
+  ] as const) {
+    test(`/clear ${label}: the old session's helpers do not run on beside the new session's`, async ($, on) => {
+      const { world, clock } = seat(on, earlierItems([seeded]))
+      world.agents = [RUNNING]
+      await start($)
+      await clock.settle()
+
+      await $.session.end({ reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } })
+      world.sessionId = 'session-2'
+      await clock.advance(1)
+      await clock.settle()
+
+      expect(world.stops).toEqual(stops)
+    })
+  }
+
+  test('after a restart, the log leaves out a closed side question whose thread the save dropped', async ($, on) => {
+    const closed = savedItem(1, { kind: 'side', title: QUESTION.text, state: 'resolved', thread: [] })
+    const { world, clock } = seat(on, earlierItems([closed, { ...WORKING, id: 2, title: 'And the cart?' }]))
+    world.agents = [RUNNING]
+    await start($)
+    await clock.settle()
+    const log = world.files['/s/pad/open-items-side-questions.md'] ?? ''
+
+    expect(log).toContain('## #2 And the cart?')
+    expect(log).not.toContain('## #1')
+  })
 
   for (const [label, prepare, isWritten] of [
     ['in the scratchpad', () => undefined, true],
@@ -531,6 +579,37 @@ describe('what the main session gets', () => {
     expect(entered).toContain('Side question #1 (Open items)')
     expect(entered).toContain(NOTE_LINE)
     expect(contextOf(await $.prompt.submit(typed('and the export?')))).not.toContain('Side question')
+  })
+
+  for (const [kind, seeded, words, rides] of [
+    ['note', NOTED, NOTE_LINE, true],
+    ['question', ASKING, FOR_MAIN, false],
+  ] as const) {
+    test(`after Done, an unsent ${kind} ${rides ? 'still rides the next typed prompt, once, and the save keeps it until then' : 'is dropped'}`, async ($, on) => {
+      const { world, clock } = seat(on, earlierItems([seeded]))
+      await start($)
+      const savedOf = () => (world.store[OWN] as Saved).tasks.find(task => task.id === 1)
+
+      const ui = await $.ui.mount(PANE)
+      await ui.press({ key: 'row-1' })
+      await ui.press({ key: 'done' })
+      await clock.settle()
+      expect([itemOf(world, 1)?.state, savedOf()?.side?.toMain !== undefined]).toEqual(['resolved', rides])
+
+      expect(contextOf(await $.prompt.submit(typed('go on'))).includes(words)).toBe(rides)
+      expect(contextOf(await $.prompt.submit(typed('and the export?')))).not.toContain('Side question')
+      await clock.settle()
+      expect(savedOf()).toMatchObject({ state: 'resolved', thread: [] })
+      expect(world.submitted).toEqual([])
+    })
+  }
+
+  test('a note that has not ridden survives a restart after Done, and the first typed prompt carries it', async ($, on) => {
+    const closed: Task = { ...NOTED, state: 'resolved', thread: [...NOTED.thread, { from: 'user', text: '', event: 'done', atMs: NOW - 10_000 }] }
+    seat(on, earlierItems([closed]))
+    await start($)
+
+    expect(contextOf(await $.prompt.submit(typed('go on')))).toContain(`Side question #1 (Open items): the user's words to the helper: "${QUESTION.text}". The helper answered: "${ANSWER.text}". Why it may matter: "${NOTE_LINE}".`)
   })
 
   test('a slash command does not carry the note, and the next typed prompt does', async ($, on) => {

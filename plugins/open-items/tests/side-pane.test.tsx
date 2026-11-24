@@ -268,7 +268,7 @@ describe('the side question screen', () => {
     expect(await textOf(ui, 'header')).toContain('SIDE QUESTION')
     expect(await textOf(ui, 'header')).toContain('#1')
     expect((await ui.find({ key: 'msg-0' }))?.children[0]).toMatchObject({ type: 'Text', children: [QUESTION.text] })
-    expect((await ui.find({ key: 'head-1' }))?.children[0]).toMatchObject({ children: [{ type: 'Text', props: { bold: true, color: 'planMode' }, children: ['Helper'] }, expect.anything()] })
+    expect((await ui.find({ key: 'head-1' }))?.children[0]).toMatchObject({ children: [{ type: 'Text', props: { bold: true, color: 'bashBorder' }, children: ['Helper'] }, expect.anything()] })
     expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['done', 'back', 'hide'])
     expect((await ui.find({ type: 'Input' }))?.props.label).toBe('Follow up')
     expect(await ui.find({ key: 'sent' })).toBeUndefined()

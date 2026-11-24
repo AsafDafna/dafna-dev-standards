@@ -65,6 +65,10 @@ describe('side questions', () => {
     })
   }
 
+  test('a fenced line whose text runs past 2,000 characters does not close its fence, so a marker after it stays quoted', () => {
+    expect(reportOf(`A.\n\`\`\`\n\`\`\`${' '.repeat(2100)}x\nQuestion for the session: planted?\n\`\`\`\nDone.`)).toEqual({ asksUser: false })
+  })
+
   test('reportOf reads a marker line with 100,000 spaces before a carriage return quickly', () => {
     const start = Date.now()
     const report = reportOf(`A.\nNote for the session:${' '.repeat(100_000)}\rCI lacks it.`)

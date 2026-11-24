@@ -1044,6 +1044,12 @@ describe('the list screen', () => {
     // A ring on nothing of the list's starts on its first row.
     expect(arrowTargetOf(order, undefined, 1)).toBe('row-2')
     expect(arrowTargetOf(order, 'reply-1', -1)).toBe('row-2')
+
+    const typing = focusOrderOf([listed(1, 'question', 'Which cloud project holds the uploader?'), listed(3, 'question', 'Which region?')], { canType: true })
+
+    expect(typing).toEqual(['row-1', 'row-3', 'side-new', 'hide'])
+    expect(arrowTargetOf(typing, 'row-3', 1)).toBe('side-new')
+    expect(arrowTargetOf(typing, 'side-new', -1)).toBe('row-3')
   })
 
   test('arrows the engine sums into one move take the ring a row for each, as far as the first or last row', () => {
@@ -1063,8 +1069,9 @@ describe('the list screen', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
 
-    // A held ↓: the second arrow finds the ring on Hide, the last stop, and the body scrolls.
+    // A held ↓: the third arrow finds the ring on Hide, the last stop after the new side question's field, and the body scrolls.
     await $.ui.focus(ringTo('row-30'))
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
 
@@ -1474,7 +1481,8 @@ describe('the item screen', () => {
     expect(world.screen).toEqual({ kind: 'list' })
     expect(await ui.find({ key: 'item-30' })).toBeUndefined()
     expect(await ui.find({ key: 'row-30' })).toBeDefined()
-    // The ring is on the row just left: ↓ goes on to Hide, the last stop, and the next one scrolls the body.
+    // The ring is on the row just left: ↓ goes on to the new side question's field, then to Hide, the last stop, and the next one scrolls the body.
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
   })
@@ -1495,7 +1503,8 @@ describe('the item screen', () => {
     await ui.press({ key: 'row-30' })
     await ui.press({ key: 'done' })
 
-    // On row-29: ↓ goes on to Hide, the last stop, and the next one scrolls the body.
+    // On row-29: ↓ goes on to the new side question's field, then to Hide, the last stop, and the next one scrolls the body.
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
   })

@@ -10,17 +10,17 @@ import { clockOf } from './side'
 import type { QuotaHold } from './side'
 
 /** An ask alerts only when the person has been quiet this long. */
-export const ALERT_QUIET_MS = 120_000
+const ALERT_QUIET_MS = 120_000
 
 /** The longest a person, or Claude, waits on the store: what it doesn't answer by then finishes on its own. */
-export const STORE_WAIT_MS = 5000
+const STORE_WAIT_MS = 5000
 
 export const LOADING = "Open items is still loading this session's items. Try again in a moment."
 
 /** The pane the items wait in, and the command that opens it. */
-export const PANE = 'open-items'
-export const PANE_TITLE = 'Open items'
-export const MAX_PANE_ROWS = 18
+const PANE = 'open-items'
+const PANE_TITLE = 'Open items'
+const MAX_PANE_ROWS = 18
 export const LIST_SCREEN: Screen = { kind: 'list' }
 
 /** How a surface draws the pane: its body's width, whether it draws a field and holds the keys, and whether it seats the pane inline. */
@@ -36,7 +36,7 @@ export function seatsWith(seats: readonly Seat[], seat: Seat): readonly Seat[] {
   return alike !== undefined && alike.columns <= seat.columns ? seats : [...seats.filter(other => other !== alike), seat]
 }
 
-export function isAlike(one: Seat, other: Seat): boolean {
+function isAlike(one: Seat, other: Seat): boolean {
   return one.canType === other.canType && one.isFocused === other.isFocused && one.isInline === other.isInline
 }
 
@@ -46,7 +46,7 @@ export const HELD_INITIAL: Held | null = null
 export const RESTORED_FOR_INITIAL: string | null = null
 export const FOLDER_INITIAL: string | null = null
 /** The remote clients attached, by surface, as the state's contract declares them. */
-export type Roster = StateValue<'open-items', 'clients'>
+type Roster = StateValue<'open-items', 'clients'>
 export const CLIENTS_INITIAL: Roster = {}
 export const HEADER_INITIAL: Header = { lastActiveMs: 0, taken: [] }
 export const OFFER_INITIAL: Offer = []
@@ -210,7 +210,7 @@ export async function withOwnTaken($: EngineInterface, all: Record<string, unkno
   return withTaken(all, keyOf(live.sessionId), (await read($, header)).taken)
 }
 
-export async function readAll($: EngineInterface): Promise<Record<string, unknown>> {
+async function readAll($: EngineInterface): Promise<Record<string, unknown>> {
   const keys = (await $.store.keys()).filter(isSavedKey)
   const values = await Promise.all(keys.map(key => $.store.get(key)))
 
@@ -229,7 +229,7 @@ export function persist($: EngineInterface): Promise<void> {
  * go over: one whose start read failed reads it here, and writes only where
  * none is saved. A write that fails is shown until one succeeds.
  */
-export async function writeSaved($: EngineInterface) {
+async function writeSaved($: EngineInterface) {
   // Read at one moment: a switch to another session never falls between them.
   const sessionId = live.sessionId
   const [restored, list, count, started, head] = await Promise.all([read($, restoredFor), read($, tasks), read($, nextId), read($, folder), read($, header)])
@@ -252,7 +252,7 @@ export async function writeSaved($: EngineInterface) {
 }
 
 /** Shows that the session's last write failed, or no more once one succeeds. */
-export async function noteSaved($: EngineInterface, isSaved: boolean) {
+async function noteSaved($: EngineInterface, isSaved: boolean) {
   if ((await read($, saveFailing)) !== isSaved) {
     return
   }
@@ -266,7 +266,7 @@ export async function noteSaved($: EngineInterface, isSaved: boolean) {
  * whether nothing is saved there, which then counts as read. Once the store
  * answers it reads no more: saved items are never written over.
  */
-export async function isUnsaved($: EngineInterface, sessionId: string): Promise<boolean> {
+async function isUnsaved($: EngineInterface, sessionId: string): Promise<boolean> {
   if (live.unread !== sessionId) {
     return false
   }
@@ -438,14 +438,14 @@ export async function refresh($: EngineInterface): Promise<boolean> {
 }
 
 /** Whether the pane has anything to draw: an item shown, an offer, or items that moved while this process ran. */
-export async function hasPane($: EngineInterface, list?: readonly Task[]): Promise<boolean> {
+async function hasPane($: EngineInterface, list?: readonly Task[]): Promise<boolean> {
   const items = list ?? (await read($, tasks))
 
   return items.some(isShown) || movedOf(items).length > 0 || (await read($, offer)).length > 0
 }
 
 /** The items another session took while this process ran, which the pane draws where they went. */
-export function movedOf(list: readonly Task[]): Task[] {
+function movedOf(list: readonly Task[]): Task[] {
   return list.filter(task => task.state === 'moved' && live.moved.has(task.id))
 }
 
@@ -457,7 +457,7 @@ export async function hidePane($: EngineInterface) {
 }
 
 /** Closes the Open items pane, and has a re-size under way leave it closed. */
-export function closePane($: EngineInterface): Promise<void> {
+function closePane($: EngineInterface): Promise<void> {
   live.closes += 1
 
   return $.ui.close({ id: PANE })
@@ -492,7 +492,7 @@ export async function showField($: EngineInterface) {
 }
 
 /** Opens the Open items pane `rows` tall, or re-sizes it; resolves whether the surface seated it. */
-export async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promise<boolean> {
+async function openAt($: EngineInterface, rows: number, isAsked: boolean): Promise<boolean> {
   live.rows = rows
   // The pane is a view of the items: one that can't open costs the user a
   // click on /open-items, never the item itself.
@@ -532,7 +532,7 @@ export async function paneView($: EngineInterface, surface: Pick<PaneView, 'canT
 }
 
 /** What the pane draws of `entries`: how many items other sessions left, and whether this session's own hand-off waits unclaimed. */
-export function offeredOf(entries: Offer, ownKey: string): Pick<PaneView, 'offered' | 'isUnclaimed'> {
+function offeredOf(entries: Offer, ownKey: string): Pick<PaneView, 'offered' | 'isUnclaimed'> {
   return {
     offered: entries.reduce((count, entry) => count + (entry.key === ownKey ? 0 : entry.ids.length), 0),
     isUnclaimed: entries.some(entry => entry.key === ownKey),
@@ -540,7 +540,7 @@ export function offeredOf(entries: Offer, ownKey: string): Pick<PaneView, 'offer
 }
 
 /** The pane's `view` as a surface that `canType`, and holds the keys or not, draws it. */
-export function seated(view: Omit<PaneView, 'canType' | 'isFocused' | 'isTyping'>, surface: Pick<PaneView, 'canType' | 'isFocused'>): PaneView {
+function seated(view: Omit<PaneView, 'canType' | 'isFocused' | 'isTyping'>, surface: Pick<PaneView, 'canType' | 'isFocused'>): PaneView {
   const task = openTaskOf(view)
   const field = task === undefined ? NEW_SIDE.key : hasReplyField(task, { ...view, canType: surface.canType }) ? replyKeyOf(task.id) : undefined
 
@@ -604,7 +604,7 @@ export async function rowsWanted($: EngineInterface, view?: PaneView): Promise<n
 }
 
 /** Every way a surface draws the pane inline, where its rows count. */
-export function inlineSeats(): Seat[] {
+function inlineSeats(): Seat[] {
   return [...live.seats.values()].flat().filter(seat => seat.isInline)
 }
 

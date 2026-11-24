@@ -98,6 +98,7 @@ import {
 } from './pane'
 import type { Action, Entry } from './pane'
 import { isExpired, keyOf, savedIn, trimmed } from './saved'
+import { workingHelperOf } from './side'
 import { printable } from './text'
 import {
   ARRIVED_INITIAL,
@@ -142,7 +143,7 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
-import { askNew, doneSide, helperHooks, refusalOf, registerHelper, revive, sendQuestions, takeRiding } from './helper'
+import { askNew, doneSide, helperHooks, refusalOf, registerHelper, revive, sendQuestions, takeRiding, tasksNow } from './helper'
 
 const PLUGIN = 'open-items'
 // The same as state.ts's: a hook matcher reads only a literal or a const of this file.
@@ -1270,6 +1271,11 @@ export const register: Register = on => {
  */
 async function startCleared($: EngineInterface, endingId: string) {
   const sessionId = await newIdAfter($, endingId)
+
+  // Its helpers would run on, unbounded, beside the new session's, and their answers would find no item.
+  for (const helperId of (await tasksNow($)).flatMap(task => workingHelperOf(task) ?? [])) {
+    void $.tool.call({ tool: 'TaskStop', task_id: helperId }).catch(() => undefined)
+  }
 
   await switchTo($, sessionId ?? endingId)
 

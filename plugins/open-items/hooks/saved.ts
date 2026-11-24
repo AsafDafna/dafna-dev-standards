@@ -1,4 +1,5 @@
 import type { Message, Saved, Side, Taken, Task, ToMain } from '../types'
+import { isToMainWaiting } from './side'
 import { KINDS, isShown } from './tasks'
 
 /** How long a session's saved items wait for `claude --resume`: an older key is deleted at the next start. */
@@ -228,7 +229,7 @@ export function isExpired(saved: Saved, nowMs: number): boolean {
  */
 export function trimmed(saved: Saved, nowMs: number): Saved {
   const tasks = saved.tasks.flatMap(task => {
-    if (!CLOSED.includes(task.state) || task.update === 'pending') {
+    if (!CLOSED.includes(task.state) || task.update === 'pending' || isToMainWaiting(task)) {
       return [task]
     }
 
