@@ -1,9 +1,9 @@
 # open-items 0.4: side questions from the user to the session
 
-**Status:** draft for Nir's review.
+**Status:** approved. Nir approved the design face to face on 2026-11-24. Asaf and Claude own the build (Asaf, 2026-11-24).
 **Origin:** Nir's draft "open-items v0.3: asks from the user to the session" (PR 22, 2026-11-07). Asaf reviewed it on 2026-11-21 and changed the helper and the routing. This document replaces the draft. Nir's decisions that still hold keep his name.
 **Builds on:** the v0.2 spec (`2026-10-26-open-items-v0.2-design.md`) and the 0.3 spec (`2026-11-20-open-items-pane-look-design.md`, shipped as 0.3.0). Everything they decided stays unless "Changes to earlier decisions" below lists it.
-**Evidence:** an independent review of the draft and a live probe of the helper, both on 2026-11-21. The probe results are in `docs/superpowers/notes/2026-11-21-open-items-side-questions-probes.md`.
+**Evidence:** an independent review of the draft and a live probe of the helper, both on 2026-11-21, and the probes of Rollout step 0 on 2026-11-24. The results of both probes are in `docs/superpowers/notes/2026-11-21-open-items-side-questions-probes.md`.
 **Dropped from the draft:** the helper as a copy of the conversation, the main session answering a side question itself, the routing table, the metrics, and the "unused for 14 days" item.
 
 ## Intent
@@ -77,6 +77,12 @@ Nir's routing table (decision 2 of his draft) is replaced by Asaf's decisions 5 
 8. **Each speaker in a thread is easy to tell apart**, in every kind of item, not only side questions. Asaf found that a short reply such as "ok" gets lost between long messages: 0.3.0 draws each head as one dim line, right under the message before it. So a blank row separates the messages, and the name in each head is bold in its own theme color: "You" in `ide` (blue), "Claude" in `claude` (orange), "Helper" in `planMode` (teal). The age stays dim and the message text keeps the normal text color. None of the three is a kind color.
 9. **A reply shows that it went out**, in every kind of item. Asaf found that a reply typed in the pane while the main session is busy shows no sign that it was sent. So a dim line under the user's newest message tracks it: "Waiting to send" while it waits (a quota hold, a store failure), "Sent · Claude reads it at its next step" once the mod hands it to a running turn, and "✓ Claude has it" once a step of that turn read it or it went in as a prompt. The mod already knows both moments: the hand-over, and the next `turn.step`. In a side question the line names the helper.
 
+## Decided by Asaf (2026-11-24), after the step 0 probes
+
+1. **No cost limit beyond the quota guard and the 10-minute helper limit.** One side question cost about 0.05% of the org seat's five-hour window (probe 0.2).
+2. **The helper is told never to call `advisor`, and a rare call is accepted.** Where the advisor is on (the personal seat), the helper calls it when a question asks for it, and no mod API withholds a server tool (probe 0.1).
+3. **Asaf and Claude own the build.** It does not wait for Nir's review.
+
 ## Claude's calls
 
 These are Claude's, for Nir to check.
@@ -130,7 +136,8 @@ Its title is the question, cut at 80 characters with "…". States: `open` until
 
 The mod registers one agent type at session start with `$.agent.register`:
 
-- `tools: ["Read", "Grep", "Glob"]`, so other tools are refused by the engine (probe: `Write`, `Bash`, `Agent` and an MCP tool were refused). If probe 0.1 finds `advisor`, `SubagentHandback` or another tool callable beside the list, `disallowedTools` withholds it;
+- `tools: ["Read", "Grep", "Glob"]`, so other tools are refused by the engine (probes: `Write`, `Bash`, `Agent`, an MCP tool and `SubagentHandback` were refused, also after a resume, on both seats). `advisor` is a server tool, which neither `tools` nor `disallowedTools` withholds: where the advisor is on, the helper can call it, so its prompt forbids it (Asaf 2026-11-24, 2);
+- `permissionMode: "dontAsk"`, so a read outside the paths the engine allows (the main conversation file and the scratchpad are allowed) is refused with no dialog on the user's screen, and the helper says it could not read it (probe 0.3);
 - `model: "opus"`, `effort: "medium"`, and a `maxTurns` bound;
 - its own system prompt (below), plus the user's CLAUDE.md;
 - hidden from the main model with `agent.offer`, so only the mod starts it.
@@ -152,7 +159,7 @@ The helper's prompt holds:
 - You answer a side question the user left for this session. The main session goes on without you. You write for the user: follow the user's reply rules in CLAUDE.md.
 - Search the main conversation file before you answer a question about the session's work. Look for every term that may hold the answer. Say what you could not find.
 - If you are not sure whether the question is about the main session's work, ask the user one short question and stop.
-- Look and report only. You have no shell. Never edit files, commit, push or send messages.
+- Look and report only. You have no shell. Never edit files, commit, push or send messages. Never call the advisor.
 - Put the answer first. Keep it short.
 - When your answer matters to the main session's work, add a one-line note for the main session: what it should know, and why. When only the main session can answer, add a one-line question for it instead.
 
@@ -196,34 +203,36 @@ The mod reads the five-hour window from `$.session.usage().rateLimits` before it
 
 - **70% or more:** one alert per window, through v0.2's alert path: "Five-hour usage at 72%. Side questions pause at 85%." The question still runs.
 - **85% or more:** no helper starts and no question goes to the main session; a note still rides the user's prompt, which starts no turn of its own. New side questions are still saved. A held one shows "⏸ held: usage at 86%, resumes at 20:49". It runs when a later reading is under 85%, or when the window's reset time passes. (`rateLimits` is the last response's reading, so a quiet session would never see the drop.)
-- **No window to read** (an account with no subscription, or no reading yet): no alert and no hold.
+- **No window to read** (an account with no subscription, or no reading yet): no alert and no hold. The personal seat has no five-hour window (probe 0.6: `rateLimits` lists only `seven_day`), so side questions there get no alert and no hold.
 
 ## Constraints
 
-Claude Code 2.1.330 mod API, checked against its types and the probe:
+Claude Code 2.1.330 mod API, checked against its types and the probes (step 0 ran on 2.1.331):
 
-- `$.agent.register({ name, description, prompt, tools, disallowedTools, model, effort, maxTurns })` defines an agent type; a call to a tool outside `tools` is refused (probe: `Write`, `Bash`, `Agent`, an MCP tool; `advisor` and `SubagentHandback` not checked).
+- `$.agent.register({ name, description, prompt, tools, disallowedTools, model, effort, maxTurns, permissionMode })` defines an agent type; a call to a tool outside `tools` is refused (probes: `Write`, `Bash`, `Agent`, an MCP tool, `SubagentHandback`). A server tool such as `advisor` is not: on the org seat it is listed as a deferred tool that the helper cannot load; on the personal seat (`advisorModel` set) the helper called it when asked. `turn.complete` usage leaves out the advisor's tokens.
+- A helper's prompt cache lasts 5 minutes (main's lasts an hour), so a follow-up after a pause re-reads its conversation at full price (probe 0.5: a resume after 31 minutes kept its memory).
 - `$.agent.spawn` starts it in the background. With `{ consumed }` from `agent.report`, the main session gets no turn, and the answer is `agent.report`'s `e.text`.
 - `$.session.send({ to: { agentId } })` resumes a finished helper, also after it left `$.agent.list()`. It can answer that it was not delivered.
-- `TaskStop` through `$.tool.call` stops a helper. Where `cc-plugin-sec-default` is seated (the org seat), a person's mod gets `{ deny }` on `$.tool.call` until that call is allowed.
+- `TaskStop` through `$.tool.call` stops a helper. The types say a person's mod gets `{ deny }` on `$.tool.call` where `cc-plugin-sec-default` is seated (the org seat) until that call is allowed; probe 0.1 found it allowed there on 2.1.331. The mod keeps the fallback (wait for the bounded end) for a deny.
 - `$.session.messages()` returns the conversation, one entry per user or assistant message. `$.session.info()` returns the transcript path and the scratchpad, which a session may not have.
 - A mod helper turns on the main pane's title spinner while it runs, and no mod API reaches the title.
 - A plugin prompt sent while the main turn runs starts its own turn right after that turn ends, also while background work runs.
-- `$.session.usage().rateLimits` is the last response's reading, and empty on an account with no subscription.
+- `$.session.usage().rateLimits` is the last response's reading, and empty on an account with no subscription. The org seat lists `five_hour` and `seven_day`; the personal seat only `seven_day`.
+- A mod command registered `immediate: true` runs at once while the main turn runs, also when it is sent from the phone through Remote Control (probe 0.4).
 - v0.2's constraints stay: `Input` is not drawn on mobile; Esc belongs to the engine; the leak gate scans `plugins/`.
 
 ## Rollout
 
-**Who builds and owns it:** open, for Asaf and Nir.
+**Who builds and owns it:** Asaf and Claude (Asaf, 2026-11-24).
 
-0. **Probes before the build.**
+0. **Probes before the build.** Done on 2026-11-24, all passed or settled; results in the probes note. Probe 0.1 passed on the org seat, so the feature goes ahead.
    1. *Org seat, first:* the mod can register the helper type, start a helper, and resume it; a consumed report starts no main turn; the tool list refuses `Write`, `Bash`, `Agent` and an MCP tool, also after a resume; whether `advisor` or `SubagentHandback` is callable; `$.session.messages()` and `$.session.info()` answer; and `TaskStop` through `$.tool.call` is allowed. If the helper or its tool limit fails, the feature stops here (Nir 9). If the consumed report fails, it stops too (first anti-goal).
    2. *Cost:* on the org seat, the change in the five-hour window for one helper run in this spec's setup (Opus at medium effort, CLAUDE.md kept, real searches of a long conversation file), with a warm and a cold cache, and for one main turn that a helper's question starts. Nir and Asaf set a limit from it before the build.
    3. *Permission modes:* the helper's `Read` of the main conversation file in default mode, which may raise a dialog while main works. If it does, the helper answers from the summary and says it could not search, and Nir and Asaf decide before the build whether that is enough.
    4. *Phone:* whether `/side` sent through Remote Control runs at once while Claude works.
    5. *A late follow-up:* a resume after 30 minutes keeps the helper's memory.
    6. *Personal seat:* `rateLimits` has a five-hour window there.
-1. PR to this repo: the plugin at 0.4.0, tests, CHANGELOG, README (side questions, `/side`, the helpers, the conversation summary in a helper's prompt). CI moves its Claude Code pin from 2.1.310 to 2.1.330, which the design needs.
+1. PR to this repo: the plugin at 0.4.0, tests, CHANGELOG, README (side questions, `/side`, the helpers, the conversation summary in a helper's prompt). CI moves its Claude Code pin from 2.1.310 to 2.1.331, the version the probes ran on (the design needs 2.1.330 or later).
 2. Personal config: the session-end rule in `~/.claude/CLAUDE.md` and the `/wrap-up` skill leave side questions out.
 3. Update both seats after merge, before the first side question: a session still on 0.3.0 drops a saved item of an unknown kind, so a take there would lose side questions.
 4. Smoke test in a fresh session. While a background batch runs, the user leaves a term question, a question about the batch's work, and a vague question. The first gets an answer and nothing else; the second gets an answer, and a note that reaches the main session with the user's next typed prompt; the third gets a question back.
