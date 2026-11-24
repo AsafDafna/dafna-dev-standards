@@ -256,6 +256,19 @@ describe('the item screen helpers', () => {
     expect(rowsFor(itemView(replies), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(6)
   })
 
+  test('an event after the detail, and the line in place of hidden messages, each take a blank row above their one line', () => {
+    const pressed = item({ thread: [DETAIL, { from: 'user', text: '', event: 'later', atMs: NOW }] })
+    const long: Message = { from: 'user', text: `${'word '.repeat(799)}words`, atMs: NOW }
+    const messages = Array.from({ length: 20 }, () => long)
+    const hiding = item({ thread: [DETAIL, ...messages] })
+    const showing = item({ thread: [DETAIL, ...messages.slice(1)] })
+
+    expect(rowsFor(itemView(pressed), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(2)
+    // The same messages are drawn in both: one more than fits is the one hidden.
+    expect([entriesOf(hiding, NOW).hidden, entriesOf(showing, NOW).hidden]).toEqual([1, 0])
+    expect(rowsFor(itemView(hiding), 76, 9999) - rowsFor(itemView(showing), 76, 9999)).toBe(2)
+  })
+
   test('on a 0.3 item, Claude writes Markdown and the detail has no head; the user writes plain text, and a press is an event', () => {
     const task = item({
       thread: [
