@@ -343,23 +343,28 @@ describe('the 10-minute limit', () => {
     expect(itemOf(world, 1)?.thread).toEqual(thread)
   })
 
-  test("where TaskStop is refused, the mod waits for the helper's own end", async ($, on) => {
-    const { world, clock } = await oneWaiting($, on, world => {
-      world.agents = [RUNNING]
-      world.isStopRefused = true
+  for (const [label, prepare] of [
+    ['refused', (world: World) => void (world.isStopRefused = true)],
+    ['answered with an error', (world: World) => void (world.isStopError = true)],
+  ] as const) {
+    test(`where TaskStop is ${label}, the mod waits for the helper's own end`, async ($, on) => {
+      const { world, clock } = await oneWaiting($, on, world => {
+        world.agents = [RUNNING]
+        prepare(world)
+      })
+
+      await clock.advance(600_000)
+
+      expect(itemOf(world, 1)?.thread.filter(message => message.event === 'notice')).toEqual([])
+      expect(world.spawns).toEqual([])
+
+      await report($, { text: 'More of the feed.' })
+      await clock.settle()
+
+      expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', text: 'More of the feed.' }))
+      expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
     })
-
-    await clock.advance(600_000)
-
-    expect(itemOf(world, 1)?.thread.filter(message => message.event === 'notice')).toEqual([])
-    expect(world.spawns).toEqual([])
-
-    await report($, { text: 'More of the feed.' })
-    await clock.settle()
-
-    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(expect.objectContaining({ from: 'claude', author: 'helper', text: 'More of the feed.' }))
-    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
-  })
+  }
 
   test('where TaskStop is refused and the helper is gone, the item says so at 10 minutes and the next side question starts', async ($, on) => {
     const { world, clock } = await oneWaiting($, on, world => {

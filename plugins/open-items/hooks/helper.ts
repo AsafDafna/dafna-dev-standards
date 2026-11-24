@@ -200,7 +200,7 @@ export async function stopHelper($: EngineInterface, agentId: string): Promise<b
   live.stoppedHelpers.add(agentId)
   const answer = await $.tool.call({ tool: 'TaskStop', task_id: agentId }).catch(() => undefined)
 
-  if (answer === undefined || answer.deny !== undefined) {
+  if (answer === undefined || answer.deny !== undefined || answer.isError === true) {
     live.stoppedHelpers.delete(agentId)
     return false
   }

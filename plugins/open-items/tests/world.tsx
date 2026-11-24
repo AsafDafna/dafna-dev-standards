@@ -140,6 +140,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     stops: [] as string[],
     /** Set, the plugin's `TaskStop` calls are refused. */
     isStopRefused: false,
+    /** Set, the plugin's `TaskStop` calls answer as a tool error, as for a task that is not running. */
+    isStopError: false,
     /** The files the plugin wrote, by path. */
     files: {} as Record<string, string>,
     /** Set, the plugin's file writes are refused. */
@@ -276,6 +278,10 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
   on('tool.call', { tool: 'TaskStop' }, ($, e) => {
     if (world.isStopRefused) {
       return { deny: 'TaskStop is not allowed here.' }
+    }
+
+    if (world.isStopError) {
+      return { isError: true as const, result: undefined, text: `No task found with ID: ${e.task_id ?? ''}` }
     }
 
     const taskId = e.task_id ?? ''
