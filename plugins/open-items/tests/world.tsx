@@ -130,6 +130,16 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     spawns: [] as { subagentType: string; description: string; prompt: string }[],
     /** Set, the engine refuses the plugin's spawns with this reason. */
     spawnDeny: undefined as string | undefined,
+    /** How long the engine takes to answer a spawn. */
+    spawnMs: 0,
+    /** The agent ids a send reaches. */
+    helpers: [] as string[],
+    /** Every message the plugin sent to an agent. */
+    sends: [] as { to: string; text: string }[],
+    /** The files the plugin wrote, by path. */
+    files: {} as Record<string, string>,
+    /** Set, the plugin's file writes are refused. */
+    isFileRefused: false,
     /** What `$.session.info()` answers with. */
     info: { transcriptPath: '/t/main.jsonl', scratchpadDir: '/s/pad' } as SessionInfo,
   }
@@ -242,13 +252,31 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     return { value: { agent: `open-items:${e.name}` } }
   })
   // The plugin's own spawn reaches the Agent tool beneath with the tool's own field names.
-  on('agent.spawn', ($, e) => {
+  on('agent.spawn', async ($, e) => {
     const call = e as unknown as { subagent_type: string; description: string; prompt: string }
     world.spawns.push({ subagentType: call.subagent_type, description: call.description, prompt: call.prompt })
+
+    if (world.spawnMs > 0) {
+      await clock.sleep(world.spawnMs)
+    }
 
     return world.spawnDeny === undefined ? { model: 'opus' } : { deny: world.spawnDeny }
   })
   on('agent.offer', () => ({ isOffered: true }))
+  on('agent.report', ($, e) => ({ text: e.text }))
+  on('session.send', ($, e) => {
+    world.sends.push({ to: e.to, text: e.text })
+
+    return world.helpers.includes(e.to) ? { isDelivered: true } : { isDelivered: false, reason: 'No agent by that id.' }
+  })
+  on('fs.write', ($, e) => {
+    if (world.isFileRefused) {
+      return { deny: 'The disk is full.' }
+    }
+
+    world.files[e.path] = e.text
+    return { value: undefined }
+  })
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)

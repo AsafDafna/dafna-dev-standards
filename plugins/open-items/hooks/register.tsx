@@ -138,7 +138,7 @@ import type { Seat } from './state'
 import { LIVE_CHAT, LIVE_CHAT_NOTE, isLiveChat, noteEnds, noteInput, noteStart, resultTextOf } from './gate'
 import { armBatch, cancelBatch, clearUnread, inDigest, inWords, isHeld, passOn, resolve, sendSoon, wakeUp } from './delivery'
 import { dismissLeft, handOffItems, scan, takeBack, takeItems, takeLeft } from './handoff'
-import { helperHooks, registerHelper } from './helper'
+import { helperHooks, registerHelper, revive } from './helper'
 
 const PLUGIN = 'open-items'
 
@@ -1309,6 +1309,7 @@ async function restore($: EngineInterface) {
     // A resumed session's key says at once that it runs again, so no other session offers its items.
     if (isKept) {
       void persist($).catch(() => undefined)
+      void revive($).catch(() => undefined)
     }
 
     await scan($, all)

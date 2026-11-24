@@ -157,6 +157,10 @@ export const live = {
   /** The items another session took while this process ran: the pane draws them where they went, and a reload or another session forgets them. */
   moved: new Set<number>(),
   pumpQueue: Promise.resolve() as Promise<unknown>,
+  /** Helpers the mod stopped: their report says nothing in the item. */
+  stoppedHelpers: new Set<string>(),
+  /** The last write of the side questions' log failed: a helper's prompt holds the log. */
+  isLogFailing: false,
 }
 
 /** `bridge`: a prompt that answers an item (`↳ Answer to #5:`, see `answerIn`), from any surface. */
