@@ -1725,11 +1725,16 @@ async function pressedOn<R>($: EngineInterface, element: string, act: () => Prom
   }
 }
 
-/** Whether `element`, pressed on `onScreen`, is the field for a new side question, a side question's row or reply field, or anything on its screen. */
+/**
+ * Whether `element`, pressed on `onScreen`, is the field for a new side
+ * question or its Edit and Send anyway (the list holds no other), a side
+ * question's row or reply field, or anything on its screen.
+ */
 async function isSideElement($: EngineInterface, element: string, onScreen: Screen): Promise<boolean> {
   const list = await read($, tasks)
   const isSideId = (id: number) => list.some(task => task.id === id && isSide(task))
   const own = /^(?:row|reply)-(\d+)$/.exec(element)
+  const isNewHeld = onScreen.kind === 'list' && (element === 'edit' || element === 'send-anyway')
 
-  return element === NEW_SIDE.key || (own !== null && isSideId(Number(own[1]))) || (onScreen.kind === 'item' && isSideId(onScreen.id))
+  return element === NEW_SIDE.key || isNewHeld || (own !== null && isSideId(Number(own[1]))) || (onScreen.kind === 'item' && isSideId(onScreen.id))
 }

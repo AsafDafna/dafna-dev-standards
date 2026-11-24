@@ -387,6 +387,14 @@ describe('the side question screen', () => {
   for (const [label, seeded, act] of [
     ['a new side question', [], async (ui: Mounted<'terminal', 'Pane'>) => ui.input({ key: 'side-new', text: 'what is a cursor?' })],
     [
+      'a new side question held back, then Send anyway',
+      [],
+      async (ui: Mounted<'terminal', 'Pane'>) => {
+        await ui.input({ key: 'side-new', text: KEY_SHAPED })
+        await ui.press({ key: 'send-anyway' })
+      },
+    ],
+    [
       'a look, a follow-up and Done on a side question',
       [answered(1, 'By a cursor, in pages of twenty.')],
       async (ui: Mounted<'terminal', 'Pane'>) => {

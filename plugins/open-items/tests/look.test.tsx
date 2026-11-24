@@ -245,6 +245,25 @@ describe('the item screen helpers', () => {
     expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(2)
   })
 
+  test("a side question's screen takes its header, the question, the helper's reply, the follow-up, the sent line, Done, the follow-up field and the foot", () => {
+    const asked: Message = { from: 'user', text: 'What does the feed page by?', atMs: NOW - 120_000 }
+    const followUp: Message = { from: 'user', text: 'And the app feed?', atMs: NOW - 30_000 }
+    const side = item({
+      kind: 'side',
+      title: asked.text,
+      askLine: undefined,
+      thread: [asked, { from: 'claude', author: 'helper', text: 'By a cursor, in pages of twenty.', atMs: NOW - 60_000 }, followUp],
+      isWaitingForClaude: true,
+      side: { transcripts: [], helperId: 'a1', sentMs: followUp.atMs },
+    })
+    // 59 cells: two rows in the follow-up field, which its longer label leaves 57 cells; a reply field would take it in one.
+    const typing: PaneView = { ...itemView(side), draft: `${'word '.repeat(11)}word`, isTyping: true }
+
+    // The header box (4), an empty row, the question, two messages of a blank row, a head and a line each,
+    // the sent line, an empty row and Done (no Long answer), the field on two rows, and the foot.
+    expect(rowsFor(typing, 76, 99)).toBe(18)
+  })
+
   test('each message after the detail takes a blank row and a head row above its own rows', () => {
     const replies = item({
       thread: [
