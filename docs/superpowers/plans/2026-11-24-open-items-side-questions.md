@@ -29,6 +29,7 @@
 - The new-question toast, verbatim: `Side question #12 sent` (the item's own number).
 - A side question's messages to the main session never use `asUser`. A note goes as `prompt.submit` context. A question goes as a framed plugin prompt.
 - `earlierItems` saves `nextId: 3`, so a side question added after seeding the store gets #3.
+- A seeded side item whose helper works needs a running agent row in `world.agents`: `{ id: helperId, type: 'open-items:helper', status: 'running' } as AgentInfo`. Without it, the start treats the helper as gone and asks again (Task 6).
 - Test kit facts found on 2.1.331. A spike in the session's scratchpad checked them.
   - A test cannot read the mod's module state, because the kit loads its own instance. Observe through stand-ins.
   - `$.agent.spawn` reaches an `on('agent.spawn', …)` stand-in with an Agent-tool-shaped `e`: `subagent_type`, `description`, `prompt`, `run_in_background`. The stand-in must return `{ model }` or `{ deny }`. Whatever it returns, the mod gets `{ model: 'inherit' }` with no `agentId`. So a unit test never gets a running helper from a spawn. To test one, seed a saved side item that already has `side.helperId` and `side.sentMs`. A resume through `session.send` works.
@@ -80,6 +81,7 @@ Each case has one owner. A case that a probe proved on 2.1.331 is not replayed a
 | Not sure: the helper asks back, and the reply wakes the same helper | Tasks 6 and 10 (mark) |
 | A follow-up gets main's messages since the last answer | Task 6 |
 | A follow-up after `/clear`: a new helper with the thread and the log | Task 6 (send not delivered) |
+| A restart or `--resume` while a helper worked: the question asks again | Task 6 (`revive`) |
 | A new helper reads an earlier side question from the log | Task 6 (the log is written, and its path is in the prompt); the smoke test (the read) |
 | `↳ Answer to #N:` on a side question | Task 13 |
 | Two typed prompts, a side question from the field, then a helper's question: still a live chat | Tasks 8 and 10 |
@@ -347,6 +349,7 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
 - Modify: `<plugin>/hooks/register.tsx`:
   - In `session.start`: call `registerHelper($)`, and register `/side` with `{ name: 'side', description: 'Leave a side question for a helper; Claude goes on', argumentHint: '[#N] <question>', immediate: true }`.
   - In `register`: call `helperHooks(on)`.
+  - In `restore`: once `takeUp` kept items, call `revive($)`.
 - Modify: `<plugin>/tests/world.tsx`: add these stand-ins.
   - `agent.register`: records the spec in `world.registered` and answers `{ value: { agent: 'open-items:' + e.name } }`.
   - `agent.spawn`: records `{ subagentType: e.subagent_type, description, prompt }` in `world.spawns`. It answers `{ deny: world.spawnDeny }` when that is set, else `{ model: 'opus' }`.
@@ -356,10 +359,11 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
   - `session.info`: answers `{ value: world.info }`. The default is `{ transcriptPath: '/t/main.jsonl', scratchpadDir: '/s/pad' }`.
   - `fs.write`: records `world.files[e.path] = e.text`.
   - `session.messages`: honors `e.last` and `e.after` over `world.messages`.
+  - `agent.offer` answers `{ isOffered: true }`, and `agent.report` answers `{ text: e.text }`, for the types the mod passes on.
 - Create: `<plugin>/tests/helper.test.tsx`
 
 **Interfaces:**
-- Consumes: Task 5 (all of `side.ts`); `change`, `edit`, `settle`, `show` and `live` from `state.ts`; `movedBy`, `replyOf`, `DONE`, `isSide`, `looksSecret` and `MAX_DETAIL` from `tasks.ts`.
+- Consumes: Task 5 (all of `side.ts`); `change`, `edit`, `settle`, `show` and `live` from `state.ts`; `AT_WORK` from `gate.ts`; `movedBy`, `replyOf`, `DONE`, `isSide`, `looksSecret` and `MAX_DETAIL` from `tasks.ts`.
 - Produces in `helper.ts`:
   - `HELPER_TYPE = 'open-items:helper'`
   - `registerHelper($): Promise<void>`. It registers `{ name: 'helper', description: 'Answers a side question the user left in the Open items pane; only the open-items mod starts it.', prompt: HELPER_PROMPT, tools: ['Read', 'Grep', 'Glob'], model: 'opus', effort: 'medium', maxTurns: 20, permissionMode: 'dontAsk' }`, and catches a failure.
@@ -368,6 +372,7 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
     - `agent.report`;
     - `command.run` `{ command: 'side' }`.
   - `askNew($, text: string): Promise<void>`, `followUp($, id: number, text: string): Promise<void>`, `pump($): Promise<void>`, `writeLog($): Promise<void>`.
+  - `revive($): Promise<void>`. A restart or a `--resume` reads the item back, but its helper died with the old process, so no report and no timer would ever end its work. For each side item that `isWorking`, `revive` looks in `$.agent.list()` for an agent with its `helperId` whose status is in `AT_WORK`. With none, it clears the item's `side.sentMs`. Then it pumps. A code reload keeps its helper, and `takeUp` reads nothing then, so it does not run.
 - Guards for `askNew` and `followUp`, each a toast. Nothing is saved.
   - Empty text: `Type a question first.`
   - `looksSecret`: `This looks like a secret, so it wasn't sent. Put it where it belongs, then ask without it.`
@@ -430,6 +435,9 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
     - 4,001 characters gives the length toast;
     - `#2` on a decision gives `#2 is not an open side question.`.
     - In each case no item is added and no spawn is made.
+  - `'after a restart, a side question whose helper is gone asks again, and one whose helper still runs waits'`. A table over a seeded working #1:
+    - `world.agents` holds `a1` running: no spawn;
+    - `world.agents` is empty: a spawn for `Side question #1`.
   - `'the session's log lists each side question with its latest answer'`.
     - After `a1`'s report, `world.files['/s/pad/open-items-side-questions.md']` holds `## #1` and `A pointer into the feed.`.
     - With `world.info` holding no `scratchpadDir`, nothing is written, and the next spawn's prompt holds `## #1`.
@@ -510,6 +518,7 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
 - Modify: `<plugin>/hooks/helper.ts`
 - Modify: `<plugin>/hooks/state.ts`: add `quotaHold: { percent: number; resetsAtMs?: number } | null`, `quotaTimer: Timer | null` and `alertedWindows: Set<string>` to `live`. `paneView` sets `PaneView.quota` from `quotaHold`.
 - Modify: `<plugin>/hooks/pane.ts`: `PaneView.quota?: { percent: number; resumesAt?: string }`. Task 10 draws it.
+- Modify: `<plugin>/tests/world.tsx`: a `session.measure` stand-in that answers `{ changed: e.changed }`.
 - Test: `<plugin>/tests/helper.test.tsx`
 
 **Interfaces:**
@@ -652,7 +661,7 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
 - Changes `arrivedAs(task: Task, id: number, atMs: number, transcript = ''): Task`. A side item arrives this way:
   - with no `helperId` and no `seenUuid`;
   - with `transcript` added to `side.transcripts` when it is not empty and not already there;
-  - with no `sentMs` when it `isWorking`, so that the new session asks again.
+  - with no `sentMs` when no helper entry follows its newest user message, so that the new session asks again. This rule reads the thread only: a taken item arrives `handing-off`, which `isWorking` does not count.
 - `takeIn` passes `(await $.session.info().catch(() => undefined))?.transcriptPath ?? ''`.
 - `handOffItems` first calls `stopHelper` for each side item that `isWorking` with a `helperId`, and clears that item's `side.sentMs`. A Take back in the same session then asks again.
 - `tookOf` lists only items that are not side questions. When side questions came, it adds the line `N side question(s) of the user's came too: their helpers answer them, and they are not yours to close.`
@@ -661,7 +670,7 @@ The spec does not ask for this. Asaf's recorded follow-up does: "register.tsx is
 - [ ] **Step 1: Write the failing tests** in `helper.test.tsx`, in `describe('hand-off')`:
   - `'a hand-off stops a working helper and hands its side question off with the rest'`. With a seeded working side item (`a1`) and an action, `handoff_items` gives `world.stops === ['a1']`, the result `Marked 2 items for the next session.`, and both items `handing-off`.
   - `'taken in a new session, a side question adds the new conversation file, and its unanswered question gets a new helper that can search both files'`.
-    - The store holds session `old`'s handing-off side item with `transcripts: ['/t/old.jsonl']`, `helperId: 'a1'`, and the question unanswered. In session 2, `world.info.transcriptPath` is `/t/new.jsonl`.
+    - The store holds session `old`'s handing-off side item with `transcripts: ['/t/old.jsonl']`, `helperId: 'a1'`, `sentMs` set to the question's `atMs`, and no answer. In session 2, `world.info.transcriptPath` is `/t/new.jsonl`.
     - After `take_items`, the item has `transcripts: ['/t/old.jsonl', '/t/new.jsonl']` and no `helperId`.
     - A spawn is heard whose prompt holds both paths. `world.files` holds the log with `## #`.
     - The result holds `1 side question of the user's came too` and not the question's text.
