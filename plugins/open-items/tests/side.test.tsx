@@ -60,6 +60,15 @@ describe('side questions', () => {
     expect(task).toMatchObject({ hasNewReply: true, isWaitingForClaude: false, side: { seenUuid: 'u9', toMain: { kind: 'note', text: 'CI lacks it.', atMs: 2000 } } })
   })
 
+  test('an answer with no marker keeps an earlier unsent note, and a new marker replaces it', () => {
+    const noted = answeredOf(side([ASKED], sent(1000)), 'One.\nNote for the session: first.', 2000)
+    const plain = answeredOf(noted, 'Two.', 3000)
+    const replaced = answeredOf(noted, 'Three.\nQuestion for the session: which?', 4000)
+
+    expect(plain.side?.toMain).toEqual({ kind: 'note', text: 'first.', atMs: 2000 })
+    expect(replaced.side?.toMain).toEqual({ kind: 'question', text: 'which?', atMs: 4000 })
+  })
+
   test('summaryOf skips empty rows, cuts the first prompt, and labels rows', () => {
     const summary = summaryOf([row('user', 'a'.repeat(2500)), row('user', ''), row('assistant', 'Sure.'), row('user', 'Next?')])
 

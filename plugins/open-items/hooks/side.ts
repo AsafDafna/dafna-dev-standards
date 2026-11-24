@@ -84,7 +84,7 @@ function withReply(task: Task, entry: Message, side: Task['side']): Task {
 }
 
 export function answeredOf(task: Task, text: string, atMs: number, seenUuid?: string): Task {
-  const { toMain: _old, ...side } = task.side ?? { transcripts: [] }
+  const side = task.side ?? { transcripts: [] }
   const report = reportOf(text).toMain
 
   return withReply(task, { from: 'claude', author: 'helper', text, atMs }, {
