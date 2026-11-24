@@ -48,6 +48,9 @@ describe('side questions', () => {
     ['A.\n````\n```\nNote for the session: quoted\n````\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
     ['A.\n```\nQuestion for you: quoted?\nNote for the session: quoted', { asksUser: false }],
     ['A.\nNote for the session:\n```\nquoted\n```\nCI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\n  - ```bash\n    npm test\n    ```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n1. ```\n   Note for the session: quoted\n   ```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\nNote for the session:\n> Question for the session: quoted?\nCI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
   ]
 
   for (const [text, want] of REPORTS) {

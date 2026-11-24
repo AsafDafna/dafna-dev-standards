@@ -29,27 +29,35 @@ const MARKERS = [
   ['question', 'question for the session'],
 ] as const
 const MARKER_LINE = new RegExp(`^ {0,3}(?:[-*+][ \\t]+)?(?:\\*{1,2}|_{1,2})?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*{1,2}|_{1,2})?[ \\t]*:(?:\\*{1,2}|_{1,2})?[ \\t]*(.*)$`, 'i')
-const FENCE = /^(?:[ \t]*[-*+][ \t]+| {0,3})(`{3,}|~{3,})/
+const FENCE = /^([ \t]*)((?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})/
 
 type Marked = { kind: (typeof MARKERS)[number][0]; text: string; at: number; used: number }
 
 // A code block holds quoted text, such as a file the helper read: a marker there must never reach the main session.
 function fencedIn(lines: readonly string[]): boolean[] {
-  let opener = ''
+  let opener: { run: string; column: number } | undefined
 
   return lines.map(line => {
     const found = FENCE.exec(line)
-    const run = found?.[1] ?? ''
-    const rest = found ? line.slice(found[0].length) : ''
 
-    if (opener === '') {
-      opener = run.startsWith('`') && rest.includes('`') ? '' : run
-
-      return opener !== ''
+    if (!found) {
+      return opener !== undefined
     }
 
-    if (run.charAt(0) === opener.charAt(0) && run.length >= opener.length && rest.trim() === '') {
-      opener = ''
+    const [head, indent = '', prefix, run = ''] = found
+    const column = head.length - run.length
+    const rest = line.slice(head.length)
+
+    if (!opener) {
+      const opens = (prefix !== undefined || indent.length <= 3) && !(run.startsWith('`') && rest.includes('`'))
+
+      opener = opens ? { run, column } : undefined
+
+      return opens
+    }
+
+    if (run.charAt(0) === opener.run.charAt(0) && run.length >= opener.run.length && column <= opener.column + 3 && rest.trim() === '') {
+      opener = undefined
     }
 
     return true
@@ -69,7 +77,7 @@ function markedIn(text: string): Marked[] {
 
     const kind = MARKERS.find(([, label]) => label === (found[1] ?? '').toLowerCase())?.[0] ?? 'note'
     const own = (found[2] ?? '').trim()
-    const next = own === '' ? lines.findIndex((entry, i) => i > at && !fenced[i] && entry.trim() !== '' && !MARKER_LINE.test(entry)) : -1
+    const next = own === '' ? lines.findIndex((entry, i) => i > at && !fenced[i] && entry.trim() !== '' && !entry.trimStart().startsWith('>') && !MARKER_LINE.test(entry)) : -1
     const given = own === '' ? (lines[next] ?? '').trim() : own
 
     return [{ kind, text: given, at, used: next }]
