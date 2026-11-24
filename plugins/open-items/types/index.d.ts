@@ -28,10 +28,11 @@ export type ToMain = { kind: 'note' | 'question'; text: string; atMs: number; se
 /**
  * A side item's record. `transcripts`: the main conversation files it was
  * asked in, oldest first. `helperId`: the agent that answered last. `sentMs`:
- * the `atMs` of the user's newest message a helper was given. `seenUuid`: the
+ * the `atMs` of the user's newest message a helper was given. `endedMs`: the
+ * `sentMs` whose helper run ended, with an answer or a notice. `seenUuid`: the
  * newest main-conversation row the helper has seen.
  */
-export type Side = { transcripts: readonly string[]; helperId?: string; sentMs?: number; seenUuid?: string; toMain?: ToMain }
+export type Side = { transcripts: readonly string[]; helperId?: string; sentMs?: number; endedMs?: number; seenUuid?: string; toMain?: ToMain }
 
 /**
  * Whether Claude has heard of the user's latest move on the item: nothing

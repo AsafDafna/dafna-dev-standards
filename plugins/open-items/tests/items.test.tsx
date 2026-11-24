@@ -342,6 +342,7 @@ describe('side questions in the model', () => {
       transcripts: ['/t/old.jsonl', '/t/main.jsonl'],
       helperId: 'a1',
       sentMs: NOW + 2,
+      endedMs: NOW,
       seenUuid: 'u-40',
       toMain: { kind: 'question', text: 'Is the deploy on Friday?', atMs: NOW + 1 },
     },
@@ -350,6 +351,7 @@ describe('side questions in the model', () => {
   test('savedIn keeps a side item whole, and drops one with a malformed side record or a message by an unknown author', () => {
     expect(savedIn(saved([WAITING]))?.tasks).toEqual([WAITING])
     expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side, transcripts: [1] as unknown as string[] } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side, endedMs: 'x' as unknown as number } }]))?.tasks).toEqual([])
     expect(savedIn(saved([item({ thread: [{ ...DETAIL, author: 'main' as unknown as 'helper' }] })]))?.tasks).toEqual([])
   })
 

@@ -23,10 +23,32 @@ export const HELPER_PROMPT = `You answer a side question the user left for this 
 - When your answer matters to the main session's work, add a one-line note for the main session: what it should know, and why. When only the main session can answer, add a one-line question for it instead.
 Start each of these lines with its label, at the start of a line: "Question for you:" when you ask the user back, "Note for the session:" for a note, "Question for the session:" for a question.`
 
-const ASKS_USER = /^question for you:/im
-const NOTE = /^note for the session:[ \t]*(.*)$/im
-const QUESTION = /^question for the session:[ \t]*(.*)$/im
-const MARKER_LINE = /^(question for you:|note for the session:|question for the session:).*$/gim
+const MARKERS = [
+  ['asks', 'question for you'],
+  ['note', 'note for the session'],
+  ['question', 'question for the session'],
+] as const
+const MARKER_LINE = new RegExp(`^[ \\t]*(?:>[ \\t]*)*(?:[-*+][ \\t]+)?(?:\\*\\*|__|\\*|_)?(${MARKERS.map(([, label]) => label).join('|')})(?:\\*\\*|__|\\*|_)?[ \\t]*:(?:\\*\\*|__|\\*|_)?[ \\t]*(.*)$`, 'i')
+
+type Marked = { kind: (typeof MARKERS)[number][0]; text: string; at: number; used: number }
+
+function markedIn(text: string): Marked[] {
+  const lines = text.split('\n')
+
+  return lines.flatMap((line, at) => {
+    const found = MARKER_LINE.exec(line)
+
+    if (!found) {
+      return []
+    }
+
+    const kind = MARKERS.find(([, label]) => label === (found[1] ?? '').toLowerCase())?.[0] ?? 'note'
+    const own = (found[2] ?? '').trim()
+    const next = own === '' ? lines.findIndex((entry, i) => i > at && entry.trim() !== '') : -1
+
+    return [{ kind, text: own === '' ? (lines[next] ?? '').trim() : own, at, used: next }]
+  })
+}
 
 export function newSideOf(id: number, text: string, atMs: number, transcript: string): Task {
   return {
@@ -60,22 +82,29 @@ const isHelperEntry = (message: Message) => message.from === 'claude' && message
 export function isWorking(task: Task): boolean {
   const sentMs = task.side?.sentMs
 
-  if (task.kind !== 'side' || task.state !== 'open' || sentMs === undefined) {
-    return false
-  }
-
-  const sent = task.thread.findLastIndex(message => message.from === 'user' && !message.event && message.atMs <= sentMs)
-
-  return sent >= 0 && !task.thread.slice(sent + 1).some(isHelperEntry)
+  return task.kind === 'side' && task.state === 'open' && sentMs !== undefined && task.side?.endedMs !== sentMs
 }
 
 export function reportOf(text: string): { asksUser: boolean; toMain?: { kind: 'note' | 'question'; text: string } } {
-  const question = QUESTION.exec(text)
-  const note = NOTE.exec(text)
-  const found = question ? { kind: 'question' as const, text: (question[1] ?? '').trim() } : note ? { kind: 'note' as const, text: (note[1] ?? '').trim() } : undefined
+  const marked = markedIn(text)
+  const found = marked.find(entry => entry.kind === 'question') ?? marked.find(entry => entry.kind === 'note')
+  const toMain = found && found.kind !== 'asks' ? { kind: found.kind, text: found.text } : undefined
 
-  return { asksUser: ASKS_USER.test(text), ...(found && { toMain: found }) }
+  return { asksUser: marked.some(entry => entry.kind === 'asks'), ...(toMain && { toMain }) }
 }
+
+function withoutMarkers(text: string): string {
+  const marked = markedIn(text)
+  const dropped = new Set(marked.flatMap(entry => [entry.at, entry.used]))
+
+  return text
+    .split('\n')
+    .filter((_, i) => !dropped.has(i))
+    .join('\n')
+    .trim()
+}
+
+const ended = (side: Task['side']) => (side?.sentMs === undefined ? {} : { endedMs: side.sentMs })
 
 function withReply(task: Task, entry: Message, side: Task['side']): Task {
   const next = { ...task, thread: [...task.thread, entry], hasNewReply: true, side }
@@ -89,13 +118,14 @@ export function answeredOf(task: Task, text: string, atMs: number, seenUuid?: st
 
   return withReply(task, { from: 'claude', author: 'helper', text, atMs }, {
     ...side,
+    ...ended(side),
     ...(report && { toMain: { ...report, atMs } }),
     ...(seenUuid !== undefined && { seenUuid }),
   })
 }
 
 export function noticedOf(task: Task, line: string, atMs: number): Task {
-  return withReply(task, { from: 'claude', author: 'helper', event: 'notice', text: line, atMs }, task.side)
+  return withReply(task, { from: 'claude', author: 'helper', event: 'notice', text: line, atMs }, { transcripts: [], ...task.side, ...ended(task.side) })
 }
 
 export function sentOf(task: Task, helperId: string | undefined): Task {
@@ -191,11 +221,15 @@ export function clockOf(ms: number): string {
 }
 
 export function noteForMain(task: Task): string {
-  const helper = task.thread.findLast(isHelperEntry)
-  const answer = (helper?.event ? '' : (helper?.text ?? '')).replace(MARKER_LINE, '').trim()
+  const toMain = task.side?.toMain
+  const at = task.thread.findLastIndex(message => message.from === 'claude' && message.author === 'helper' && !message.event && message.atMs === toMain?.atMs)
+  const helper = task.thread[at]
+  const before = at >= 0 ? task.thread.slice(0, at) : task.thread
+  const question = before.findLast(message => message.from === 'user' && !message.event)
+  const answer = withoutMarkers(helper?.text ?? '')
   const shown = answer.length > MAX_ANSWER ? `${answer.slice(0, MAX_ANSWER)} (cut: list_items with id ${task.id} gives it whole)` : answer
 
-  return `Side question #${task.id} (Open items): ${newestUserOf(task)?.text ?? ''}. The helper answered: ${shown}. Why it may matter: ${task.side?.toMain?.text ?? ''}. If it changes your work, ask the user before you act: add a decision with \`add_item\`, or in a live chat ask in the chat.`
+  return `Side question #${task.id} (Open items): ${question?.text ?? ''}. The helper answered: ${shown}. Why it may matter: ${toMain?.text ?? ''}. If it changes your work, ask the user before you act: add a decision with \`add_item\`, or in a live chat ask in the chat.`
 }
 
 export function questionForMain(task: Task): string {

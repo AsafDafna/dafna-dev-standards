@@ -1,7 +1,7 @@
 import type { SessionMessage } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { answeredOf, clockOf, fiveHourOf, isPending, isWorking, newSideOf, noteForMain, questionForMain, reportOf, ridingOf, summaryOf } from '../hooks/side'
+import { answeredOf, clockOf, fiveHourOf, isPending, isWorking, newSideOf, noteForMain, noticedOf, questionForMain, reportOf, ridingOf, summaryOf } from '../hooks/side'
 import { tookBy } from '../hooks/tasks'
 import type { Message, Task } from '../types'
 
@@ -12,7 +12,7 @@ function side(thread: Message[], fields: Partial<Task> = {}): Task {
   return { ...newSideOf(4, 'x', 1000, '/t/main.jsonl'), thread, ...fields }
 }
 
-const sent = (sentMs: number, fields: Partial<Task> = {}) => ({ side: { transcripts: [], sentMs }, ...fields })
+const sent = (sentMs: number, fields: Partial<Task> = {}, endedMs?: number) => ({ side: { transcripts: [], sentMs, ...(endedMs !== undefined && { endedMs }) }, ...fields })
 
 const row = (role: 'user' | 'assistant', text: string) => ({ role, text, toolUses: [] }) as SessionMessage
 
@@ -31,6 +31,13 @@ describe('side questions', () => {
     ['A.\nnote for the session: The test is flaky.', { asksUser: false, toMain: { kind: 'note', text: 'The test is flaky.' } }],
     ['Note for the session: a\nQuestion for the session: b?', { asksUser: false, toMain: { kind: 'question', text: 'b?' } }],
     ['See the Note for the session: x', { asksUser: false }],
+    ['A.\n**Note for the session:** CI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\n**Question for the session**: which?', { asksUser: false, toMain: { kind: 'question', text: 'which?' } }],
+    ['A.\n- Note for the session: CI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\n> Note for the session: CI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\n**Question for you:** which one?', { asksUser: true }],
+    ['A.\nNote for the session:\n\nCI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\nSee **Note for the session:** x', { asksUser: false }],
   ]
 
   for (const [text, want] of REPORTS) {
@@ -42,10 +49,12 @@ describe('side questions', () => {
   const STATES: [string, Task, boolean, boolean][] = [
     ['asked, not sent', side([ASKED]), true, false],
     ['sent, no answer', side([ASKED], sent(1000)), false, true],
-    ['sent and answered', side([ASKED, ANSWER], sent(1000)), false, false],
-    ['answered, then a follow-up', side([ASKED, ANSWER, { from: 'user', text: 'and then?', atMs: 3000 }], sent(1000)), true, false],
+    ['sent and answered', side([ASKED, ANSWER], sent(1000, {}, 1000)), false, false],
+    ['answered, then a follow-up', side([ASKED, ANSWER, { from: 'user', text: 'and then?', atMs: 3000 }], sent(1000, {}, 1000)), true, false],
+    ['follow-up sent while the first answer lands', side([ASKED, { from: 'user', text: 'and then?', atMs: 1500 }, ANSWER], sent(1500, {}, 1000)), false, true],
+    ['a notice ends the run', side([ASKED, { from: 'claude', author: 'helper', event: 'notice', text: 'The helper could not start: x', atMs: 1200 }], sent(1000, {}, 1000)), false, false],
     ['sent, no answer, handing off', side([ASKED], sent(1000, { state: 'handing-off' })), false, false],
-    ['answered, then taken', tookBy(side([ASKED, ANSWER], sent(1000)), 'user', 3000), false, false],
+    ['answered, then taken', tookBy(side([ASKED, ANSWER], sent(1000, {}, 1000)), 'user', 3000), false, false],
   ]
 
   for (const [name, task, pending, working] of STATES) {
@@ -67,6 +76,24 @@ describe('side questions', () => {
 
     expect(plain.side?.toMain).toEqual({ kind: 'note', text: 'first.', atMs: 2000 })
     expect(replaced.side?.toMain).toEqual({ kind: 'question', text: 'which?', atMs: 4000 })
+  })
+
+  test('answeredOf and noticedOf end the run of the message sent', () => {
+    const working = side([ASKED], sent(1000))
+
+    expect(answeredOf(working, 'Done.', 2000).side?.endedMs).toBe(1000)
+    expect(noticedOf(working, 'The helper could not start: x', 2000).side?.endedMs).toBe(1000)
+  })
+
+  test('noteForMain keeps the noted answer and its question after a notice, a follow-up and a later plain answer', () => {
+    const FOLLOW: Message = { from: 'user', text: 'and then?', atMs: 3000 }
+    const base = answeredOf(side([ASKED], sent(1000)), '**Note for the session:** CI lacks it.\nA missing env var.', 2000)
+    const later = noticedOf(base, 'The helper could not start: x', 2500)
+    const followed = answeredOf({ ...later, thread: [...later.thread, FOLLOW] }, 'Plain reply.', 4000)
+
+    expect(noteForMain(followed)).toBe(
+      'Side question #4 (Open items): Why did the build fail?. The helper answered: A missing env var.. Why it may matter: CI lacks it.. If it changes your work, ask the user before you act: add a decision with `add_item`, or in a live chat ask in the chat.',
+    )
   })
 
   test('summaryOf skips empty rows, cuts the first prompt, and labels rows', () => {

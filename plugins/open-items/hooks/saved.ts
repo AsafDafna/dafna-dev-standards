@@ -67,6 +67,7 @@ function isSideRecord(value: unknown): value is Side {
     isTexts(value['transcripts']) &&
     ['helperId', 'seenUuid'].every(key => isOptional(value[key], isText)) &&
     isOptional(value['sentMs'], isNumber) &&
+    isOptional(value['endedMs'], isNumber) &&
     isOptional(value['toMain'], isToMain)
   )
 }
