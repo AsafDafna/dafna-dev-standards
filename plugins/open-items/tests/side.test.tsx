@@ -51,6 +51,11 @@ describe('side questions', () => {
     ['A.\n  - ```bash\n    npm test\n    ```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
     ['A.\n1. ```\n   Note for the session: quoted\n   ```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
     ['A.\nNote for the session:\n> Question for the session: quoted?\nCI lacks it.', { asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } }],
+    ['A.\n```\n- ```\nNote for the session: quoted\n1. ```\nNote for the session: quoted\n```\nNote for the session: real',{ asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n```\n``` \nNote for the session: quoted', { asksUser: false }],
+    ['A.\r\nNote for the session: real\r\n', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
+    ['A.\n```\n    ```\nNote for the session: quoted', { asksUser: false }],
+    ['A.\n    ```\nNote for the session: real', { asksUser: false, toMain: { kind: 'note', text: 'real' } }],
   ]
 
   for (const [text, want] of REPORTS) {
@@ -58,6 +63,14 @@ describe('side questions', () => {
       expect(reportOf(text)).toEqual(want)
     })
   }
+
+  test('reportOf reads a marker line with 100,000 spaces before a carriage return quickly', () => {
+    const start = Date.now()
+    const report = reportOf(`A.\nNote for the session:${' '.repeat(100_000)}\rCI lacks it.`)
+
+    expect(Date.now() - start).toBeLessThan(1000)
+    expect(report).toEqual({ asksUser: false, toMain: { kind: 'note', text: 'CI lacks it.' } })
+  })
 
   const STATES: [string, Task, boolean, boolean][] = [
     ['asked, not sent', side([ASKED]), true, false],

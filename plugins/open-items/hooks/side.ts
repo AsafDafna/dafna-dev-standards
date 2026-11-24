@@ -14,6 +14,7 @@ export const ALERT_AT = 70
 export const HOLD_AT = 85
 
 const MAX_ANSWER = 2000
+const MAX_LINE = 2000
 
 export const HELPER_PROMPT = `You answer a side question the user left for this session. The main session goes on without you. You write for the user: follow the user's reply rules in CLAUDE.md.
 - Search the main conversation file before you answer a question about the session's work. Look for every term that may hold the answer. Say what you could not find.
@@ -56,7 +57,9 @@ function fencedIn(lines: readonly string[]): boolean[] {
       return opens
     }
 
-    if (run.charAt(0) === opener.run.charAt(0) && run.length >= opener.run.length && column <= opener.column + 3 && rest.trim() === '') {
+    const closes = prefix === undefined && run.charAt(0) === opener.run.charAt(0) && run.length >= opener.run.length && column <= opener.column + 3 && /^[ \t]*$/.test(rest)
+
+    if (closes) {
       opener = undefined
     }
 
@@ -64,8 +67,10 @@ function fencedIn(lines: readonly string[]): boolean[] {
   })
 }
 
+const linesOf = (text: string) => text.replace(/\r\n?/g, '\n').split('\n')
+
 function markedIn(text: string): Marked[] {
-  const lines = text.split('\n')
+  const lines = linesOf(text).map(line => line.slice(0, MAX_LINE))
   const fenced = fencedIn(lines)
 
   return lines.flatMap((line, at) => {
@@ -129,8 +134,7 @@ function withoutMarkers(text: string): string {
   const marked = markedIn(text)
   const dropped = new Set(marked.flatMap(entry => [entry.at, entry.used]))
 
-  return text
-    .split('\n')
+  return linesOf(text)
     .filter((_, i) => !dropped.has(i))
     .join('\n')
     .trim()
