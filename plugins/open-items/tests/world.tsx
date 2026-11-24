@@ -142,6 +142,8 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
     isStopRefused: false,
     /** Set, the plugin's `TaskStop` calls answer as a tool error, as for a task that is not running. */
     isStopError: false,
+    /** How long the engine takes to answer a `TaskStop`. */
+    stopMs: 0,
     /** The files the plugin wrote, by path. */
     files: {} as Record<string, string>,
     /** Set, the plugin's file writes are refused. */
@@ -275,7 +277,11 @@ export function seat(on: On, store: Record<string, unknown> = {}) {
 
     return world.helpers.includes(e.to) ? { isDelivered: true } : { isDelivered: false, reason: 'No agent by that id.' }
   })
-  on('tool.call', { tool: 'TaskStop' }, ($, e) => {
+  on('tool.call', { tool: 'TaskStop' }, async ($, e) => {
+    if (world.stopMs > 0) {
+      await clock.sleep(world.stopMs)
+    }
+
     if (world.isStopRefused) {
       return { deny: 'TaskStop is not allowed here.' }
     }

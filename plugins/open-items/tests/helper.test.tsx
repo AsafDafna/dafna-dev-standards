@@ -327,6 +327,8 @@ async function oneWaiting($: Engine, on: On, prepare: (world: World) => void = (
 
 const TIMED_OUT = expect.objectContaining({ from: 'claude', author: 'helper', event: 'notice', text: 'The helper did not answer in 10 minutes.' })
 
+const noticesOf = (world: World, id: number) => itemOf(world, id)?.thread.filter(message => message.event === 'notice')
+
 describe('the 10-minute limit', () => {
   test('a helper silent for 10 minutes is stopped, the item says so, and the next side question starts', async ($, on) => {
     const { world, clock } = await oneWaiting($, on)
@@ -335,6 +337,7 @@ describe('the 10-minute limit', () => {
 
     expect(world.stops).toEqual(['a1'])
     expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
+    expect(noticesOf(world, 1)).toEqual([TIMED_OUT])
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
 
     const thread = itemOf(world, 1)?.thread
@@ -355,7 +358,7 @@ describe('the 10-minute limit', () => {
 
       await clock.advance(600_000)
 
-      expect(itemOf(world, 1)?.thread.filter(message => message.event === 'notice')).toEqual([])
+      expect(noticesOf(world, 1)).toEqual([])
       expect(world.spawns).toEqual([])
 
       await report($, { text: 'More of the feed.' })
@@ -375,6 +378,40 @@ describe('the 10-minute limit', () => {
     await clock.advance(600_000)
 
     expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+  })
+
+  test('where TaskStop is refused and the agent list fails, the mod checks again 10 minutes later and starts no second helper', async ($, on) => {
+    const { world, clock } = await oneWaiting($, on, world => {
+      world.isStopRefused = true
+      world.isAgentListFailing = true
+    })
+
+    await clock.advance(600_000)
+
+    expect(noticesOf(world, 1)).toEqual([])
+    expect(world.spawns).toEqual([])
+
+    world.isAgentListFailing = false
+    await clock.advance(600_000)
+
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
+    expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
+  })
+
+  test("where TaskStop errors after the helper's own report came, the item says so and the next side question starts", async ($, on) => {
+    const { world, clock } = await oneWaiting($, on, world => {
+      world.agents = [RUNNING]
+      world.isStopError = true
+      world.stopMs = 1000
+    })
+
+    await clock.advance(600_000)
+    await report($)
+    await clock.advance(1000)
+
+    expect(itemOf(world, 1)?.thread.at(-1)).toEqual(TIMED_OUT)
+    expect(noticesOf(world, 1)).toEqual([TIMED_OUT])
     expect(world.spawns.map(spawn => spawn.description)).toEqual(['Side question #3'])
   })
 

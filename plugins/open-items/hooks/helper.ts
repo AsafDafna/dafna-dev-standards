@@ -163,9 +163,15 @@ async function askHelper($: EngineInterface, task: Task) {
 }
 
 async function handedOver($: EngineInterface, id: number, helperId: string, givenMs: number | undefined) {
+  // A mark left by a stop whose report never came would swallow this run's answer.
+  live.stoppedHelpers.delete(helperId)
+  arm($, helperId)
+  await edit($, id, found => sentOf(found, helperId, givenMs))
+}
+
+function arm($: EngineInterface, helperId: string) {
   disarm(helperId)
   live.helperTimers.set(helperId, $.clock.after(HELPER_LIMIT_MS, () => void timedOut($, helperId).catch(() => undefined)))
-  await edit($, id, found => sentOf(found, helperId, givenMs))
 }
 
 function disarm(helperId: string) {
@@ -177,16 +183,23 @@ const isRunOf = (helperId: string) => (task: Task) => isWorking(task) && task.si
 
 async function timedOut($: EngineInterface, helperId: string) {
   live.helperTimers.delete(helperId)
-  const isRun = isRunOf(helperId)
-  const task = (await read($, tasks)).find(isRun)
+  const task = (await read($, tasks)).find(isRunOf(helperId))
 
   if (task === undefined) {
     return
   }
 
-  // Where TaskStop is refused, a helper still at work ends by its maxTurns bound and reports as usual.
-  if (!(await stopHelper($, helperId)) && atWorkIn(await $.agent.list().catch(() => []), helperId)) {
-    return
+  const sentMs = task.side?.sentMs
+  const isRun = (found: Task) => isRunOf(helperId)(found) && found.side?.sentMs === sentMs
+
+  if (!(await stopHelper($, helperId))) {
+    const agents = await $.agent.list().catch(() => undefined)
+
+    // Still at work, or out of sight: checked again later, as its maxTurns bound ends it and its report goes on as usual.
+    if (agents === undefined || atWorkIn(agents, helperId)) {
+      arm($, helperId)
+      return
+    }
   }
 
   await edit($, task.id, (found, nowMs) => (isRun(found) ? noticedOf(found, TIMED_OUT, nowMs) : found))
@@ -194,18 +207,18 @@ async function timedOut($: EngineInterface, helperId: string) {
   await pump($)
 }
 
-/** Resolves whether `TaskStop` stopped the helper; its report then says nothing in the item. */
+/** Resolves whether the helper's run is over with its report kept out of the item: `TaskStop` stopped it, or it ended while the call ran. */
 export async function stopHelper($: EngineInterface, agentId: string): Promise<boolean> {
   // Held before the call, as the stopped helper's report may come before the call resolves.
   live.stoppedHelpers.add(agentId)
   const answer = await $.tool.call({ tool: 'TaskStop', task_id: agentId }).catch(() => undefined)
 
-  if (answer === undefined || answer.deny !== undefined || answer.isError === true) {
-    live.stoppedHelpers.delete(agentId)
-    return false
+  if (answer !== undefined && answer.deny === undefined && answer.isError !== true) {
+    return true
   }
 
-  return true
+  // A report that came while the call ran took the mark: that helper has ended.
+  return !live.stoppedHelpers.delete(agentId)
 }
 
 function atWorkIn(agents: readonly AgentInfo[], agentId: string | undefined): boolean {
@@ -253,11 +266,15 @@ async function promptOf($: EngineInterface, task: Task): Promise<string> {
 }
 
 async function reported($: EngineInterface, e: AgentReportInput) {
+  // A stopped helper's report ends no run: what stopped it ended the run and owns its timer.
+  if (live.stoppedHelpers.delete(e.agentId)) {
+    return
+  }
+
   disarm(e.agentId)
   const task = (await read($, tasks)).find(found => found.side?.helperId === e.agentId)
-  const isStopped = live.stoppedHelpers.delete(e.agentId)
 
-  if (isStopped || task === undefined) {
+  if (task === undefined) {
     return
   }
 
