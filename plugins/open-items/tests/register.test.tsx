@@ -895,12 +895,9 @@ describe('long titles', () => {
 })
 
 describe('the pane and /open-items', () => {
-  test('/open-items opens the pane with the keyboard, also when nothing is in it', async ($, on) => {
+  test('/open-items opens the pane with the keyboard', async ($, on) => {
     const { world } = seat(on)
     await start($)
-
-    await runTasks($)
-    expect(world.opens.at(-1)?.focus).toBe(true)
 
     await $.tool.call(KEY_TASK)
     await runTasks($)

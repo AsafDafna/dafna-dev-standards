@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import type { Message, Side, Task } from '../types'
-import { ADD, CLOSE, HOUR_MS, KEY_SHAPED, NOW, OWN, PANE, itemOf, keyed, runTasks, savedItem, seat, start, textOf } from './world'
+import { ADD, CLOSE, DONE, HOUR_MS, KEY_SHAPED, NOW, OWN, PANE, itemOf, keyed, runTasks, savedItem, seat, start, textOf } from './world'
 
 const QUESTION: Message = { from: 'user', text: 'What does the feed page by?', atMs: NOW - 60_000 }
 const RUNNING = { id: 'a1', type: 'open-items:helper', status: 'running' } as AgentInfo
@@ -69,6 +69,13 @@ describe('side questions in the list', () => {
       DIM,
     ],
     ['answered, not yet opened', answered(1, 'By a cursor, in pages of twenty.', {}, { hasNewReply: true }), [], '  ● answered', YELLOW],
+    [
+      'waiting for the session, over an answer not yet opened',
+      answered(1, 'Unclear.\nQuestion for the session: Which branch?', { toMain: { kind: 'question', text: 'Which branch?', atMs: NOW - 30_000 } }, { hasNewReply: true }),
+      [],
+      '  ⋯ waiting for the session',
+      DIM,
+    ],
   ]
 
   for (const [state, task, limits, mark, look] of MARKS) {
@@ -84,6 +91,24 @@ describe('side questions in the list', () => {
       expect((await ui.find({ type: 'Text', text: mark }))?.props).toEqual(look)
     })
   }
+
+  test('a follow-up made while its helper works shows held, not working, under a hold', async ($, on) => {
+    const followUp: Message = { from: 'user', text: 'And the app feed?', atMs: NOW - 10_000 }
+    const working = sideItem(1, [QUESTION, followUp], { helperId: 'a1', sentMs: QUESTION.atMs })
+    // A question for the session that waits: the turn's end reads the window, and the hold starts.
+    const asking = answered(2, 'Unclear.\nQuestion for the session: Which branch?', { helperId: 'a2', toMain: { kind: 'question', text: 'Which branch?', atMs: NOW - 30_000 } })
+    const { world, clock } = seat(on, { [OWN]: keyed([working, asking]) })
+    world.agents = [RUNNING]
+    world.rateLimits = [fiveHour(86, HOUR_MS)]
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    await $.turn.complete({ ...DONE, turnId: 't1' })
+    await clock.settle()
+    const ui = await $.ui.mount(PANE)
+
+    expect(world.submitted).toEqual([])
+    expect(await textOf(ui, 'row-1')).toBe(`#1 ${QUESTION.text}  ⏸ held`)
+  })
 })
 
 describe('opening the pane and the new-question field', () => {
@@ -139,6 +164,39 @@ describe('opening the pane and the new-question field', () => {
     await ui.press({ key: 'back' })
 
     expect(await fieldValueIn(ui)).toBe('what is a cursor?')
+  })
+
+  test("a side question held back is still held after a look at an item's screen", async ($, on) => {
+    seat(on, { [OWN]: keyed([savedItem(1)]) })
+    await start($)
+    const ui = await $.ui.mount(PANE)
+    await ui.input({ key: 'side-new', text: KEY_SHAPED })
+
+    await ui.press({ key: 'row-1' })
+    await ui.press({ key: 'back' })
+
+    expect(await textOf(ui, 'held')).toContain('This looks like a secret.')
+    expect(await ui.find({ type: 'Button', key: 'edit' })).toBeDefined()
+  })
+
+  test("Send anyway refused while the session's items load keeps the side question held", async ($, on) => {
+    const { world, clock } = seat(on)
+    await start($)
+    await runTasks($)
+    const ui = await $.ui.mount(PANE)
+    await ui.input({ key: 'side-new', text: KEY_SHAPED })
+    // The process goes on as another session, whose key the store is slow to give.
+    world.sessionId = 'session-2'
+    world.isStuck = true
+    const started = start($)
+    await clock.advance(5000)
+    await started
+
+    await ui.press({ key: 'send-anyway' })
+
+    expect(world.toasts.at(-1)).toBe("Open items is still loading this session's items. Try again in a moment.")
+    expect(world.items).toEqual([])
+    expect(await textOf(ui, 'held')).toContain('This looks like a secret.')
   })
 
   test("the field holds a secret back with Edit and Send anyway, as v0.2's reply field does", async ($, on) => {

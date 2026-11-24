@@ -332,4 +332,17 @@ describe('the list screen helpers', () => {
 
     expect(rowsFor(view, 76, 99)).toBe(7)
   })
+
+  const LIST: PaneView = { shown: [], screen: { kind: 'list' }, held: null, draft: '', nowMs: NOW, canType: true, isFocused: true, isTyping: false }
+
+  test('an empty pane the user keeps open takes the empty line, the new-question field and the foot', () => {
+    expect(rowsFor(LIST, 76, 99)).toBe(3)
+  })
+
+  test('a side question held back takes its notice, wrapped, and its row of buttons under the field', () => {
+    const held = { ...LIST, shown: [PAGING], held: { id: 'new', text: 'sk_live_key' } } as const
+
+    // The head, a label, a row, the field, the notice on two rows, Edit and Send anyway, and the foot.
+    expect(rowsFor(held, 76, 99)).toBe(8)
+  })
 })

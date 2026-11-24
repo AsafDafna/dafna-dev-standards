@@ -168,7 +168,7 @@ export const live = {
   quotaTimer: null as Timer | null,
   /** The five-hour windows alerted, by their reset time ('' for a window with none). */
   alertedWindows: new Set<string>(),
-  /** The user opened the pane (/open-items, /side): it stays open with nothing in it, until Hide. */
+  /** The user opened the pane (/open-items, /side): it stays open with nothing in it, until Hide or the person's close. */
   isKeptOpen: false,
 }
 
@@ -490,7 +490,7 @@ export async function show($: EngineInterface, isAsked: boolean): Promise<boolea
 export async function showField($: EngineInterface) {
   live.isKeptOpen = true
   await update($, screen, () => LIST_SCREEN)
-  await show($, true)
+  live.isKeptOpen = await show($, true)
   void $.ui.focus({ requestId: PANE, key: NEW_SIDE.key }).catch(() => undefined)
 }
 

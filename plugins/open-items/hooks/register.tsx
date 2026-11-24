@@ -414,8 +414,9 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'open-items' }, async $ => {
+    // Set before the pane draws, so its first drawing has the field; a pane not placed is not kept.
     live.isKeptOpen = true
-    await show($, true)
+    live.isKeptOpen = await show($, true)
 
     return {}
   })
@@ -824,9 +825,14 @@ export const register: Register = on => {
   })
 
   // Closed by the person's close mark too, the pane is no longer one they keep open.
-  on('ui.close', { id: PANE }, ($, e, next) => {
-    live.isKeptOpen = false
-    return next(e)
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const closed = await next(e)
+
+    if (closed.deny === undefined) {
+      live.isKeptOpen = false
+    }
+
+    return closed
   })
 
   // The ring on the reply field lets the terminal wrap what is typed there:
@@ -1453,7 +1459,8 @@ async function openItem($: EngineInterface, id: number, canType: boolean) {
   forget(NEW_SIDE.key)
   await update($, arrived, ids => (ids.includes(id) ? [] : ids))
   await update($, screen, (): Screen => ({ kind: 'item', id }))
-  const kept = await update($, held, now => (now?.id === id ? now : null))
+  // A new side question's hold stays: the draft holds no copy of it.
+  const kept = await update($, held, now => (now?.id === id || now?.id === 'new' ? now : null))
   await markRead($, id)
 
   // The engine keeps the ring at the row's place, on whatever the item screen draws there: an option a
@@ -1488,7 +1495,7 @@ async function markRead($: EngineInterface, id: number) {
 async function toList($: EngineInterface, id: number, drawn: readonly string[] = []) {
   await update($, arrived, () => [])
   await update($, screen, () => LIST_SCREEN)
-  await update($, held, () => null)
+  await update($, held, now => (now?.id === 'new' ? now : null))
   await markRead($, id)
   const row = rowBackTo(id, drawn, focusOrderOf((await read($, tasks)).filter(isShown)))
   live.ring = row
@@ -1649,6 +1656,7 @@ async function editNew($: EngineInterface) {
 
   live.drafts.set(NEW_SIDE.key, text)
   forget(NEW_SIDE.key)
+  live.ring = NEW_SIDE.key
   await fit($)
   void $.ui.focus({ requestId: PANE, key: NEW_SIDE.key }).then(undefined, () => undefined)
 }
@@ -1656,8 +1664,8 @@ async function editNew($: EngineInterface) {
 async function askHeld($: EngineInterface) {
   const text = await unheldNew($)
 
-  if (text !== undefined) {
-    await askNew($, text)
+  if (text !== undefined && !(await askNew($, text))) {
+    await update($, held, (now): Held | null => now ?? { id: 'new', text })
   }
 }
 
