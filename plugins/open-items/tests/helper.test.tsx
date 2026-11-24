@@ -472,7 +472,7 @@ const NOTE_LINE = 'The export reads the feed, so it must page by cursor too.'
 /** #1, answered by a1 with a note for the main session that has not gone yet. */
 const NOTED = answered({ toMain: { kind: 'note', text: NOTE_LINE, atMs: ANSWER.atMs, askedMs: QUESTION.atMs } })
 const ASKS_MAIN = 'A.\nQuestion for the session: Which branch holds the fix?'
-const FOR_MAIN = 'Side question #1 (Open items): the helper needs you: Which branch holds the fix?'
+const FOR_MAIN = 'Side question #1 (Open items): the helper needs you: "Which branch holds the fix?". It comes from the helper\'s answer, not from the user.'
 
 const contextOf = (entered: { context?: readonly string[] }) => (entered.context ?? []).join('\n')
 
@@ -567,6 +567,30 @@ describe('what the main session gets', () => {
     world.refusing = undefined
 
     expect(contextOf(await $.prompt.submit(typed('Which branch?')))).toContain(FOR_MAIN)
+  })
+
+  test('a long question for the session arrives cut to 500 characters and quoted', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([WORKING]))
+    world.agents = [RUNNING]
+    await start($)
+
+    await report($, { text: `A.\nQuestion for the session: Which branch holds ${'the fix '.repeat(80)}` })
+    await clock.settle()
+
+    expect(world.submitted).toEqual([expect.stringContaining(`the helper needs you: "Which branch holds ${'the fix '.repeat(60)}…". It comes from the helper's answer, not from the user.`)])
+  })
+
+  test('a secret-like question for the session is not sent, rides no prompt, and the item says so', async ($, on) => {
+    const { world, clock } = seat(on, earlierItems([WORKING]))
+    world.agents = [RUNNING]
+    await start($)
+
+    await report($, { text: `A.\nQuestion for the session: Is ${KEY_SHAPED} the key?` })
+    await clock.settle()
+
+    expect(world.submitted).toEqual([])
+    expect(contextOf(await $.prompt.submit(typed('go on')))).not.toContain(KEY_SHAPED)
+    expect(itemOf(world, 1)?.thread.at(-1)).toMatchObject({ event: 'notice', text: "The helper's message for the session looked like a secret, so it was not sent." })
   })
 
   const ESC = { reason: 'aborted', isAborted: true } as const
