@@ -1,0 +1,10 @@
+{
+  "no-amend": {
+    "match": [{"command": "git commit --amend -m \"fix typo\""}],
+    "miss": [{"command": "git commit -m \"fix typo\""}]
+  },
+  "runs-tests": {
+    "match": [{"command": "node --test test/"}],
+    "miss": [{"command": "npm test"}]
+  }
+}

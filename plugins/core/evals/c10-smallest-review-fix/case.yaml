@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: c10-smallest-review-fix
+context:
+  scaffold_script: fixture.sh

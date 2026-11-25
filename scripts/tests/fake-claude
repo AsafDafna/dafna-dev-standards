@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Stand-in for the claude CLI in test_eval_compare_sh.py. It never calls a model.
+
+Every call appends one JSON line to $FAKE_CLAUDE_LOG: argv, pid and the names of the
+model and effort variables in its environment. `--version` prints $FAKE_CLAUDE_VERSION.
+`plugin eval <target>` also logs the target's git top level and HEAD, its case folders and
+the files of its suite, then writes a result JSON to the --json path: one run per case run,
+with scores from $FAKE_CLAUDE_SCORES or the target's fake-scores.json, else 1. Scores look
+like {"c2-bravo": [1, 0, 1], "without": {"c1-alpha": 0}}.
+Knobs: $FAKE_CLAUDE_EXIT is the exit code, only for call number $FAKE_CLAUDE_EXIT_CALL when
+that is set; $FAKE_CLAUDE_BLOCK=1 hangs the call until it is killed.
+"""
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+FAMILY = ("ANTHROPIC_", "CLAUDE_CODE_")
+EXTRA = {"CLAUDE_EFFORT", "MAX_THINKING_TOKENS", "DISABLE_INTERLEAVED_THINKING"}
+
+
+def option(argv, name, default=None):
+    return argv[argv.index(name) + 1] if name in argv else default
+
+
+def git(target, *args):
+    res = subprocess.run(["git", "-C", str(target), *args], capture_output=True, text=True)
+    return res.stdout.strip()
+
+
+def case_runs(case_dir):
+    prompt = case_dir / "prompt.md"
+    found = re.search(r"^runs:\s*(\d+)\s*$", prompt.read_text(), re.M) if prompt.exists() else None
+    return int(found.group(1)) if found else 3
+
+
+def score_list(table, name, count):
+    value = table.get(name, 1)
+    values = value if isinstance(value, list) else [value]
+    return [values[i % len(values)] for i in range(count)]
+
+
+def make_run(score):
+    return {
+        "score": score,
+        "passed": True,
+        "error": None,
+        "skippedPaidGraders": False,
+        "graders": [{"name": "fake", "passed": score == 1, "scored": True}],
+    }
+
+
+def suite_files(target, eval_dir):
+    files = {}
+    for root in (eval_dir, target / "evals"):
+        for item in sorted(root.rglob("*")) if root.is_dir() else []:
+            if item.is_file():
+                files[str(item.relative_to(target))] = item.read_text(errors="replace")
+    return files
+
+
+def append_log(entry):
+    with open(os.environ["FAKE_CLAUDE_LOG"], "a") as log:
+        log.write(json.dumps(entry) + "\n")
+
+
+def eval_call_count():
+    lines = Path(os.environ["FAKE_CLAUDE_LOG"]).read_text().splitlines()
+    return sum(1 for line in lines if "plugin" in json.loads(line)["argv"])
+
+
+def plugin_eval(argv, entry):
+    at = argv.index("plugin")
+    target = Path(argv[at + 2])
+    eval_dir = target / option(argv, "--eval-dir", "evals")
+    case_dirs = sorted(d for d in eval_dir.iterdir() if (d / "case.yaml").is_file())
+    entry.update(
+        toplevel=git(target, "rev-parse", "--show-toplevel"),
+        head=git(target, "rev-parse", "HEAD"),
+        cases=[d.name for d in case_dirs],
+        files=suite_files(target, eval_dir),
+    )
+    append_log(entry)
+    if os.environ.get("FAKE_CLAUDE_BLOCK") == "1":
+        os.execvp("sleep", ["sleep", "120"])
+
+    scores_file = target / "fake-scores.json"
+    scores = json.loads(
+        os.environ.get("FAKE_CLAUDE_SCORES")
+        or (scores_file.read_text() if scores_file.exists() else "{}")
+    )
+    glob = option(argv, "--case")
+    runs = option(argv, "--runs")
+    both = option(argv, "--ablation") == "with-without"
+    cases, total = [], 0
+    for case_dir in case_dirs:
+        if glob and not fnmatch.fnmatchcase(case_dir.name, glob):
+            continue
+        count = int(runs) if runs else case_runs(case_dir)
+        arms = {"with": [make_run(s) for s in score_list(scores, case_dir.name, count)], "without": []}
+        if both:
+            arms["without"] = [make_run(s) for s in score_list(scores.get("without", {}), case_dir.name, count)]
+        total += len(arms["with"]) + len(arms["without"])
+        cases.append({"name": case_dir.name, "runsPerCase": count, "arms": arms})
+    result = {"schemaVersion": 1, "costUsd": round(0.1 * total, 2), "partial": False, "cases": cases}
+    Path(option(argv, "--json")).write_text(json.dumps(result, indent=2) + "\n")
+
+    code = int(os.environ.get("FAKE_CLAUDE_EXIT", "0"))
+    only = os.environ.get("FAKE_CLAUDE_EXIT_CALL")
+    return 0 if only and int(only) != eval_call_count() else code
+
+
+def main(argv):
+    entry = {
+        "argv": argv,
+        "pid": os.getpid(),
+        "env": sorted(k for k in os.environ if k.startswith(FAMILY) or k in EXTRA),
+    }
+    if argv == ["--version"]:
+        append_log(entry)
+        print(os.environ.get("FAKE_CLAUDE_VERSION", "2.1.330 (Claude Code)"))
+        return 0
+    if "plugin" in argv and argv[argv.index("plugin") + 1:][:1] == ["eval"]:
+        return plugin_eval(argv, entry)
+    append_log(entry)
+    print("fake-claude: unexpected call", file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

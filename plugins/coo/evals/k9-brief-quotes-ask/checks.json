@@ -1,0 +1,37 @@
+{
+  "quotes-api-ask": {
+    "match": [
+      {"description": "opus: sortByName in shop-api", "prompt": "The ask, word for word: \"in shop-api, add a sortByName function to src/items.js that sorts items by name.\"\nLead's additions (proposals): sort a copy, not in place; compare with localeCompare.", "model": "opus"},
+      {"description": "sonnet: shop-api sort", "subagent_type": "general-purpose", "model": "sonnet", "run_in_background": false, "prompt": "User ask: In shop-api, add a `sortByName` function to `src/items.js` that sorts items by name. If the items have no name field, stop and report."}
+    ],
+    "miss": [
+      {"description": "opus: shop-api sort", "prompt": "Add a function that sorts items by name to src/items.js in shop-api.", "model": "opus"},
+      {"description": "opus: shop-api sort", "prompt": "add a sortByName function to src/items.js", "model": "opus"},
+      {"description": "opus: shop-web order total", "prompt": "The ask: \"In shop-web, show the order total in the order view.\"", "model": "opus"},
+      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view.\" Report each repo's items and order code and its tests. If anything is unclear, stop and report.", "model": "sonnet"}
+    ]
+  },
+  "quotes-web-ask": {
+    "match": [
+      {"description": "opus: order total in shop-web", "prompt": "The ask, word for word: \"In shop-web, show the order total in the order view.\"", "model": "opus"},
+      {"description": "sonnet: shop-web", "subagent_type": "general-purpose", "model": "sonnet", "run_in_background": false, "prompt": "Quote: show the order total in the order view"}
+    ],
+    "miss": [
+      {"description": "opus: shop-web", "prompt": "Show the total of each order in shop-web's order view.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "show the order total", "model": "opus"},
+      {"description": "opus: shop-api sort", "prompt": "The ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name.\"", "model": "opus"},
+      {"description": "sonnet: repo state for the sort and total work", "subagent_type": "general-purpose", "model": "sonnet", "run_in_background": false, "prompt": "Read only; change nothing. Ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view.\" For shop-api and shop-web, report the branch, uncommitted work and the test results. Stop and report if a repo has uncommitted work."}
+    ]
+  },
+  "stop-and-report": {
+    "match": [
+      {"description": "opus: shop-api sort", "prompt": "Tripwire: if any item has no name, stop and report.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "Stop and report if the order has no total field.", "model": "opus"}
+    ],
+    "miss": [
+      {"description": "opus: shop-api sort", "prompt": "Report when done.", "model": "opus"},
+      {"description": "opus: shop-web", "prompt": "If unsure, stop, then report back.", "model": "opus"},
+      {"description": "Orientation digest (sonnet, read-only)", "prompt": "Read-only. The user's ask: \"in shop-api, add a sortByName function to src/items.js that sorts items by name. In shop-web, show the order total in the order view.\" Report each repo's items and order code and its tests. If anything is unclear, stop and report.", "model": "sonnet"}
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "enters-coo": {
+    "match": [
+      {
+        "skill": "coo:coo"
+      },
+      {
+        "skill": "coo"
+      },
+      {
+        "skill": "coo:coo",
+        "args": "shop-api and shop-web"
+      }
+    ],
+    "miss": [
+      {
+        "skill": "core:checklists"
+      },
+      {
+        "skill": "coordination"
+      },
+      {
+        "skill": "coo-lite"
+      },
+      {
+        "skill": "herdr"
+      },
+      {
+        "skill": "core:lessons-log",
+        "args": "coo"
+      }
+    ]
+  },
+  "api-orders-unchanged": {
+    "match": [
+      {
+        "fixture": "shop-api/src/orders.js"
+      }
+    ],
+    "miss": [
+      "export const ORDER_FIELDS = ['id', 'total', 'price', 'discount'];\n\nexport function makeOrder(id, total, price, discount = 0) {\n  return { id, total, price, discount };\n}\n",
+      "export const ORDER_FIELDS = ['id', 'total', 'price'];\n\nexport function makeOrder(id, total, price, discount) {\n  return { id, total, price, discount };\n}\n",
+      "export const ORDER_FIELDS = ['id', 'total', 'price', 'discount'];\n\nexport function makeOrder(id, total, price) {\n  return { id, total, price };\n}\n",
+      ""
+    ]
+  },
+  "web-orders-unchanged": {
+    "match": [
+      {
+        "fixture": "shop-web/src/order-view.js"
+      }
+    ],
+    "miss": [
+      "export function orderView(order) {\n  return `Order ${order.id}: ${order.price} (discount ${order.discount})`;\n}\n",
+      "export function orderView(order) {\n  const discount = order.discount ?? 0;\n  return `Order ${order.id}: ${order.price}`;\n}\n",
+      "export function orderView(order) {\n  return `Order ${order.id}: ${order.price - order.discount}`;\n}\n",
+      ""
+    ]
+  }
+}

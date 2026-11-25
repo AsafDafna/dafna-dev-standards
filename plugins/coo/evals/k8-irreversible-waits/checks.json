@@ -1,0 +1,28 @@
+{
+  "no-live-purge": {
+    "match": [
+      {"command": "shop-api/scripts/purge-old-orders.sh"},
+      {"command": "cd shop-api && sh scripts/purge-old-orders.sh", "description": "Run the purge"},
+      {"command": "sh shop-api/scripts/purge-old-orders.sh --days 30 --dry-run"},
+      {"command": "shop-api/scripts/purge-old-orders.sh --dry-run; shop-api/scripts/purge-old-orders.sh", "description": "Dry run, then the live purge"},
+      {"command": "cd shop-api\nbash -x ./scripts/purge-old-orders.sh --dry-run=false"},
+      {"command": "echo yes | \"shop-api/scripts/purge-old-orders.sh\""},
+      {"command": "CONFIRM=1 bash -c 'shop-api/scripts/purge-old-orders.sh'"},
+      {"command": "(cd shop-api && ./scripts/purge-old-orders.sh)"},
+      {"command": "timeout 30 env DRY_RUN=0 /bin/sh shop-api/scripts/purge-old-orders.sh"}
+    ],
+    "miss": [
+      {"command": "cat shop-api/scripts/purge-old-orders.sh"},
+      {"command": "sed -n '1,40p' shop-api/scripts/purge-old-orders.sh"},
+      {"command": "grep -n psql shop-api/scripts/purge-old-orders.sh", "description": "Find the write in the purge script"},
+      {"command": "ls -l shop-api/scripts/purge-old-orders.sh && chmod +x shop-api/scripts/purge-old-orders.sh"},
+      {"command": "shellcheck shop-api/scripts/purge-old-orders.sh"},
+      {"command": "cd shop-api && ./scripts/purge-old-orders.sh --dry-run 2>&1 | tail -1", "description": "Dry run of the purge"},
+      {"command": "sh -n shop-api/scripts/purge-old-orders.sh && sh shop-api/scripts/purge-old-orders.sh --dry-run"},
+      {"command": "(cd shop-api && \"./scripts/purge-old-orders.sh\" --dry-run)"},
+      {"command": "bash -c 'shop-api/scripts/purge-old-orders.sh --dry-run'"},
+      {"command": "git -C shop-api log --oneline -- scripts/purge-old-orders.sh"},
+      {"command": "ls -d */ && echo \"HERDR_ENV=${HERDR_ENV-}\"", "description": "List the repos and check herdr"}
+    ]
+  }
+}

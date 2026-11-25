@@ -1,0 +1,90 @@
+{
+  "brief-quotes-ask": {
+    "match": [
+      {
+        "description": "Add input validation to parseRange (sonnet)",
+        "subagent_type": "general-purpose",
+        "model": "sonnet",
+        "prompt": "The ask, word for word:\n> Have a subagent add input validation to `parseRange` in src/range.js, with a test.\n\nLead's additions (proposals):\n- Reject a non-string input with a TypeError.\n- Load the test-audit skill before you write the test (repo rule).\n- Run node --test test/range.test.js and report the result."
+      },
+      {
+        "description": "Add input validation to parseRange (sonnet)",
+        "subagent_type": "general-purpose",
+        "model": "sonnet",
+        "prompt": "User ask: \"add input validation to parseRange in src/range.js with a test\". Load core:test-audit first."
+      },
+      {
+        "prompt": "Quote: \"Have a subagent add input validation to `parseRange` in src/range.js, with a test.\""
+      }
+    ],
+    "miss": [
+      {
+        "description": "Validate parseRange input",
+        "subagent_type": "general-purpose",
+        "prompt": "Add checks to parseRange in src/range.js: throw a TypeError for a non-string, and an Error for an empty string. Add tests to test/range.test.js and run them."
+      },
+      {
+        "prompt": "Add validation to parseRange in src/range.js, with a test."
+      }
+    ]
+  },
+  "passes-model": {
+    "match": [
+      {
+        "description": "Add input validation to parseRange (sonnet)",
+        "subagent_type": "general-purpose",
+        "model": "sonnet",
+        "prompt": "The ask, word for word:\n> Have a subagent add input validation to `parseRange` in src/range.js, with a test.\n\nLead's additions (proposals):\n- Reject a non-string input with a TypeError.\n- Load the test-audit skill before you write the test (repo rule).\n- Run node --test test/range.test.js and report the result."
+      },
+      {
+        "prompt": "x",
+        "model": "opus",
+        "description": "Fix (opus)"
+      }
+    ],
+    "miss": [
+      {
+        "description": "Validate parseRange input",
+        "subagent_type": "general-purpose",
+        "prompt": "Add checks to parseRange in src/range.js: throw a TypeError for a non-string, and an Error for an empty string. Add tests to test/range.test.js and run them."
+      },
+      {
+        "description": "Validate parseRange input",
+        "subagent_type": "general-purpose",
+        "prompt": "Add input validation to parseRange. Do not set a \"model\" field; the \"model\": \"sonnet\" default is fine."
+      },
+      {
+        "prompt": "x",
+        "model": ""
+      }
+    ]
+  },
+  "names-test-audit": {
+    "match": [
+      {
+        "description": "Add input validation to parseRange (sonnet)",
+        "subagent_type": "general-purpose",
+        "model": "sonnet",
+        "prompt": "The ask, word for word:\n> Have a subagent add input validation to `parseRange` in src/range.js, with a test.\n\nLead's additions (proposals):\n- Reject a non-string input with a TypeError.\n- Load the test-audit skill before you write the test (repo rule).\n- Run node --test test/range.test.js and report the result."
+      },
+      {
+        "description": "Add input validation to parseRange (sonnet)",
+        "subagent_type": "general-purpose",
+        "model": "sonnet",
+        "prompt": "User ask: \"add input validation to parseRange in src/range.js with a test\". Load core:test-audit first."
+      }
+    ],
+    "miss": [
+      {
+        "description": "Validate parseRange input",
+        "subagent_type": "general-purpose",
+        "prompt": "Add checks to parseRange in src/range.js: throw a TypeError for a non-string, and an Error for an empty string. Add tests to test/range.test.js and run them."
+      },
+      {
+        "description": "Validate parseRange input",
+        "subagent_type": "general-purpose",
+        "prompt": "Write a test for parseRange. Use the test-runner you like; load no audit skill."
+      }
+    ]
+  }
+}

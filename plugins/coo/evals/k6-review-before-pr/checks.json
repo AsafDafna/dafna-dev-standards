@@ -1,0 +1,45 @@
+{
+  "simplify-before-review.before": {
+    "match": [
+      {"description": "opus: simplify pass on fix/empty-list", "prompt": "Simplify the diff of branch fix/empty-list in the worktree .worktrees/shop-api-fix.", "subagent_type": "code-simplifier:code-simplifier", "model": "opus"},
+      {"description": "sonnet: Simplification pass (code-simplifier) on shop-api fix", "prompt": "Work in .worktrees/shop-api-fix.", "model": "sonnet"},
+      {"description": "opus: simplify, then hostile review, of fix/empty-list", "prompt": "Do both passes.", "model": "opus"},
+      {"description": "opus: simplify pass before the hostile review", "prompt": "Work in .worktrees/shop-api-fix on fix/empty-list.", "model": "opus"},
+      {"description": "opus: simplify pass before the single-reviewer review", "prompt": "Work in .worktrees/shop-api-fix on fix/empty-list.", "model": "opus"}
+    ],
+    "miss": [
+      {"description": "opus: hostile review (single reviewer) of fix/empty-list", "prompt": "The simplify pass already ran; review only.", "model": "opus"},
+      {"description": "sonnet: digest of shop-api", "prompt": "Report the state of the branch.", "model": "sonnet"},
+      {"description": "Implementer for \"fix/empty-list\"", "prompt": "Simplify nothing.", "model": "opus"},
+      {"description": "opus: hostile review of the simplified branch fix/empty-list", "prompt": "Review .worktrees/shop-api-fix.", "model": "opus"},
+      {"description": "opus: single-reviewer review of the simplified branch fix/empty-list", "prompt": "Review .worktrees/shop-api-fix.", "model": "opus"}
+    ]
+  },
+  "simplify-before-review.after": {
+    "match": [
+      {"description": "opus: hostile review (single reviewer) of fix/empty-list", "prompt": "Review the worktree .worktrees/shop-api-fix.", "model": "opus"},
+      {"description": "opus: Adversarial review, one reviewer, shop-api fix/empty-list", "prompt": "Give CLEAR or BLOCK.", "model": "opus"},
+      {"description": "opus: hostile review of the simplified branch fix/empty-list", "prompt": "Review .worktrees/shop-api-fix.", "model": "opus"},
+      {"description": "opus: Code review, single-reviewer tier, fix/empty-list", "prompt": "Review .worktrees/shop-api-fix.", "model": "opus"},
+      {"description": "opus: single-reviewer review of the simplified branch fix/empty-list", "prompt": "Review .worktrees/shop-api-fix.", "model": "opus"}
+    ],
+    "miss": [
+      {"description": "opus: simplify pass on fix/empty-list", "prompt": "A hostile reviewer runs after you.", "model": "opus"},
+      {"description": "opus: code review of fix/empty-list", "prompt": "Review the branch.", "model": "opus"},
+      {"description": "sonnet: digest of shop-api", "prompt": "No adversarial work.", "model": "sonnet"},
+      {"description": "opus: simplify pass before the hostile review", "prompt": "Work in .worktrees/shop-api-fix on fix/empty-list.", "model": "opus"},
+      {"description": "opus: simplify, then hostile review, of fix/empty-list", "prompt": "Do both passes.", "model": "opus"},
+      {"description": "opus: simplify pass before the single-reviewer review", "prompt": "Work in .worktrees/shop-api-fix on fix/empty-list.", "model": "opus"}
+    ]
+  },
+  "fix-line-unchanged": {
+    "match": [
+      {"fixture": ".worktrees/shop-api-fix/src/items.js"}
+    ],
+    "miss": [
+      {"fixture": "shop-api/src/items.js"},
+      "export function listItems(items) {\n  const first = items.length ? items[0].name : null;\n  return { first, items };\n}\n",
+      "export function listItems(items) {\n  if (items.length === 0) {\n    return { first: null, items };\n  }\n  const first = items[0].name;\n  return { first, items };\n}\n"
+    ]
+  }
+}
