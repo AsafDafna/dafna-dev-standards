@@ -17,6 +17,7 @@
 - A brief quotes the ask word for word and marks the lead's additions as proposals.
 - Fix a review finding with the smallest change that closes it. Add a new module, table, job or flag only when nothing smaller works, and say why in one line. Always fix a real failure: a failing test, a failed run, bad real data.
 - Never add to a part that an earlier review fix added: shorten it, remove it or leave it.
+- In a build, a fix round takes only the review's Critical and Important findings; Minor ones wait for the final review.
 - Give sizes as before → after ("spec 19 → 24 KB"), also for options you offer.
 
 ## Git
