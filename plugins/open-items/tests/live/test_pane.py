@@ -132,7 +132,7 @@ SPEAKERS = {
     'thread': [
         {'from': 'claude', 'author': 'helper', 'text': 'Runner B.', 'agoMs': 120_000},
         {'from': 'user', 'text': 'Since when?', 'agoMs': 90_000},
-        {'from': 'claude', 'author': 'helper', 'text': 'Since Monday.', 'agoMs': 60_000},
+        {'from': 'claude', 'author': 'helper', 'text': 'Since Tuesday.', 'agoMs': 60_000},
         {'from': 'claude', 'text': 'I moved it there.', 'agoMs': 30_000},
     ],
 }
