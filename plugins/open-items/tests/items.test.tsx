@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { entryOf } from '../hooks/pane'
 import { leftoversIn, savedIn, takenCodes, trimmed } from '../hooks/saved'
-import { isOpenAsk, listOf, parseAsk, parseReply, repliedBy, replyErrorOf } from '../hooks/tasks'
+import { DONE, isOpenAsk, listOf, movedBy, parseAsk, parseReply, reminderOf, repliedBy, replyErrorOf, replyOf, statusOf, waitingOf } from '../hooks/tasks'
 import type { Message, Saved, Task } from '../types'
 
 const DAY_MS = 24 * 60 * 60_000
@@ -322,5 +323,80 @@ describe('ask and option notes', () => {
     expect(replied.askLine).toBe('New?')
     expect(replied.optionNotes).toEqual(['a', 'b'])
     expect(replied).not.toHaveProperty('isMarkdown')
+  })
+})
+
+describe('side questions in the model', () => {
+  const QUESTION: Message = { from: 'user', text: 'Why is the cache cold?', atMs: NOW }
+  const ANSWER: Message = { from: 'claude', author: 'helper', text: 'It is emptied at each deploy.', atMs: NOW + 1 }
+  const FOLLOW_UP: Message = { from: 'user', text: 'Which deploy?', atMs: NOW + 2 }
+  const NOTICE: Message = { from: 'claude', author: 'helper', event: 'notice', text: 'The helper could not start: x', atMs: NOW + 3 }
+  const side = (fields: Partial<Task>) => item({ kind: 'side', title: 'Why is the cache cold?', ...fields })
+  /** Its helper answered, and the user has not opened the answer. */
+  const ANSWERED = side({ thread: [QUESTION, ANSWER], hasNewReply: true, side: { transcripts: ['/t/main.jsonl'], helperId: 'a1', sentMs: NOW } })
+  /** The user followed up, and the start was refused: the notice is the unread reply. */
+  const WAITING = side({
+    thread: [QUESTION, ANSWER, FOLLOW_UP, NOTICE],
+    hasNewReply: true,
+    side: {
+      transcripts: ['/t/old.jsonl', '/t/main.jsonl'],
+      helperId: 'a1',
+      sentMs: NOW + 2,
+      endedMs: NOW + 2,
+      seenUuid: 'u-40',
+      toMain: { kind: 'question', text: 'Is the deploy on Friday?', atMs: NOW + 1, askedMs: NOW },
+    },
+  })
+
+  /** The user followed up and the follow-up is not sent yet. */
+  const PENDING = side({ thread: [QUESTION, ANSWER, FOLLOW_UP], isWaitingForClaude: true, side: { transcripts: ['/t/main.jsonl'], sentMs: NOW, endedMs: NOW } })
+
+  test('savedIn keeps a side item whole, and drops one with a malformed side record or a message by an unknown author', () => {
+    expect(savedIn(saved([WAITING]))?.tasks).toEqual([WAITING])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, transcripts: [1] as unknown as string[] } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, toMain: { kind: 'note', text: 'x', atMs: 1, askedMs: 'x' as unknown as number } } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, toMain: { kind: 'note', text: 'x', atMs: 1 } } }]))?.tasks).toHaveLength(1)
+    expect(savedIn(saved([{ ...WAITING, side: { ...WAITING.side!, endedMs: 'x' as unknown as number } }]))?.tasks).toEqual([])
+    expect(savedIn(saved([item({ thread: [{ ...DETAIL, author: 'main' as unknown as 'helper' }] })]))?.tasks).toEqual([])
+  })
+
+  test('trimmed keeps no side record and no thread of a closed side item', () => {
+    const resolved = { ...WAITING, state: 'resolved' as const }
+    const { side: record, ...bare } = resolved
+
+    expect(trimmed(saved([resolved]), NOW).tasks).toEqual([{ ...bare, thread: [] }])
+  })
+
+  test('add_item refuses the side kind, which only the user creates', () => {
+    expect(errorOf(parseAsk({ kind: 'side', title: 'T', detail: 'D' }))).toBe('kind must be "decision", "question", "action" or "info".')
+  })
+
+  test('a reply or Done on a side item waits for its helper, and tells Claude nothing', () => {
+    const replied = movedBy(ANSWERED, replyOf('why?'), NOW + 5)
+    const done = movedBy(ANSWERED, DONE, NOW + 5)
+
+    expect([replied.isWaitingForClaude, replied.update]).toEqual([true, 'none'])
+    expect([done.state, done.update]).toEqual(['resolved', 'none'])
+  })
+
+  test('the prompt reminder counts neither a side item nor its unanswered follow-up', () => {
+    expect(reminderOf([PENDING, item({ id: 2, kind: 'action' })], () => false)).toBe('Open items: 1 open, 0 unread answers; call list_items.')
+  })
+
+  test('the status line and the pane head count no side item, nor its helper\'s answer as a reply', () => {
+    const decision = item({ id: 2, kind: 'decision', options: ['A', 'B'] })
+
+    expect(statusOf([ANSWERED])).toBeUndefined()
+    expect(waitingOf([ANSWERED, decision]).headline).toBe('1 decision')
+    expect(waitingOf([PENDING, item({ id: 2, isWaitingForClaude: true })]).headline).toBe('1 waiting for Claude')
+  })
+
+  test('list_items names the helper as the writer of its messages, and list_items and the item screen give a notice as its line', () => {
+    const listed = listOf([WAITING], NOW + 3)
+
+    expect(listed).toContain('- The user, ')
+    expect(listed).toContain("- The helper (its words, not the user's), ")
+    expect(listed).toContain('- The helper could not start: x, ')
+    expect(entryOf(NOTICE, NOTICE.atMs + 4 * 60_000, false)).toEqual({ text: 'The helper could not start: x · 4m', look: 'event' })
   })
 })

@@ -19,6 +19,11 @@ export function printable(text: string, max: number): string {
   return clip(oneLine(spaced), max)
 }
 
+/** `text` with no `<` or `>` of its own, so text quoted to Claude cannot open or close a tag around it. */
+export function untagged(text: string): string {
+  return text.replaceAll('<', '‹').replaceAll('>', '›')
+}
+
 /** As `printable`, but its line breaks and runs of whitespace kept: a step list stays a list. */
 export function printableLines(text: string, max: number): string {
   const lines = text.replace(/\r\n?|[\p{Zl}\p{Zp}]/gu, '\n').replace(/[^\P{Cc}\n]/gu, ' ').replace(/\p{Cf}/gu, '')

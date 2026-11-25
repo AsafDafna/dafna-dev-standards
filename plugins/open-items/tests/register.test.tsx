@@ -1,5 +1,5 @@
-import type { AgentInfo, On, PaneOpenArgs, PromptSubmitInput, SessionAppendInput, SessionMessage, ToolSpec } from 'claude-code'
-import { describe, expect, mock, test } from 'claude-code/testing'
+import type { AgentInfo, On, PromptSubmitInput, SessionAppendInput, SessionMessage } from 'claude-code'
+import { describe, expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { FOCUS_BACKGROUND, arrowTargetOf, fieldRowsOf, focusOrderOf, rowBackTo, rowsFor } from '../hooks/pane'
@@ -8,37 +8,37 @@ import { leftoversIn, savedIn } from '../hooks/saved'
 import { DONE as DONE_PRESS, movedBy } from '../hooks/tasks'
 import { cellsOf, rowsOf, wrapRows } from '../hooks/text'
 import type { Message, Saved, Task, TaskKind } from '../types'
-
-const ADD = 'mcp__open-items__add_item'
-const LIST = 'mcp__open-items__list_items'
-const REPLY = 'mcp__open-items__reply_item'
-const CLOSE = 'mcp__open-items__close_item'
-const HANDOFF = 'mcp__open-items__handoff_items'
-const TAKE = 'mcp__open-items__take_items'
-
-const PANE = {
-  plugin: 'open-items',
-  surface: 'terminal',
-  component: 'Pane',
-  requestId: 'open-items',
-  props: {
-    title: 'Open items',
-    isFocused: true,
-    bodyColumns: 100,
-    placement: 'dock',
-    scroll: { offset: 0, bodyRows: 30 },
-    view: {},
-  },
-} as const
-
-const DONE = {
-  answer: 'Done.',
-  durationMs: 1000,
-  isAborted: false,
-  reason: 'answer',
-  category: null,
-  explanation: null,
-} as const
+import {
+  ADD,
+  CLOSE,
+  CODE,
+  DONE,
+  HANDOFF,
+  HOUR_MS,
+  KEY_SHAPED,
+  LIST,
+  NEW,
+  NOW,
+  OLD,
+  OWN,
+  PANE,
+  REPLY,
+  TAKE,
+  answerOf,
+  codeIn,
+  earlierItems,
+  inline,
+  itemOf,
+  keyed,
+  ringTo,
+  runTasks,
+  savedItem,
+  seat,
+  start,
+  step,
+  textOf,
+  typed,
+} from './world'
 
 const KEY_TASK = {
   tool: ADD,
@@ -65,11 +65,6 @@ const PAGING_TASK = {
   option_notes: ['Pages stay stable while new posts arrive.', 'Page numbers work; pages past 10k items do not.'],
 } as const
 
-const NOW = 1_000_000
-
-/** Has the shape of a Stripe key, which `looksSecret` holds; built here, so no file carries one. */
-const KEY_SHAPED = `sk_live_${'0'.repeat(24)}`
-
 /** An item a session saved. */
 const ROTATE = {
   id: 7,
@@ -81,309 +76,6 @@ const ROTATE = {
   createdMs: 0,
   updatedMs: 0,
 } as const
-
-/**
- * Seats the engine beneath the plugin: a session, a store, a clock, panes
- * and a status line, and the calls the plugin makes to Claude, kept in
- * `world`. `isNarrow` makes a pane opened unasked wait, as a narrow
- * terminal does.
- */
-function seat(on: On, store: Record<string, unknown> = {}) {
-  const world = {
-    submitted: [] as string[],
-    /** What the plugin's own prompts carried beside their words, one entry per prompt. */
-    ownContexts: [] as (readonly string[] | undefined)[],
-    appended: [] as { type: string; text: string }[],
-    toasts: [] as string[],
-    /** Every `$.ui.notify` the plugin made. */
-    notices: [] as { text: string; title: string | undefined }[],
-    /** Set, a hook beneath refuses the plugin's notifications with this reason. */
-    refusingNotify: undefined as string | undefined,
-    opens: [] as PaneOpenArgs[],
-    isPaneOpen: false,
-    isNarrow: false,
-    status: undefined as string | undefined,
-    composer: '',
-    /** Set, the plugin's prompts don't enter: a hook beneath drops them with this reason. */
-    refusing: undefined as string | undefined,
-    /** Set, the user's typed prompts don't enter: a hook beneath (a settings hook, say) drops them with this reason. */
-    refusingTyped: undefined as string | undefined,
-    /** Set, the plugin's own rows don't enter the conversation: a hook beneath refuses them with this reason. */
-    refusingRows: undefined as string | undefined,
-    sessionId: 'session-1',
-    /** The folder the session runs in now: a /cd or a worktree move changes it. */
-    cwd: '/repo',
-    store: JSON.parse(JSON.stringify(store)) as Record<string, unknown>,
-    /** Every store call the plugin makes, in order: `get <key>`, `set <key>`, `delete <key>` or `keys`. */
-    ops: [] as string[],
-    /** Set, the plugin's store calls fail: its file locked too long, or out of reach. */
-    isStoreFailing: false,
-    /** Set, the plugin's store writes fail and its reads go on: a disk full, say. */
-    isWriteFailing: false,
-    /** Set, the store's next get doesn't answer until `unstick`, then with the value as it stands: a store stuck on a slow disk. */
-    isStuck: false,
-    unstick: undefined as (() => void) | undefined,
-    /** How long the plugin's store writes take. */
-    setMs: 0,
-    /** Set, the plugin's next read of this value of its state answers `readMs` late, with the value as it stood when asked. */
-    slowRead: undefined as string | undefined,
-    readMs: 0,
-    /** Set, a hook beneath takes the context out of the user's typed prompts. */
-    isStripping: false,
-    /** Set, a hook beneath rewrites the user's typed prompts and their context with it (masks a secret, say). */
-    rewriting: undefined as ((text: string) => string) | undefined,
-    /** Set, a hook beneath rewrites every prompt, the plugin's own among them, and their context with it. */
-    masking: undefined as ((text: string) => string) | undefined,
-    /** Set, the user's typed prompts fail beneath: nothing there answers them, and the engine rejects them. */
-    isTypedFailing: false,
-    /** How long the plugin's own rows take to join the conversation. */
-    appendMs: 0,
-    /** How long the surface takes to open a pane. */
-    openMs: 0,
-    /** How long the surface takes to say which panes are open: it says so as they were when asked. */
-    panesMs: 0,
-    /** How long the engine takes to attach a client once the plugin's hooks have seen it. */
-    attachMs: 0,
-    /** Set, the engine can't list the plugin's panes. */
-    isPanesFailing: false,
-    /** Set, the engine keeps the pane's focus ring where it is: each move is refused with this reason. */
-    refusingFocus: undefined as string | undefined,
-    /** How many times the plugin asked which of its panes are open. */
-    panesAsked: 0,
-    /** How many times the plugin read its task list. */
-    tasksRead: 0,
-    /** The task list as the plugin last wrote it to its state. */
-    items: [] as readonly Task[],
-    /** The agents `$.agent.list()` answers with. */
-    agents: [] as AgentInfo[],
-    /** The rows `$.session.messages()` answers with: none in a session that has just started. */
-    messages: [] as SessionMessage[],
-    /** Set, `$.agent.list()` fails. */
-    isAgentListFailing: false,
-    /** The tools the plugin registered, as it described them. */
-    tools: [] as ToolSpec[],
-    /** Every move of the pane's window that reached the surface. */
-    scrolls: [] as { by: number; origin: string }[],
-    /** The pane's screen as the plugin last wrote it to its state. */
-    screen: undefined as unknown,
-  }
-
-  const clock = mock.clock(on, { now: NOW })
-  // The plugin's own store, kept where a test can read it. Its keys run to
-  // 256 characters, as the engine's do; a refusal rejects the plugin's call.
-  const refused = (op: string, key?: string) => {
-    world.ops.push(key === undefined ? op : `${op} ${key}`)
-
-    if (world.isStoreFailing || (world.isWriteFailing && (op === 'set' || op === 'delete'))) {
-      return { deny: 'The store is locked.' }
-    }
-
-    return key !== undefined && key.length > 256 ? { deny: `Store keys run to 256 characters; this one has ${key.length}.` } : undefined
-  }
-  on('store.get', ($, e) => {
-    if (world.isStuck) {
-      world.isStuck = false
-      world.ops.push(`get ${e.key}`)
-      return new Promise<{ value: unknown }>(resolve => {
-        world.unstick = () => resolve({ value: world.store[e.key] })
-      })
-    }
-
-    return refused('get', e.key) ?? { value: world.store[e.key] }
-  })
-  on('store.set', async ($, e) => {
-    const refusal = refused('set', e.key)
-
-    if (refusal !== undefined) {
-      return refusal
-    }
-
-    if (world.setMs > 0) {
-      await clock.sleep(world.setMs)
-    }
-
-    world.store[e.key] = JSON.parse(JSON.stringify(e.value))
-    return { value: undefined }
-  })
-  on('store.delete', ($, e) => {
-    const refusal = refused('delete', e.key)
-
-    if (refusal !== undefined) {
-      return refusal
-    }
-
-    delete world.store[e.key]
-    return { value: undefined }
-  })
-  on('store.keys', () => refused('keys') ?? { value: Object.keys(world.store) })
-
-  on('state.get', { plugin: 'open-items' }, async ($, e, next) => {
-    const read = await next(e)
-    world.tasksRead += e.key === 'tasks' ? 1 : 0
-
-    if (e.key === world.slowRead) {
-      world.slowRead = undefined
-      await clock.sleep(world.readMs)
-    }
-
-    return read
-  })
-  on('state.set', { plugin: 'open-items' }, async ($, e, next) => {
-    const set = await next(e)
-
-    // A write another beat is made again, so the last one made is the one that stands.
-    if (e.key === 'tasks') {
-      world.items = e.value as readonly Task[]
-    }
-
-    if (e.key === 'screen') {
-      world.screen = e.value
-    }
-
-    return set
-  })
-
-  on('session.id', () => ({ value: world.sessionId }))
-  on('session.cwd', () => ({ value: world.cwd }))
-  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
-  on('session.attach', async ($, e) => {
-    if (world.attachMs > 0) {
-      await clock.sleep(world.attachMs)
-    }
-
-    return { clientId: e.clientId }
-  })
-  on('session.detach', ($, e) => ({ clientId: e.clientId }))
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('tool.register', ($, e) => {
-    world.tools.push(e)
-    return { value: { tool: `mcp__open-items__${e.name}` } }
-  })
-  on('agent.list', () => (world.isAgentListFailing ? { deny: 'The agent list is out of reach.' } : { value: world.agents }))
-  on('session.messages', () => ({ value: world.messages }))
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('ui.toast', ($, e) => {
-    world.toasts.push(e.text)
-    return { value: undefined }
-  })
-  on('ui.notify', ($, e) => {
-    world.notices.push({ text: e.text, title: e.title })
-
-    return world.refusingNotify === undefined ? { value: { isSent: true as const, channel: 'ghostty' as const } } : { deny: world.refusingNotify }
-  })
-  on('ui.status', ($, e) => {
-    world.status = e.text
-    return { value: undefined }
-  })
-  on('ui.open', async ($, e) => {
-    if (world.openMs > 0) {
-      await clock.sleep(world.openMs)
-    }
-
-    world.opens.push(e)
-    world.isPaneOpen = true
-    const isPlaced = e.focus === true || !world.isNarrow
-    return { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow terminal' } }
-  })
-  on('ui.close', () => {
-    world.isPaneOpen = false
-    return { value: undefined }
-  })
-  on('ui.panes', async () => {
-    world.panesAsked += 1
-
-    if (world.isPanesFailing) {
-      return { deny: 'The surface is busy.' }
-    }
-
-    const value = world.isPaneOpen ? [{ id: 'open-items', title: 'Open items', isShown: true, isFocused: true, isPlaced: !world.isNarrow }] : []
-
-    if (world.panesMs > 0) {
-      await clock.sleep(world.panesMs)
-    }
-
-    return { value }
-  })
-  // The plugin's own `$.ui.focus` calls reach the first stand-in under Claude Code 2.1.310 (CI's pin) and only the second under 2.1.330.
-  on('ui.focus', () => (world.refusingFocus === undefined ? {} : { deny: world.refusingFocus }))
-  on('ui.focus', { plugin: '*' }, () => (world.refusingFocus === undefined ? {} : { deny: world.refusingFocus }))
-  on('ui.scroll', ($, e) => {
-    world.scrolls.push({ by: e.by, origin: e.origin.kind })
-    return {}
-  })
-  on('turn.start', ($, e) => ({ turnId: e.turnId }))
-  on('turn.step', async function* ($, e) {
-    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
-  })
-  on('turn.complete', ($, e) => ({ text: e.answer }))
-  on('prompt.submit', ($, e) => {
-    if (e.origin.kind === 'plugin' && world.refusing !== undefined) {
-      return { drop: world.refusing }
-    }
-
-    if (e.origin.kind === 'composer' && world.refusingTyped !== undefined) {
-      return { drop: world.refusingTyped }
-    }
-
-    if (e.origin.kind === 'composer' && world.isTypedFailing) {
-      // A hook that throws is skipped; with none beneath it, the engine rejects the prompt.
-      throw new Error('The prompt hook timed out.')
-    }
-
-    if (e.origin.kind === 'composer' && world.isStripping) {
-      return { text: e.text }
-    }
-
-    if (e.origin.kind === 'plugin' && e.origin.name === 'open-items') {
-      world.submitted.push(e.text)
-      world.ownContexts.push(e.context)
-    }
-
-    const rewrite = (e.origin.kind === 'composer' ? world.rewriting : undefined) ?? world.masking
-
-    if (rewrite !== undefined) {
-      return { text: rewrite(e.text), ...(e.context === undefined ? {} : { context: e.context.map(rewrite) }) }
-    }
-
-    return { text: e.text, ...(e.context === undefined ? {} : { context: e.context }) }
-  })
-  on('session.append', async ($, e, next) => {
-    if (e.door === 'note' && world.appendMs > 0) {
-      await clock.sleep(world.appendMs)
-    }
-
-    // Only a plugin's own row may be refused; any other must go on with next.
-    if (e.door === 'note' && world.refusingRows !== undefined) {
-      return { deny: world.refusingRows }
-    }
-
-    const block = e.message.content[0] as { text?: string } | undefined
-    world.appended.push({ type: e.message.type, text: block?.text ?? '' })
-
-    return next(e)
-  })
-  on('prompt.context', ($, e) => ({ blocks: e.blocks }))
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
-    const { Box } = $.ui.resolve(e)
-
-    return <Box key="engine" />
-  })
-  on('prompt.read', () => ({ value: { text: world.composer, cursor: world.composer.length } }))
-  on('prompt.fill', ($, e) => {
-    world.composer = e.mode === 'append' ? world.composer + e.text : e.text
-    return { isFilled: true, text: world.composer, cursor: world.composer.length }
-  })
-
-  return { world, clock }
-}
-
-async function start($: Engine) {
-  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-}
-
-function typed(text: string, turnId?: string): PromptSubmitInput {
-  return { text, wait: false, origin: { kind: 'composer' }, ...(turnId === undefined ? {} : { turnId }) }
-}
 
 /** A subagent's hand-back, as the engine raises it once the agent is done. */
 const HAND_BACK: PromptSubmitInput = {
@@ -400,26 +92,6 @@ const REPLY_WORDS = 'my reply (the item stays open; answer in it with reply_item
 
 /** The prompt that wakes Claude for an answer its turn ended without reading. */
 const WAKE_UP = 'I answered an item while you were finishing your reply; my answer is above.'
-
-/** One model request of turn `turnId`, in the main loop or in agent `agentId`'s. */
-async function step($: Engine, turnId: string, agentId?: string) {
-  const stream = $.turn.step({ turnId, index: 0, model: 'claude-opus-5-5', messageCount: 1, ...(agentId === undefined ? {} : { agentId }) })
-
-  for await (const chunk of stream) {
-    void chunk
-  }
-
-  await stream.result
-}
-
-async function runTasks($: Engine) {
-  return $.command.run({
-    command: 'open-items',
-    args: '',
-    origin: { kind: 'composer' },
-    presentation: { isFullscreen: true, columns: 160 },
-  })
-}
 
 /**
  * Set, holds the next press short of its button until `letGo`: a press from
@@ -442,23 +114,13 @@ function holdingPresses(on: On) {
   return held
 }
 
-type Drawn = Pick<Mounted<'terminal', 'Pane'>, 'find'>
-
-async function textOf(ui: Drawn, key: string): Promise<string> {
-  return (await ui.find({ key }))?.text ?? ''
-}
-
-function itemOf(world: ReturnType<typeof seat>['world'], id: number): Task | undefined {
-  return world.items.find(task => task.id === id)
-}
-
 function folderOf(world: ReturnType<typeof seat>['world'], sessionId: string): string | undefined {
   return (world.store[`session:${sessionId}`] as { folder?: string } | undefined)?.folder
 }
 
-/** The list's rows: the head, a label and a row for each section, and the foot. */
-const ROWS_THREE_KINDS = 8
-const ROWS_ONE_KIND = 4
+/** The list's rows: the head, a label and a row for each section, the new-question field, and the foot. */
+const ROWS_THREE_KINDS = 9
+const ROWS_ONE_KIND = 5
 
 describe('adding', () => {
   test('an item opens the Open items pane, with its detail and its buttons, and the status line counts it', async ($, on) => {
@@ -559,11 +221,6 @@ const XCODE_LONG = {
   createdMs: NOW - 180_000,
 } as const
 
-/** The pane seated inline above the prompt, `bodyColumns` across. */
-function inline(bodyColumns: number) {
-  return { ...PANE, props: { ...PANE.props, placement: 'inline', bodyColumns } } as const
-}
-
 /** The store as session 1 saved `tasks` before, in v0.1's format: started again, it shows the open ones. */
 function earlier(tasks: readonly unknown[]) {
   return { 'session:session-1': { tasks, nextId: 3, savedMs: NOW } }
@@ -572,11 +229,6 @@ function earlier(tasks: readonly unknown[]) {
 /** v0.1's open tasks as v0.2 holds them. */
 function asItems(tasks: readonly unknown[]): Task[] {
   return [...(savedIn({ tasks, nextId: 1, savedMs: NOW })?.tasks ?? [])]
-}
-
-/** The store as session 1 saved `items` before, in v0.2's format. */
-function earlierItems(items: readonly Task[]) {
-  return { 'session:session-1': { version: 2, tasks: items, nextId: 3, savedMs: NOW, lastActiveMs: NOW, folder: '/repo', taken: [] } }
 }
 
 describe('long titles', () => {
@@ -642,11 +294,12 @@ describe('long titles', () => {
       isTyping: false,
     } as const
 
-    // The head, two section labels, a row for each item, and the foot: the foot wraps below 50 columns, the head below 24.
-    expect(rowsFor(view, 60, 99)).toBe(6)
-    expect(rowsFor(view, 32, 99)).toBe(7)
-    expect(rowsFor(view, 20, 99)).toBe(10)
-    expect(rowsFor({ ...view, shown: asItems([INSTRUMENTS]) }, 60, 99)).toBe(4)
+    // The head, two section labels, a row for each item, the new-question field, and the foot: the foot wraps below
+    // 50 columns, the field's label below 27, the head below 24.
+    expect(rowsFor(view, 60, 99)).toBe(7)
+    expect(rowsFor(view, 32, 99)).toBe(8)
+    expect(rowsFor(view, 20, 99)).toBe(12)
+    expect(rowsFor({ ...view, shown: asItems([INSTRUMENTS]) }, 60, 99)).toBe(5)
     expect(rowsFor(view, 20, 8)).toBe(8)
   })
 
@@ -656,11 +309,11 @@ describe('long titles', () => {
 
     await runTasks($)
     const ui = await $.ui.mount(inline(60))
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
 
     // The terminal narrows: the foot takes more rows, and the pane asks for them.
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(7)
+    expect(world.opens.at(-1)?.rows).toBe(8)
   })
 
   test('drawn on two surfaces at once, the pane asks for the rows the narrower takes, and keeps them', async ($, on) => {
@@ -683,7 +336,7 @@ describe('long titles', () => {
     await phone.unmount()
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test('a surface that docks the pane it drew inline leaves it as tall as the surfaces still drawing it inline', async ($, on) => {
@@ -694,7 +347,7 @@ describe('long titles', () => {
     await runTasks($)
     const terminal = await $.ui.mount(inline(32))
     await $.ui.mount({ ...inline(60), surface: 'mobile' })
-    expect(world.opens.at(-1)?.rows).toBe(7)
+    expect(world.opens.at(-1)?.rows).toBe(8)
 
     // The terminal widens and docks the pane: the phone's rows are the pane's.
     await terminal.redraw(PANE.props)
@@ -763,7 +416,7 @@ describe('long titles', () => {
     // The phone leaves, and the tablet draws the pane again: the pane fits it and the terminal.
     await $.session.detach({ surface: 'mobile', clientId: 'phone', reason: 'detach' })
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test('a client of three leaving, the two left draw the pane again, and it fits them', async ($, on) => {
@@ -809,7 +462,7 @@ describe('long titles', () => {
     await clock.advance(500)
     await leaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test("clients leaving as the roster's write answers late, the pane still fits those left", async ($, on) => {
@@ -843,7 +496,7 @@ describe('long titles', () => {
     await clock.advance(100)
     await phoneLeaving
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
 
     await mobile.unmount()
 
@@ -854,7 +507,7 @@ describe('long titles', () => {
     }
 
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test("a client leaving and attaching again as the roster's write answers late keeps the rows it draws", async ($, on) => {
@@ -954,7 +607,7 @@ describe('long titles', () => {
 
     await terminal.redraw(inline(60).props)
     await clock.settle()
-    expect(world.opens.at(-1)?.rows).toBe(6)
+    expect(world.opens.at(-1)?.rows).toBe(7)
   })
 
   test('a client is counted before it first draws the pane', async ($, on) => {
@@ -1003,7 +656,7 @@ describe('long titles', () => {
     const ui = await $.ui.mount(inline(60))
     world.tasksRead = 0
     await ui.redraw(inline(32).props)
-    expect(world.opens.at(-1)?.rows).toBe(7)
+    expect(world.opens.at(-1)?.rows).toBe(8)
     expect(world.tasksRead).toBe(1)
 
     await ui.redraw(inline(100).props)
@@ -1242,11 +895,9 @@ describe('long titles', () => {
 })
 
 describe('the pane and /open-items', () => {
-  test('/open-items opens the pane with the keyboard, or says there is nothing', async ($, on) => {
+  test('/open-items opens the pane with the keyboard', async ($, on) => {
     const { world } = seat(on)
     await start($)
-
-    expect((await runTasks($)).text).toBe('No items for you right now.')
 
     await $.tool.call(KEY_TASK)
     await runTasks($)
@@ -1369,8 +1020,8 @@ describe('the list screen', () => {
 
     await runTasks($)
     await $.ui.mount(inline(60))
-    // The head, ACTIONS, a row for each item, and the foot.
-    expect(world.opens.at(-1)?.rows).toBe(5)
+    // The head, ACTIONS, a row for each item, the new-question field, and the foot.
+    expect(world.opens.at(-1)?.rows).toBe(6)
 
     for (const item of LONG_LIST.slice(2)) {
       await $.tool.call({ ...KEY_TASK, title: item.title })
@@ -1393,6 +1044,12 @@ describe('the list screen', () => {
     // A ring on nothing of the list's starts on its first row.
     expect(arrowTargetOf(order, undefined, 1)).toBe('row-2')
     expect(arrowTargetOf(order, 'reply-1', -1)).toBe('row-2')
+
+    const typing = focusOrderOf([listed(1, 'question', 'Which cloud project holds the uploader?'), listed(3, 'question', 'Which region?')], { canType: true })
+
+    expect(typing).toEqual(['row-1', 'row-3', 'side-new', 'hide'])
+    expect(arrowTargetOf(typing, 'row-3', 1)).toBe('side-new')
+    expect(arrowTargetOf(typing, 'side-new', -1)).toBe('row-3')
   })
 
   test('arrows the engine sums into one move take the ring a row for each, as far as the first or last row', () => {
@@ -1412,8 +1069,9 @@ describe('the list screen', () => {
     await runTasks($)
     await $.ui.mount(inline(60))
 
-    // A held ↓: the second arrow finds the ring on Hide, the last stop, and the body scrolls.
+    // A held ↓: the third arrow finds the ring on Hide, the last stop after the new side question's field, and the body scrolls.
     await $.ui.focus(ringTo('row-30'))
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
 
@@ -1458,17 +1116,6 @@ describe('the list screen', () => {
 
 /** A second task that takes an answer, as XCODE_TASK does. */
 const ANDROID_TASK = { ...XCODE_TASK, title: 'Run the Android tests on your phone, paste the failures' } as const
-
-/** The pane's focus ring moving onto `element`, as the person's click or Tab moves it. */
-function ringTo(element: string) {
-  return {
-    component: 'Pane',
-    requestId: 'open-items',
-    plugin: 'open-items',
-    element,
-    origin: { kind: 'person' },
-  } as const
-}
 
 describe('the reply field', () => {
   test("the item screen draws a reply field of the item's own, labelled for the terminal to add its colon", async ($, on) => {
@@ -1834,7 +1481,8 @@ describe('the item screen', () => {
     expect(world.screen).toEqual({ kind: 'list' })
     expect(await ui.find({ key: 'item-30' })).toBeUndefined()
     expect(await ui.find({ key: 'row-30' })).toBeDefined()
-    // The ring is on the row just left: ↓ goes on to Hide, the last stop, and the next one scrolls the body.
+    // The ring is on the row just left: ↓ goes on to the new side question's field, then to Hide, the last stop, and the next one scrolls the body.
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
   })
@@ -1855,7 +1503,8 @@ describe('the item screen', () => {
     await ui.press({ key: 'row-30' })
     await ui.press({ key: 'done' })
 
-    // On row-29: ↓ goes on to Hide, the last stop, and the next one scrolls the body.
+    // On row-29: ↓ goes on to the new side question's field, then to Hide, the last stop, and the next one scrolls the body.
+    expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeDefined()
     expect((await $.ui.scroll(arrow(1))).deny).toBeUndefined()
   })
@@ -1965,7 +1614,7 @@ describe('the item screen', () => {
 
     await runTasks($)
     const ui = await $.ui.mount(inline(60))
-    expect(world.opens.at(-1)?.rows).toBe(5)
+    expect(world.opens.at(-1)?.rows).toBe(6)
 
     await ui.press({ key: 'row-1' })
     const back = await ui.find({ type: 'Button', key: 'back' })
@@ -3314,6 +2963,7 @@ describe('the mod\'s own tools', () => {
     const calls: { event: string; matcher: unknown }[] = []
     const record = ((event: string, ...rest: unknown[]) => {
       calls.push({ event, matcher: typeof rest[0] === 'object' ? rest[0] : undefined })
+      return { catch: () => undefined }
     }) as unknown as On
 
     register(record, {})
@@ -3935,52 +3585,6 @@ describe('saving', () => {
   })
 })
 
-const OLD = 'session:session-old'
-const NEW = 'session:session-new'
-const OWN = 'session:session-1'
-const HOUR_MS = 60 * 60_000
-const CODE = 'k3x9q2'
-
-/** An item a session saved, as v0.2 holds it. */
-function savedItem(id: number, fields: Partial<Task> = {}): Task {
-  return {
-    id,
-    kind: 'action',
-    title: `Rotate deploy key number ${id}`,
-    thread: [{ from: 'claude', text: 'Needed before the release.', atMs: NOW - 240_000 }],
-    state: 'open',
-    isWaitingForClaude: false,
-    hasNewReply: false,
-    update: 'none',
-    createdMs: NOW - 240_000,
-    updatedMs: NOW - 240_000,
-    ...fields,
-  }
-}
-
-/** The key another session saved for `tasks` in /repo, active now unless `fields` say otherwise. */
-function keyed(tasks: readonly Task[], fields: Partial<Saved> = {}): Saved {
-  return {
-    version: 2,
-    tasks,
-    nextId: Math.max(0, ...tasks.map(task => task.id)) + 1,
-    savedMs: NOW,
-    lastActiveMs: NOW,
-    folder: '/repo',
-    taken: [],
-    ...fields,
-  }
-}
-
-/** `handoff_items`'s code, read from its result. */
-function codeIn(result: string | undefined): string {
-  return /Hand-off code: ([a-z0-9]{6})\./.exec(result ?? '')?.[1] ?? ''
-}
-
-function answerOf(call: unknown) {
-  return call as { result?: string; deny?: string }
-}
-
 async function buttonsOf(ui: Pick<Mounted<'terminal', 'Pane'>, 'findAll'>): Promise<(string | undefined)[]> {
   return (await ui.findAll({ type: 'Button' })).map(button => button.key)
 }
@@ -4239,8 +3843,8 @@ describe('hand-off', () => {
     expect(await textOf(ui, 'moved')).toContain(PAGING_TASK.title)
     expect(await buttonsOf(ui)).toEqual(['hide'])
     expect(world.status).toBeUndefined()
-    // The label, a row each and the foot.
-    expect(world.opens.at(-1)?.rows).toBe(4)
+    // The label, a row each, the new-question field and the foot.
+    expect(world.opens.at(-1)?.rows).toBe(5)
   })
 
   test('a take of part of a re-handed-off hand-off leaves the rest open in the old session', async ($, on) => {
