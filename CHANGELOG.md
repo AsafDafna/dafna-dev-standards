@@ -1,5 +1,12 @@
 # Changelog
 
+## core 1.11.2 — Minor review findings wait for the final review
+
+- RULES.md, Proportion: in a build, a fix round takes only the review's
+  Critical and Important findings; Minor ones wait for the final review.
+  Folding Minor findings into fix rounds grew the open-items 0.4 build well
+  past its ask. RULES.md 608 → 630 words.
+
 ## core 1.11.1, coo 1.0.11 — RULES.md back under its size cap; review points on 1.11.0
 
 - RULES.md: about 840 → 790 tokens (648 → 608 words), under the ~800 cap.
