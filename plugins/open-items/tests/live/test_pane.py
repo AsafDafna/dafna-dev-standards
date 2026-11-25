@@ -13,7 +13,9 @@ above the prompt, 18 rows at most, and an item taller than that scrolls; from
 video the engine draws it in. With RENDERS_DIR set, each screen a test reads
 is kept there, and `tests/live/renders.py` lays them out; with
 LIVE_THEME=light, the sessions draw in the light theme. Two cases read the
-store back: one after /clear, one after a session v0.1 saved.
+store back: one after /clear, one after a session v0.1 saved. With
+LIVE_MODEL=1, the cases that call the model run too, on the person's own
+sign-in (CLAUDE_CONFIG_DIR): keep their prompts short.
 """
 
 import contextlib
@@ -23,10 +25,11 @@ import re
 import sys
 import time
 import unittest
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 from renders import text_of  # noqa: E402
-from screen import Claude, body_rows, frame_top, has_pane, hyperlinks_of, pane_body, placement, run, styles_of, wait_for  # noqa: E402
+from screen import Claude, Seat, body_rows, capture, frame_top, has_pane, hyperlinks_of, pane_body, placement, run, silent_api, styles_of, wait_for  # noqa: E402
 
 ROOT = os.environ.get('PLUGIN_DIR') or os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 # Framed, then each side of where the pane docks (110), and past where the
@@ -40,9 +43,12 @@ INLINE = (100, HEIGHT)
 DOCKED = (144, 40)
 FRAMED_ROWS = 18
 
-KIND_LABELS = {'decision': 'DECISION', 'question': 'QUESTION', 'action': 'ACTION', 'info': 'INFO'}
+KIND_LABELS = {'decision': 'DECISION', 'question': 'QUESTION', 'action': 'ACTION', 'info': 'INFO', 'side': 'SIDE QUESTION'}
 
-LABELS = ('DECISIONS', 'QUESTIONS', 'ACTIONS', 'INFO', 'LATER')
+LABELS = ('DECISIONS', 'QUESTIONS', 'ACTIONS', 'INFO', 'LATER', 'SIDE QUESTIONS')
+# As the terminal draws each field's label: the reply's, a side question's follow-up, and the list's new side question.
+FIELDS = ('Reply:', 'Follow up:', 'Side question:')
+NEW_FIELD = 'Side question:'
 HINTS = (
     '↵ open · ↑↓ move · Esc: back to the prompt',
     'Tab: buttons · ↑↓ scroll · Esc: back to the prompt',
@@ -81,8 +87,8 @@ KINDS = [
 ]
 
 # The rows the pane draws at 60 columns for the items in tests/register.test.tsx's "rows count the section headers, LATER among them".
-ROWS_THREE_KINDS = 8
-ROWS_ONE_KIND = 4
+ROWS_THREE_KINDS = 9
+ROWS_ONE_KIND = 5
 # The terminal's columns that give the pane's body those 60.
 UNIT_COLUMNS = 64
 
@@ -114,6 +120,23 @@ LONG_THREAD = [
     }
 ]
 HIDDEN = re.compile(r'\d+ earlier messages are not shown: the thread is too long for the pane\.')
+
+# A side question that Claude replied in too: a head for each of the three speakers.
+SPEAKERS = {
+    'id': 2,
+    'kind': 'side',
+    'title': 'Which runner holds the cache?',
+    'detail': 'Which runner holds the cache?',
+    'isMarkdown': True,
+    'side': {'transcripts': [], 'helperId': 'a1', 'sentAgoMs': 90_000, 'endedAgoMs': 90_000},
+    'thread': [
+        {'from': 'claude', 'author': 'helper', 'text': 'Runner B.', 'agoMs': 120_000},
+        {'from': 'user', 'text': 'Since when?', 'agoMs': 90_000},
+        {'from': 'claude', 'author': 'helper', 'text': 'Since Tuesday.', 'agoMs': 60_000},
+        {'from': 'claude', 'text': 'I moved it there.', 'agoMs': 30_000},
+    ],
+}
+HEAD = r'^[\s│]*(You|Claude|Helper)( · (?:now|\d+[smhd]))[\s│]*$'
 
 # A decision as 0.3 adds one: an ask, a note under each option, Markdown in its
 # detail, and a recommended option whose label leaves its mark no room beside it.
@@ -274,8 +297,8 @@ REFERENCES = [
     for target_name, target in (('passwd', '/q/etc/passwd'), ('relative', 'relative'), ('http', 'http://x'))
     for form_name, form in (('full', '[click][id]'), ('shortcut', '[id]'), ('collapsed', '[id][]'))
 ]
-# Docked, wide and tall enough that an item of LINK_BATCH cases shows whole.
-LINK_SCREEN = (200, 250)
+# Docked, wide and tall enough that an item of LINK_BATCH cases shows whole, an empty row between its entries.
+LINK_SCREEN = (200, 320)
 LINK_BATCH = 30
 
 
@@ -334,6 +357,18 @@ def box_backgrounds(styled):
     return found
 
 
+def runs_of(styled, pattern):
+    """Each match of `pattern` on a row of the pane's body: each of its groups, and the style each of the group's characters is drawn in."""
+    lines = styled.split('\n')
+    plain = [text_of(line) for line in lines]
+    found = []
+    for i, start in body_rows(plain):
+        styles = styles_of(lines[i])
+        for match in re.finditer(pattern, plain[i][start:]):
+            found.append([(match.group(n), styles[start + match.start(n) : start + match.end(n)]) for n in range(1, (match.lastindex or 0) + 1)])
+    return found
+
+
 def boxes(body):
     """Each box whose top and bottom border are both in `body`, in order: the text of each row inside, stripped."""
     found, inside = [], None
@@ -365,7 +400,8 @@ class Live(unittest.TestCase):
         claude = Claude(ROOT, env=env)
         self.reads = 0
         try:
-            claude.seed(tasks)
+            if tasks:
+                claude.seed(tasks)
             claude.open_pane(columns, rows)
             yield claude
         finally:
@@ -404,7 +440,7 @@ class Live(unittest.TestCase):
             i
             for i, row in enumerate(rows[:last])
             if row == ''
-            and not (i > 0 and rows[i - 1].startswith('Reply:') and '⏎ send' not in rows[i - 1])
+            and not (i > 0 and rows[i - 1].startswith(FIELDS) and '⏎ ' not in rows[i - 1])
             and not (is_item and i > 0 and rows[i - 1] and rows[i + 1])
         ]
 
@@ -418,7 +454,8 @@ class Live(unittest.TestCase):
         lines = [row.strip() for row in body]
         first = next(i for i, row in enumerate(lines) if row in LABELS)
         foot = max(i for i, row in enumerate(lines) if 'Hide' in row)
-        drawn = [row for row in lines[first:foot] if row not in LABELS]
+        end = next((i for i, row in enumerate(lines) if row.startswith(NEW_FIELD)), foot)
+        drawn = [row for row in lines[first:end] if row not in LABELS]
 
         self.assertEqual([row.split(' ')[0] for row in drawn], [f'#{n}' for n, _ in rows], 'a row takes more than one line\n' + context)
         for row, (_, title) in zip(drawn, rows):
@@ -713,7 +750,8 @@ class Item(Live):
                     {'from': 'claude', 'text': '', 'event': 'changed', 'agoMs': 60_000},
                     {'from': 'user', 'text': '', 'event': 'later', 'agoMs': 60_000},
                 ],
-            }
+            },
+            SPEAKERS,
         ]
         # From 48 columns: narrower, the item takes more than the 18 rows a framed pane shows.
         for columns in (48, 100, 144):
@@ -736,7 +774,34 @@ class Item(Live):
                 self.assertNotIn('l: Later', text, context)
                 body, context = self.look(claude, columns, 'Tab', 'b')
 
-                self.assertTrue(joined(body).startswith('1 later LATER #1 Which runner failed? ↵'), context)
+                self.assertTrue(joined(body).startswith('1 later LATER #1 Which runner failed? SIDE QUESTIONS #2'), context)
+                if columns != 144:
+                    continue
+                # Docked, the side question shows whole.
+                _, context = self.look(claude, columns, 'Down', 'Enter')
+                heads = runs_of(claude.styled, HEAD)
+                colors = {who: {style.get('fg') for (one, name), _ in heads if one == who for style in name} for who in ('You', 'Claude', 'Helper')}
+                [[(_, message)]] = runs_of(claude.styled, r'^[\s│]*(Since when\?)[\s│]*$')
+                # The engine draws dim text in a color of the theme's: the header's number and age are dim too.
+                [[(_, dim)]] = runs_of(claude.styled, r'(#2  3m)')
+
+                self.assertEqual([who for (who, _), _ in heads], ['Helper', 'You', 'Helper', 'Claude'], context)
+                for (who, name), (age, after) in heads:
+                    self.assertTrue(all(style.get('bold') for style in name), f'{who} is not bold\n' + context)
+                    self.assertEqual({style.get('fg') for style in after}, {dim[0].get('fg')}, f'{who}{age} is not dim\n' + context)
+                # Each name in one color of its own, none the message text's.
+                self.assertTrue(all(len(found) == 1 for found in colors.values()), f'{colors}\n' + context)
+                self.assertEqual(len({*colors['You'], *colors['Claude'], *colors['Helper'], message[0].get('fg')}), 4, f'{colors}, the text {message[0]}\n' + context)
+                self.assertNotEqual(dim[0].get('fg'), message[0].get('fg'), context)
+
+    def test_a_reply_claude_was_given_says_so_under_it(self):
+        waiting = {'id': 1, 'title': 'Add the key to the env file', 'detail': 'The test needs it.', 'isWaitingForClaude': True, 'update': 'delivered', 'thread': [{'from': 'user', 'text': 'Which env file?'}]}
+        # The status line counts only what waits on the user: with nothing there, the restore would never show.
+        seen = {'id': 2, 'title': 'The migration ran clean', 'detail': 'The schema is current.', 'kind': 'info'}
+        body, context = self.draw([waiting, seen], 100, ('Down', 'Enter'))
+        rows = [row.strip() for row in body]
+
+        self.assertEqual(rows[rows.index('Which env file?') + 1], '✓ Claude has it', context)
 
     def test_a_long_thread_scrolls_framed_at_18_rows_and_docked_and_back_stays_its_b(self):
         for columns, rows in (INLINE, DOCKED):
@@ -1030,6 +1095,122 @@ class Field(Live):
             self.assertIn(unspaced(DRAFT), unspaced(joined(body).replace('⏎ send', '')), context)
 
 
+# A decision, and three side questions: one answered and not read yet, one whose helper asks the session, and one at work.
+SIDE_ITEMS = [
+    {'id': 1, 'title': 'Ship the feed rewrite this week', 'detail': 'It unblocks the mobile release.', 'kind': 'decision', 'options': ['Yes', 'Not yet']},
+    {
+        'id': 2,
+        'kind': 'side',
+        'title': 'What does the retry flag do?',
+        'detail': 'What does the retry flag do?',
+        'isMarkdown': True,
+        'hasNewReply': True,
+        'side': {'transcripts': [], 'helperId': 'a2', 'sentAgoMs': 180_000, 'endedAgoMs': 180_000},
+        'thread': [{'from': 'claude', 'author': 'helper', 'text': 'It retries a failed upload twice.', 'agoMs': 120_000}],
+    },
+    {
+        'id': 3,
+        'kind': 'side',
+        'title': 'Which branch did we pick?',
+        'detail': 'Which branch did we pick?',
+        'isMarkdown': True,
+        'side': {
+            'transcripts': [],
+            'helperId': 'a3',
+            'sentAgoMs': 180_000,
+            'endedAgoMs': 180_000,
+            'toMain': {'kind': 'question', 'text': 'Which branch did you pick?', 'atAgoMs': 120_000, 'askedAgoMs': 180_000},
+        },
+        'thread': [{'from': 'claude', 'author': 'helper', 'text': 'It is not in the conversation.\n\nQuestion for the session: Which branch did you pick?', 'agoMs': 120_000}],
+    },
+    # Its helper is gone at the restart, so a new one starts; at an API that never answers, it stays at work.
+    {
+        'id': 4,
+        'kind': 'side',
+        'title': 'Where is the cache kept?',
+        'detail': 'Where is the cache kept?',
+        'isMarkdown': True,
+        'isWaitingForClaude': True,
+        'side': {'transcripts': [], 'helperId': 'a4', 'sentAgoMs': 180_000},
+    },
+]
+SIDE_MARKS = {2: '  ● answered', 3: '  ⋯ waiting for the session', 4: '  ⋯ helper working'}
+
+
+class Side(Live):
+    def test_side_questions_come_last_with_their_marks_and_an_answered_one_opens_to_its_helper_s_answer(self):
+        for columns in (64, 144):
+            with self.subTest(columns=columns), silent_api() as env, self.opened(SIDE_ITEMS, columns, env=env) as claude:
+                with contextlib.suppress(TimeoutError):
+                    wait_for(claude.session, lambda s: SIDE_MARKS[4].strip() in s, timeout=10)
+                body, context = self.look(claude, columns)
+                rows = [row.strip() for row in body]
+                side = rows.index('SIDE QUESTIONS')
+
+                self.assert_fits(body, context, columns)
+                # The head counts the decision alone.
+                self.assertTrue(joined(body).startswith('1 decision DECISIONS #1 Ship the feed rewrite this week SIDE QUESTIONS'), context)
+                self.assertEqual([row for row in rows if row in LABELS], ['DECISIONS', 'SIDE QUESTIONS'], context)
+                self.assertEqual([row.split(' ')[0] for row in rows[side + 1 : side + 4]], ['#2', '#3', '#4'], context)
+                for n, row in zip((2, 3, 4), rows[side + 1 : side + 4]):
+                    self.assertTrue(row.endswith(SIDE_MARKS[n]), f'#{n} has not its mark\n' + context)
+                self.assertTrue(rows[side + 4].startswith(NEW_FIELD), context)
+                body, context = self.whole(claude, columns, *self.look(claude, columns, 'Down', 'Down', 'Enter'))
+                text = joined(body)
+
+                self.assert_fits(body, context, columns)
+                self.assert_title(body, SIDE_ITEMS[1], '3m', context)
+                self.assertIn('Helper · 2m', [row.strip() for row in body], context)
+                self.assertIn('It retries a failed upload twice.', text, context)
+                self.assertIn('d: Done', text, context)
+                self.assertNotIn('l: Later', text, context)
+                self.assertTrue(any(row.startswith('Follow up:') for row in body), context)
+
+    def test_open_items_with_no_items_draws_the_empty_line_and_the_new_question_field(self):
+        for columns in (64, 144):
+            with self.subTest(columns=columns), self.opened([], columns) as claude:
+                body, context = self.look(claude, columns)
+                rows = [row.strip() for row in body]
+
+                self.assert_fits(body, context, columns)
+                self.assertEqual(rows[0], 'No items for you right now.', context)
+                self.assertTrue(rows[1].startswith(NEW_FIELD), context)
+
+    def test_a_bare_side_gives_the_new_question_field_the_keys_and_enter_asks_once_and_empties_it(self):
+        columns = 100
+        claude = Claude(ROOT)
+        self.reads = 0
+        try:
+            claude.start(columns, HEIGHT)
+            claude.command('/side')
+            wait_for(claude.session, has_pane)
+            claude.has_keys = False
+            body, context = self.look(claude, columns)
+
+            self.assertTrue(any(row.startswith(NEW_FIELD) and '⏎ ask' in row for row in body), context)
+            self.assertEqual(claude.ring(), [], context)
+            body, context = self.look(claude, columns, 'What is a cursor?', 'Enter')
+            asked = [row.strip() for row in body]
+
+            self.assertIn('SIDE QUESTIONS', asked, context)
+            self.assertTrue(asked[asked.index('SIDE QUESTIONS') + 1].startswith('#1 What is a cursor?'), context)
+            self.assertNotIn('What is a cursor?', ' '.join(row for row in asked if row.startswith(NEW_FIELD)), context)
+            # The keys go on to the new row: back to the field for an Enter there.
+            for _ in range(4):
+                body, context = self.look(claude, columns, 'Tab')
+                if any(row.startswith(NEW_FIELD) and '⏎ ask' in row for row in body):
+                    break
+            body, context = self.look(claude, columns, 'Enter')
+            rows = [row.strip() for row in body]
+
+            self.assertTrue(any(row.startswith(NEW_FIELD) and '⏎ ask' in row for row in body), context)
+
+            # Nothing typed: no second question.
+            self.assertEqual([row.split(' ')[0] for row in rows[rows.index('SIDE QUESTIONS') + 1 :] if row.startswith('#')], ['#1'], context)
+        finally:
+            claude.close()
+
+
 class Store(unittest.TestCase):
     def test_clear_starts_a_session_with_no_items_and_offers_the_ones_it_left(self):
         claude = Claude(ROOT)
@@ -1054,6 +1235,7 @@ class Store(unittest.TestCase):
         self.assertEqual([task['id'] for task in store[key]['tasks']], [1], screen)
         self.assertIn('endedMs', store[key], screen)
         self.assertTrue(body.startswith('1 item left by an earlier session Take Dismiss'), body)
+        self.assertIn(NEW_FIELD, body, body)
 
     def test_a_session_v01_saved_comes_back_with_its_open_items_and_keeps_its_unsent_answer(self):
         claude = Claude(ROOT)
@@ -1082,7 +1264,7 @@ class Store(unittest.TestCase):
             claude.close()
         items = {task['id']: task for task in saved['tasks']}
 
-        self.assertTrue(listed.startswith('☐ 1 decision DECISIONS #1 Ship the rewrite ↵'), listed)
+        self.assertTrue(listed.startswith(f'☐ 1 decision DECISIONS #1 Ship the rewrite {NEW_FIELD}'), listed)
         self.assertTrue(opened.startswith('DECISION #1 3m Ship the rewrite It unblocks the release. 1: Go 2: Wait'), opened)
         self.assertEqual(saved['version'], 2, saved)
         self.assertEqual(sorted(items), [1, 2], saved)
@@ -1108,6 +1290,101 @@ class TranscriptRow(unittest.TestCase):
 
                 self.assertIn('☐ Added an item for you: ', lines[start], screen)
                 self.assertIn(f'☐ Added an item for you: {XCODE}', row, screen)
+
+
+CURSOR = 'what is a cursor in pagination?'
+# Claude Code refuses a bare foreground sleep: 20 rounds of a second each keep the call running.
+LOOP = 'for i in $(seq 1 20); do date; sleep 1; done'
+SENT = 'Sent · Claude reads it at its next step'
+HAS_IT = '✓ Claude has it'
+
+
+def bash_calls(rows):
+    """The ids of the Bash calls in a conversation's rows, and when each call that has returned did, in seconds since the epoch."""
+    calls = [part['id'] for row in rows if row.get('type') == 'assistant' for part in row['message']['content'] if part.get('type') == 'tool_use' and part.get('name') == 'Bash']
+    returned = {
+        part['tool_use_id']: datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00')).timestamp()
+        for row in rows
+        if row.get('type') == 'user' and isinstance(row['message']['content'], list)
+        for part in row['message']['content']
+        if part.get('type') == 'tool_result'
+    }
+    return calls, returned
+
+
+@unittest.skipUnless(os.environ.get('LIVE_MODEL') == '1', 'calls the model on the person\'s own sign-in: set LIVE_MODEL=1')
+class Model(unittest.TestCase):
+    def test_a_side_question_asked_while_idle_gets_a_helper_answer_and_never_reaches_the_main_session(self):
+        seat = Seat(ROOT)
+        try:
+            seat.start(150, 50, '--session-id', seat.session_id)
+            # The pane open first, so the item shows as it is added; the prompt gets the keys back.
+            seat.command('/open-items')
+            wait_for(seat.session, has_pane)
+            run('tmux', 'send-keys', '-t', seat.session, 'Escape')
+            seat.command(f'/side {CURSOR}')
+            asked = time.time()
+            wait_for(seat.session, lambda s: f'#1 {CURSOR}' in s, timeout=5)
+            shown = time.time() - asked
+            wait_for(seat.session, lambda s: '● answered' in s, timeout=120)
+            # A main turn the answer started would write its rows after the answer shows.
+            time.sleep(3)
+            seat.has_keys = False
+            seat.press('Down', 'Enter')
+            screen = seat.read(self._testMethodName)
+            rows = seat.rows()
+        finally:
+            seat.close()
+        side = next((i for i, row in enumerate(rows) if '<command-name>/side</command-name>' in json.dumps(row)), None)
+
+        self.assertIsNotNone(side, rows)
+        self.assertLess(shown, 2, screen)
+        self.assertIn('Helper · ', screen, screen)
+        self.assertEqual([row['type'] for row in rows[side + 1 :] if row.get('type') == 'assistant'], [], rows[side:])
+        self.assertEqual([row for row in rows if CURSOR in json.dumps(row)], [])
+
+    def test_a_reply_sent_while_claude_runs_a_command_says_sent_then_that_claude_has_it_once_the_call_returns(self):
+        seat = Seat(ROOT)
+        samples = []
+        try:
+            seat.seed([{'id': 1, 'title': 'Add the key to the env file', 'detail': 'The test needs it.'}])
+            seat.open_pane(150, 50)
+            run('tmux', 'send-keys', '-t', seat.session, 'Escape')
+            seat.command(f'Run this in Bash, in the foreground, and say nothing else: {LOOP}')
+            # Claude Code draws the call folded: it runs from its tool_use row to its tool_result row.
+            end = time.time() + 90
+            while not bash_calls(seat.rows())[0] and time.time() < end:
+                # Auto mode may still ask about the loop: the first answer is yes.
+                if 'Do you want to proceed?' in capture(seat.session):
+                    run('tmux', 'send-keys', '-t', seat.session, 'Enter')
+                time.sleep(0.5)
+            time.sleep(2)
+            seat.has_keys = False
+            seat.press('Down', 'Enter', 'Thanks')
+            run('tmux', 'send-keys', '-t', seat.session, 'Enter')
+            end, seen = time.time() + 60, None
+            while time.time() < end:
+                samples.append(capture(seat.session))
+                if HAS_IT in samples[-1]:
+                    # Read at once: what the file holds when the line first shows.
+                    seen, rows = time.time(), seat.rows()
+                    break
+                time.sleep(0.2)
+            else:
+                rows = seat.rows()
+        finally:
+            seat.close()
+        sent = next((i for i, screen in enumerate(samples) if SENT in screen), None)
+        has_it = next((i for i, screen in enumerate(samples) if HAS_IT in screen), None)
+        calls, returned = bash_calls(rows)
+
+        self.assertIsNotNone(sent, samples[-1])
+        self.assertIsNotNone(has_it, samples[-1])
+        # Never the second line before the first, not even for one drawing.
+        self.assertLess(sent, has_it, samples[has_it])
+        # The call had returned when the second line first showed.
+        self.assertTrue(calls and calls[0] in returned, rows)
+        self.assertLessEqual(returned[calls[0]], seen, rows)
 
 
 if __name__ == '__main__':

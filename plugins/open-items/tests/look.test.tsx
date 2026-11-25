@@ -240,8 +240,53 @@ describe('the item screen helpers', () => {
   test("the header's first line wraps in its box once the waiting mark makes it too wide", () => {
     const waiting = item({ isWaitingForClaude: true })
 
-    expect(rowsFor(itemView(waiting), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(0)
-    expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(1)
+    // The sent line under the reply takes one row at both widths.
+    expect(rowsFor(itemView(waiting), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(1)
+    expect(rowsFor(itemView(waiting), 32, 99) - rowsFor(itemView(item()), 32, 99)).toBe(2)
+  })
+
+  test("a side question's screen takes its header, the question, the helper's reply, the follow-up, the sent line, Done, the follow-up field and the foot", () => {
+    const asked: Message = { from: 'user', text: 'What does the feed page by?', atMs: NOW - 120_000 }
+    const followUp: Message = { from: 'user', text: 'And the app feed?', atMs: NOW - 30_000 }
+    const side = item({
+      kind: 'side',
+      title: asked.text,
+      askLine: undefined,
+      thread: [asked, { from: 'claude', author: 'helper', text: 'By a cursor, in pages of twenty.', atMs: NOW - 60_000 }, followUp],
+      isWaitingForClaude: true,
+      side: { transcripts: [], helperId: 'a1', sentMs: followUp.atMs },
+    })
+    // 59 cells: two rows in the follow-up field, which its longer label leaves 57 cells; a reply field would take it in one.
+    const typing: PaneView = { ...itemView(side), draft: `${'word '.repeat(11)}word`, isTyping: true }
+
+    // The header box (4), an empty row, the question, two messages of a blank row, a head and a line each,
+    // the sent line, an empty row and Done, the field on two rows, and the foot.
+    expect(rowsFor(typing, 76, 99)).toBe(18)
+  })
+
+  test('each message after the detail takes a blank row and a head row above its own rows', () => {
+    const replies = item({
+      thread: [
+        DETAIL,
+        { from: 'user', text: 'ok', atMs: NOW - 120_000 },
+        { from: 'claude', text: 'Then cursor it is.', atMs: NOW - 60_000 },
+      ],
+    })
+
+    expect(rowsFor(itemView(replies), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(6)
+  })
+
+  test('an event after the detail, and the line in place of hidden messages, each take a blank row above their one line', () => {
+    const pressed = item({ thread: [DETAIL, { from: 'user', text: '', event: 'later', atMs: NOW }] })
+    const long: Message = { from: 'user', text: `${'word '.repeat(799)}words`, atMs: NOW }
+    const messages = Array.from({ length: 20 }, () => long)
+    const hiding = item({ thread: [DETAIL, ...messages] })
+    const showing = item({ thread: [DETAIL, ...messages.slice(1)] })
+
+    expect(rowsFor(itemView(pressed), 76, 99) - rowsFor(itemView(item()), 76, 99)).toBe(2)
+    // The same messages are drawn in both: one more than fits is the one hidden.
+    expect([entriesOf(hiding, NOW).hidden, entriesOf(showing, NOW).hidden]).toEqual([1, 0])
+    expect(rowsFor(itemView(hiding), 76, 9999) - rowsFor(itemView(showing), 76, 9999)).toBe(2)
   })
 
   test('on a 0.3 item, Claude writes Markdown and the detail has no head; the user writes plain text, and a press is an event', () => {
@@ -256,8 +301,8 @@ describe('the item screen helpers', () => {
 
     expect(entriesOf(task, NOW).entries).toStrictEqual([
       { i: 0, text: DETAIL.text, look: 'markdown' },
-      { i: 1, head: 'You · 2m', text: 'Is the feed ordered by time?', look: 'plain' },
-      { i: 2, head: 'Claude · 1m', text: 'Yes, **newest first**.', look: 'markdown' },
+      { i: 1, head: { who: 'You', age: '2m' }, text: 'Is the feed ordered by time?', look: 'plain' },
+      { i: 2, head: { who: 'Claude', age: '1m' }, text: 'Yes, **newest first**.', look: 'markdown' },
       { i: 3, text: 'You pressed Later · now', look: 'event' },
     ])
   })
@@ -288,5 +333,35 @@ describe('the item screen helpers', () => {
 
   test('the recommended option is labeled with its plain text: its box marks it', () => {
     expect(actionsOf(PAGING).map(action => action.label)).toEqual(['Cursor', 'Offset, capped at 10k', 'Later'])
+  })
+})
+
+describe('the list screen helpers', () => {
+  test('a list of a decision and a side question takes the head, two labels, two rows, the new-question field and the foot', () => {
+    const asked = item({
+      id: 2,
+      kind: 'side',
+      title: 'What does the feed page by?',
+      askLine: undefined,
+      thread: [{ from: 'user', text: 'What does the feed page by?', atMs: NOW - 60_000 }],
+      isWaitingForClaude: true,
+      side: { transcripts: [], helperId: 'a1', sentMs: NOW - 60_000 },
+    })
+    const view: PaneView = { shown: [PAGING, asked], screen: { kind: 'list' }, held: null, draft: '', nowMs: NOW, canType: true, isFocused: true, isTyping: false }
+
+    expect(rowsFor(view, 76, 99)).toBe(7)
+  })
+
+  const LIST: PaneView = { shown: [], screen: { kind: 'list' }, held: null, draft: '', nowMs: NOW, canType: true, isFocused: true, isTyping: false }
+
+  test('an empty pane the user keeps open takes the empty line, the new-question field and the foot', () => {
+    expect(rowsFor(LIST, 76, 99)).toBe(3)
+  })
+
+  test('a side question held back takes its notice, wrapped, and its row of buttons under the field', () => {
+    const held = { ...LIST, shown: [PAGING], held: { id: 'new', text: 'sk_live_key' } } as const
+
+    // The head, a label, a row, the field, the notice on two rows, Edit and Send anyway, and the foot.
+    expect(rowsFor(held, 76, 99)).toBe(8)
   })
 })
