@@ -1337,7 +1337,8 @@ async function switchTo($: EngineInterface, sessionId: string) {
   live.unreadAppend.clear()
   live.moved.clear()
   live.inputs = []
-  // The old session's helpers are gone with it; the quota state stays, as the window is the account's.
+  // The ended session's helpers have no item here now, so their timers and stop marks go; `startCleared` stops
+  // them after a /clear. The quota state stays, as the window is the account's.
   live.helperTimers.forEach(timer => timer.cancel())
   live.helperTimers.clear()
   live.stoppedHelpers.clear()

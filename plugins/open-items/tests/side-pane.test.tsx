@@ -341,6 +341,24 @@ describe('the side question screen', () => {
     })
   }
 
+  test('a resume that lands after Done stopped waiting for it is stopped, so the next side question does not run beside it', async ($, on) => {
+    const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor.')]) })
+    world.helpers = ['a1']
+    world.sendMs = 60_000
+    await start($)
+    await side($, '#1 more?')
+    await side($, 'a second question')
+    await clock.settle()
+    const ui = await $.ui.mount(PANE)
+    await ui.press({ key: 'row-1' })
+
+    void ui.press({ key: 'done' })
+    await clock.advance(60_000)
+    await clock.settle()
+
+    expect({ stops: world.stops, spawns: world.spawns.map(spawn => spawn.description) }).toEqual({ stops: ['a1'], spawns: ['Side question #2'] })
+  })
+
   test('the stopped report after Done does not cancel the 10-minute stop of a later run of the same helper', async ($, on) => {
     const { world, clock } = seat(on, { [OWN]: keyed([answered(1, 'By a cursor.'), answered(2, 'By date.')]) })
     world.helpers = ['a1']

@@ -164,7 +164,7 @@ export async function doneSide($: EngineInterface, id: number): Promise<void> {
  */
 function afterHelpers<T>(work: () => Promise<T>, wait: Promise<unknown> = live.pumpQueue): Promise<T> {
   const done = wait.then(work)
-  live.pumpQueue = Promise.all([live.pumpQueue, done.catch(() => undefined)])
+  live.pumpQueue = Promise.all([live.pumpQueue, done.catch(() => undefined)]).then(() => undefined)
 
   return done
 }
@@ -224,7 +224,13 @@ async function askHelper($: EngineInterface, task: Task) {
 
 async function handedOver($: EngineInterface, id: number, helperId: string, givenMs: number | undefined) {
   arm($, helperId)
-  await edit($, id, found => sentOf(found, helperId, givenMs))
+  const found = await edit($, id, task => sentOf(task, helperId, givenMs))
+
+  // Done or a hand-off went on without this start (`afterHelpersWithin`): no item waits for its answer.
+  if (found === undefined || !isOpenSide(found)) {
+    disarm(helperId)
+    void stopHelper($, helperId)
+  }
 }
 
 function arm($: EngineInterface, helperId: string) {
