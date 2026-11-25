@@ -1,6 +1,6 @@
 c1-rules-marker	guard
 c2-small-change-direct	guard,model-default
-c3-test-loads-audit	climb
+c3-test-loads-audit	guard
 c4-rls-is-big	guard
 c5-branch-before-commit	guard
 c6-bug-root-cause	guard,model-default
